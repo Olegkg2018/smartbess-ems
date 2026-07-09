@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  smartbess-db:
+    image: timescale/timescaledb:latest-pg16
+    container_name: smartbess-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: smartbess
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d smartbess"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  smartbess-redis:
+    image: redis:7-alpine
+    container_name: smartbess-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  smartbess-platform:
+    build: .
+    container_name: smartbess-platform
+    ports:
+      - "5004:5000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@smartbess-db:5432/smartbess
+      - REDIS_URL=redis://smartbess-redis:6379/0
+      - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY}
+      - ENTSOE_API_KEY=${ENTSOE_API_KEY}
+    depends_on:
+      smartbess-db:
+        condition: service_healthy
+      smartbess-redis:
+        condition: service_healthy
+    restart: always
+
+volumes:
+  postgres_data:
+  redis_data:

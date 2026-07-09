@@ -1,0 +1,24 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+.venv
+env/
+venv/
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Ignore cloned repo
+ua-energy-arbitrage/
+
+# Large model / data files
+data/prices_cache/
+data/historical_data_merged.csv
+data/model_*.pkl
+data/scaler.pkl
+data/metrics_report.json
+data/weather_archive_*.csv
+data/executive_cache_*.json

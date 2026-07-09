@@ -1,0 +1,3185 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Прогнозування цін та арбітраж електроенергії в Україні</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-dragdata@2.2.4/dist/chartjs-plugin-dragdata.min.js"></script>
+    
+    <style>
+        :root {
+            --bg-gradient: linear-gradient(135deg, #0d0f1a 0%, #151a30 100%);
+            --panel-bg: rgba(22, 28, 54, 0.45);
+            --panel-border: rgba(255, 255, 255, 0.08);
+            --panel-border-hover: rgba(255, 255, 255, 0.15);
+            
+            --text-primary: #f3f4f6;
+            --text-secondary: #9ca3af;
+            --text-muted: #6b7280;
+            
+            --accent-cyan: #06b6d4;
+            --accent-blue: #3b82f6;
+            --accent-indigo: #6366f1;
+            
+            --color-success: #10b981;
+            --color-warning: #f59e0b;
+            --color-error: #ef4444;
+            --color-charge: #06b6d4;
+            --color-discharge: #f43f5e;
+            
+            --font-display: 'Outfit', 'Inter', sans-serif;
+            --font-sans: 'Inter', sans-serif;
+            
+            --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--bg-gradient);
+            color: var(--text-primary);
+            font-family: var(--font-sans);
+            min-height: 100vh;
+            overflow-x: hidden;
+            line-height: 1.5;
+        }
+
+        /* Ambient Glow Blobs */
+        .glow-blob {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(120px);
+            z-index: 0;
+            opacity: 0.15;
+            pointer-events: none;
+        }
+
+        .blob-1 {
+            width: 400px;
+            height: 400px;
+            background: var(--accent-cyan);
+            top: -100px;
+            right: -50px;
+        }
+
+        .blob-2 {
+            width: 500px;
+            height: 500px;
+            background: var(--accent-indigo);
+            bottom: -150px;
+            left: -100px;
+        }
+
+        /* Glassmorphic Container */
+        .app-container {
+            position: relative;
+            z-index: 1;
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 2rem;
+            display: grid;
+            grid-template-columns: 380px 1fr;
+            gap: 2rem;
+        }
+
+        /* Custom date-row layout to avoid inline-style overriding issues on mobile */
+        .date-row {
+            display: grid;
+            grid-template-columns: 1.15fr 0.85fr;
+            align-items: end;
+            margin-bottom: 0.8rem;
+            gap: 0.8rem;
+        }
+
+        /* Utility class to hide text on mobile screen sizes to keep layout clean */
+        .hide-mobile {
+            display: inline;
+        }
+
+        @media (max-width: 1200px) {
+            .app-container {
+                grid-template-columns: 1fr;
+                padding: 1rem;
+            }
+        }
+
+        @media (max-width: 768px) {
+            header {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 1.2rem;
+                padding-bottom: 1.2rem;
+                text-align: center;
+            }
+            .logo-section h1 {
+                font-size: 1.5rem;
+                line-height: 1.3;
+            }
+            .logo-section p {
+                font-size: 0.85rem;
+            }
+            .header-actions {
+                display: grid;
+                grid-template-columns: 50px 1fr 1fr;
+                grid-template-areas:
+                    "badge badge badge"
+                    "theme about retrain";
+                gap: 0.6rem;
+                width: 100%;
+            }
+            #modelMetricsBadge {
+                grid-area: badge;
+                width: 100%;
+                justify-content: center;
+            }
+            #themeToggleBtn {
+                grid-area: theme;
+                width: 100%;
+                justify-content: center;
+                padding: 0.6rem 0 !important;
+            }
+            #aboutBtn {
+                grid-area: about;
+                width: 100%;
+                justify-content: center;
+                font-size: 0.85rem;
+                padding: 0.6rem 0.5rem;
+                white-space: nowrap;
+            }
+            #retrainBtn {
+                grid-area: retrain;
+                width: 100%;
+                justify-content: center;
+                font-size: 0.85rem;
+                padding: 0.6rem 0.5rem;
+                white-space: nowrap;
+            }
+            .kpi-grid {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 0.8rem;
+            }
+            .chart-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 0.5rem;
+            }
+            .chart-title {
+                font-size: 0.95rem;
+            }
+            .chart-container {
+                height: 260px;
+            }
+            .modal-card {
+                padding: 1.5rem;
+                max-height: 90vh;
+                margin: 0.5rem;
+                border-radius: 16px;
+            }
+            .modal-title {
+                font-size: 1.3rem;
+                margin-bottom: 1rem;
+                margin-right: 2rem;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .app-container {
+                padding: 0.5rem;
+                gap: 1rem;
+            }
+            .sidebar, .chart-card, .info-card {
+                padding: 1rem;
+                border-radius: 14px;
+            }
+            .kpi-grid {
+                grid-template-columns: 1fr;
+            }
+            .kpi-value {
+                font-size: 1.25rem;
+            }
+            .form-row {
+                grid-template-columns: 1fr;
+                gap: 0.6rem;
+            }
+            .date-row {
+                grid-template-columns: 1fr;
+                gap: 0.8rem;
+            }
+            .hide-mobile {
+                display: none;
+            }
+            #aboutBtn, #retrainBtn {
+                font-size: 0.8rem;
+                padding: 0.6rem 0.3rem;
+            }
+        }
+
+        /* Header */
+        header {
+            grid-column: 1 / -1;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid var(--panel-border);
+            margin-bottom: 1rem;
+        }
+
+        .logo-section h1 {
+            font-family: var(--font-display);
+            font-size: 2rem;
+            font-weight: 800;
+            background: linear-gradient(90deg, #06b6d4, #6366f1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.5px;
+        }
+
+        .logo-section p {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            margin-top: 0.2rem;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+        }
+
+        .metrics-badge {
+            background: rgba(99, 102, 241, 0.15);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            border-radius: 8px;
+            padding: 0.5rem 1rem;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: #c7d2fe;
+        }
+
+        .metrics-badge span {
+            font-weight: 600;
+            color: #fff;
+        }
+
+        /* Buttons */
+        .btn {
+            background: rgba(255, 255, 255, 0.08);
+            color: var(--text-primary);
+            border: 1px solid var(--panel-border);
+            border-radius: 10px;
+            padding: 0.6rem 1.2rem;
+            font-weight: 500;
+            font-size: 0.9rem;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            transition: var(--transition-smooth);
+        }
+
+        .btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+            border-color: var(--panel-border-hover);
+            transform: translateY(-1px);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-blue) 100%);
+            border: none;
+            color: #fff;
+            box-shadow: 0 4px 14px rgba(6, 182, 212, 0.3);
+        }
+
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #0891b2 0%, #2563eb 100%);
+            box-shadow: 0 6px 20px rgba(6, 182, 212, 0.4);
+            transform: translateY(-1.5px);
+        }
+
+        .btn-success {
+            background: rgba(16, 185, 129, 0.2);
+            border-color: rgba(16, 185, 129, 0.4);
+            color: #a7f3d0;
+        }
+
+        .btn-success:hover {
+            background: rgba(16, 185, 129, 0.3);
+            border-color: rgba(16, 185, 129, 0.6);
+        }
+
+        #aboutBtn {
+            background: rgba(6, 182, 212, 0.15);
+            border-color: rgba(6, 182, 212, 0.3);
+            color: #c7d2fe;
+        }
+
+        #aboutBtn:hover {
+            background: rgba(6, 182, 212, 0.25);
+            border-color: rgba(6, 182, 212, 0.45);
+        }
+
+        /* Sidebar Control Panel */
+        .sidebar {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 20px;
+            backdrop-filter: blur(16px);
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            height: fit-content;
+        }
+
+        .section-title {
+            font-family: var(--font-display);
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.8rem;
+            border-left: 3px solid var(--accent-cyan);
+            padding-left: 0.5rem;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+            margin-bottom: 0.8rem;
+        }
+
+        .form-group label {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .form-control {
+            background: rgba(13, 15, 26, 0.6);
+            border: 1px solid var(--panel-border);
+            border-radius: 10px;
+            padding: 0.6rem 0.8rem;
+            color: var(--text-primary);
+            font-family: var(--font-sans);
+            font-size: 0.9rem;
+            width: 100%;
+            transition: var(--transition-smooth);
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: var(--accent-cyan);
+            box-shadow: 0 0 0 2px rgba(6, 182, 212, 0.2);
+        }
+
+        /* Datepicker Calendar Icon visibility in Dark Theme */
+        input[type="date"]::-webkit-calendar-picker-indicator {
+            filter: invert(0.8) sepia(50%) saturate(1000%) hue-rotate(180deg) brightness(1.2);
+            cursor: pointer;
+            opacity: 0.65;
+            transition: var(--transition-smooth);
+        }
+
+        input[type="date"]::-webkit-calendar-picker-indicator:hover {
+            opacity: 1;
+            filter: invert(1) brightness(1.5);
+        }
+
+        .slider-group {
+            margin-bottom: 0.8rem;
+        }
+
+        .slider-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.3rem;
+        }
+
+        .slider-header .val {
+            font-weight: 600;
+            color: var(--accent-cyan);
+        }
+
+        .range-slider {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 5px;
+            border-radius: 5px;
+            background: rgba(255, 255, 255, 0.1);
+            outline: none;
+            transition: var(--transition-smooth);
+        }
+
+        .range-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--accent-cyan);
+            cursor: pointer;
+            box-shadow: 0 0 8px rgba(6, 182, 212, 0.5);
+            transition: var(--transition-smooth);
+        }
+
+        .range-slider::-webkit-slider-thumb:hover {
+            transform: scale(1.25);
+        }
+
+        /* Two columns in form */
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.8rem;
+        }
+
+        /* Main Panel */
+        .main-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        /* KPI Dashboard Grid */
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
+        }
+
+        .kpi-card {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 16px;
+            padding: 1.2rem;
+            backdrop-filter: blur(16px);
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+            transition: var(--transition-smooth);
+        }
+
+        .kpi-card:hover {
+            border-color: var(--panel-border-hover);
+            transform: translateY(-2px);
+        }
+
+        .kpi-label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+        }
+
+        .kpi-value {
+            font-family: var(--font-display);
+            font-size: 1.5rem;
+            font-weight: 700;
+        }
+
+        .kpi-value.profit { color: var(--color-success); }
+        .kpi-value.cost { color: var(--color-warning); }
+        .kpi-value.revenue { color: var(--color-charge); }
+        .kpi-value.cycles { color: var(--accent-indigo); }
+
+        .kpi-trend {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: auto;
+        }
+
+        /* Chart Cards */
+        .chart-card {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 20px;
+            padding: 1.5rem;
+            backdrop-filter: blur(16px);
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .chart-title {
+            font-family: var(--font-display);
+            font-size: 1.1rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 320px;
+            width: 100%;
+        }
+
+        /* Explanations & Forecast Analysis Panel */
+        .info-card {
+            background: rgba(30, 41, 59, 0.4);
+            border: 1px solid var(--panel-border);
+            border-radius: 20px;
+            padding: 1.5rem;
+            backdrop-filter: blur(16px);
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .info-card h3 {
+            font-family: var(--font-display);
+            font-size: 1.1rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--accent-cyan);
+        }
+
+        .explanations-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.8rem;
+        }
+
+        .explanation-item {
+            background: rgba(13, 15, 26, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.03);
+            border-radius: 10px;
+            padding: 0.8rem 1rem;
+            font-size: 0.85rem;
+            line-height: 1.6;
+            color: var(--text-primary);
+            display: flex;
+            gap: 0.8rem;
+            align-items: flex-start;
+        }
+
+        .explanation-icon {
+            margin-top: 0.1rem;
+            flex-shrink: 0;
+        }
+
+        /* Info grids on market rules */
+        .market-rules-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin-top: 0.5rem;
+        }
+
+        @media (max-width: 768px) {
+            .market-rules-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .rule-card {
+            background: rgba(13, 15, 26, 0.5);
+            border: 1px solid var(--panel-border);
+            border-radius: 12px;
+            padding: 1rem;
+            font-size: 0.85rem;
+        }
+
+        .rule-card h4 {
+            font-family: var(--font-display);
+            font-weight: 600;
+            margin-bottom: 0.4rem;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+        }
+
+        .rule-card p {
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            background: rgba(13, 15, 26, 0.8);
+            border: 1px solid var(--panel-border);
+            border-radius: 10px;
+            padding: 0.2rem;
+            width: fit-content;
+        }
+
+        .tab-btn {
+            background: transparent;
+            color: var(--text-secondary);
+            border: none;
+            padding: 0.4rem 1rem;
+            font-size: 0.8rem;
+            font-weight: 500;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: var(--transition-smooth);
+        }
+
+        .tab-btn.active {
+            background: var(--accent-cyan);
+            color: #fff;
+            box-shadow: 0 2px 8px rgba(6, 182, 212, 0.4);
+        }
+
+        /* Loading Overlay */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(13, 15, 26, 0.85);
+            backdrop-filter: blur(8px);
+            z-index: 9999;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-top-color: var(--accent-cyan);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            font-family: var(--font-display);
+            font-size: 1.2rem;
+            font-weight: 500;
+            color: #fff;
+        }
+
+        /* Modal Styles */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(10, 12, 22, 0.85);
+            backdrop-filter: blur(16px);
+            z-index: 10000;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            padding: 1rem;
+        }
+
+        .modal-card {
+            background: rgba(22, 28, 54, 0.95);
+            border: 1px solid var(--panel-border);
+            border-radius: 24px;
+            max-width: 800px;
+            width: 100%;
+            max-height: 85vh;
+            overflow-y: auto;
+            padding: 2.5rem;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            position: relative;
+            animation: modalFadeIn 0.3s ease;
+        }
+
+        @keyframes modalFadeIn {
+            from { opacity: 0; transform: translateY(15px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 1.5rem;
+            right: 1.5rem;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--text-secondary);
+            border-radius: 50%;
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: var(--transition-smooth);
+        }
+
+        .modal-close:hover {
+            background: rgba(255, 255, 255, 0.15);
+            color: #fff;
+        }
+
+        .modal-title {
+            font-family: var(--font-display);
+            font-size: 1.75rem;
+            font-weight: 800;
+            background: linear-gradient(90deg, #06b6d4, #6366f1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 1.5rem;
+            border-bottom: 1px solid var(--panel-border);
+            padding-bottom: 0.8rem;
+            margin-right: 2.5rem; /* prevent overlap with close button on mobile */
+        }
+
+        .modal-section {
+            margin-bottom: 1.8rem;
+        }
+
+        .modal-section-title {
+            font-family: var(--font-display);
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: var(--accent-cyan);
+            margin-bottom: 0.6rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .modal-text {
+            font-size: 0.92rem;
+            color: var(--text-secondary);
+            line-height: 1.65;
+        }
+
+        .modal-list {
+            margin-left: 1.5rem;
+            margin-top: 0.6rem;
+            color: var(--text-secondary);
+            font-size: 0.92rem;
+            line-height: 1.65;
+        }
+
+        .modal-list li {
+            margin-bottom: 0.5rem;
+        }
+
+        /* Light Theme Styles */
+        body.light-theme {
+            --bg-gradient: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+            --panel-bg: rgba(255, 255, 255, 0.75);
+            --panel-border: rgba(15, 23, 42, 0.08);
+            --panel-border-hover: rgba(15, 23, 42, 0.15);
+            
+            --text-primary: #0f172a;
+            --text-secondary: #475569;
+            --text-muted: #64748b;
+            
+            --accent-cyan: #0891b2;
+            --accent-blue: #2563eb;
+            --accent-indigo: #4946eb;
+            
+            --color-success: #059669;
+            --color-warning: #d97706;
+            --color-error: #dc2626;
+            --color-charge: #0891b2;
+            --color-discharge: #e11d48;
+        }
+
+        body.light-theme .glow-blob {
+            opacity: 0.08;
+        }
+
+        body.light-theme .form-control {
+            background: rgba(255, 255, 255, 0.95);
+            color: #0f172a;
+            border-color: rgba(15, 23, 42, 0.12);
+        }
+
+        body.light-theme .form-control:focus {
+            border-color: var(--accent-cyan);
+            box-shadow: 0 0 0 2px rgba(8, 145, 178, 0.15);
+        }
+
+        body.light-theme .btn {
+            background: rgba(15, 23, 42, 0.04);
+            color: #0f172a;
+            border-color: rgba(15, 23, 42, 0.08);
+        }
+
+        body.light-theme .btn:hover {
+            background: rgba(15, 23, 42, 0.08);
+            border-color: rgba(15, 23, 42, 0.15);
+        }
+
+        body.light-theme .btn-primary {
+            background: linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-blue) 100%);
+            color: #fff;
+            border: none;
+            box-shadow: 0 4px 14px rgba(8, 145, 178, 0.2);
+        }
+        
+        body.light-theme .btn-primary:hover {
+            background: linear-gradient(135deg, #0e7490 0%, #1d4ed8 100%);
+            box-shadow: 0 6px 20px rgba(8, 145, 178, 0.3);
+        }
+
+        body.light-theme .btn-success {
+            background: rgba(5, 150, 105, 0.1);
+            border-color: rgba(5, 150, 105, 0.2);
+            color: #047857;
+        }
+
+        body.light-theme .btn-success:hover {
+            background: rgba(5, 150, 105, 0.18);
+            border-color: rgba(5, 150, 105, 0.35);
+        }
+
+        body.light-theme .range-slider {
+            background: rgba(15, 23, 42, 0.08);
+        }
+
+        body.light-theme .range-slider::-webkit-slider-thumb {
+            box-shadow: 0 0 8px rgba(8, 145, 178, 0.3);
+        }
+
+        body.light-theme .info-card {
+            background: rgba(255, 255, 255, 0.65);
+        }
+
+        body.light-theme .explanation-item {
+            background: rgba(255, 255, 255, 0.85);
+            border-color: rgba(15, 23, 42, 0.03);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+        }
+
+        body.light-theme .rule-card {
+            background: rgba(255, 255, 255, 0.8);
+            border-color: var(--panel-border);
+        }
+
+        body.light-theme .rule-card h4 {
+            color: #0f172a;
+        }
+
+        body.light-theme .tabs {
+            background: rgba(15, 23, 42, 0.05);
+            border-color: rgba(15, 23, 42, 0.08);
+        }
+
+        body.light-theme .tab-btn.active {
+            background: var(--accent-cyan);
+            color: #fff;
+            box-shadow: 0 2px 8px rgba(8, 145, 178, 0.3);
+        }
+
+        body.light-theme .loading-overlay {
+            background: rgba(255, 255, 255, 0.85);
+        }
+
+        body.light-theme .loading-text {
+            color: #0f172a;
+        }
+
+        body.light-theme .spinner {
+            border: 4px solid rgba(15, 23, 42, 0.08);
+            border-top-color: var(--accent-cyan);
+        }
+
+        body.light-theme .modal-overlay {
+            background: rgba(15, 23, 42, 0.4);
+        }
+
+        body.light-theme .modal-card {
+            background: rgba(255, 255, 255, 0.98);
+            border-color: rgba(15, 23, 42, 0.1);
+            box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.15);
+        }
+
+        body.light-theme .modal-close {
+            background: rgba(15, 23, 42, 0.05);
+            border-color: rgba(15, 23, 42, 0.08);
+        }
+
+        body.light-theme .modal-close:hover {
+            background: rgba(15, 23, 42, 0.1);
+            color: #0f172a;
+        }
+
+        body.light-theme #aboutBtn {
+            background: rgba(8, 145, 178, 0.1);
+            border-color: rgba(8, 145, 178, 0.2);
+            color: #0369a1;
+        }
+
+        body.light-theme #aboutBtn:hover {
+            background: rgba(8, 145, 178, 0.18);
+            border-color: rgba(8, 145, 178, 0.35);
+        }
+
+        body.light-theme .metrics-badge {
+            background: rgba(99, 102, 241, 0.08);
+            border-color: rgba(99, 102, 241, 0.2);
+            color: #4f46e5;
+        }
+
+        body.light-theme .metrics-badge span {
+            color: #1e1b4b;
+        }
+
+        /* Tab navigation styles */
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+        .tabs {
+            display: flex;
+            flex-wrap: wrap;
+            background: rgba(13, 15, 26, 0.5);
+            border: 1px solid var(--panel-border);
+            border-radius: 12px;
+            padding: 0.3rem;
+            gap: 0.4rem;
+            width: 100%;
+        }
+        body.light-theme .tabs {
+            background: rgba(255, 255, 255, 0.8);
+        }
+        .tab-btn {
+            background: transparent;
+            color: var(--text-secondary);
+            border: none;
+            padding: 0.6rem 1.2rem;
+            font-size: 0.85rem;
+            font-weight: 500;
+            cursor: pointer;
+            border-radius: 8px;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            transition: var(--transition-smooth);
+        }
+        .tab-btn:hover {
+            color: var(--text-primary);
+            background: rgba(255, 255, 255, 0.03);
+        }
+        body.light-theme .tab-btn:hover {
+            background: rgba(15, 23, 42, 0.03);
+        }
+        .tab-btn.active {
+            background: var(--accent-cyan);
+            color: #fff !important;
+            box-shadow: 0 4px 12px rgba(6, 182, 212, 0.25);
+        }
+
+        /* Hourly table styles */
+        .hourly-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+            color: var(--text-primary);
+            text-align: left;
+        }
+        .hourly-table th {
+            padding: 0.8rem 1rem;
+            border-bottom: 2px solid var(--panel-border);
+            color: var(--text-secondary);
+            font-weight: 600;
+        }
+        .hourly-table td {
+            padding: 0.8rem 1rem;
+            border-bottom: 1px solid var(--panel-border);
+        }
+        .hourly-table tbody tr:hover {
+            background: rgba(255, 255, 255, 0.02);
+        }
+        body.light-theme .hourly-table tbody tr:hover {
+            background: rgba(15, 23, 42, 0.01);
+        }
+        .badge-action {
+            padding: 0.25rem 0.6rem;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 0.75rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+        }
+        .badge-action.charge {
+            background: rgba(6, 182, 212, 0.15);
+            color: var(--color-charge);
+        }
+        .badge-action.discharge {
+            background: rgba(244, 63, 94, 0.15);
+            color: var(--color-discharge);
+        }
+        .badge-action.standby {
+            background: rgba(156, 163, 175, 0.12);
+            color: var(--text-secondary);
+        }
+
+        /* Scenario analysis presets */
+        .preset-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.2rem;
+        }
+        .preset-card {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 16px;
+            padding: 1.25rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.8rem;
+            transition: var(--transition-smooth);
+        }
+        .preset-card:hover {
+            border-color: var(--panel-border-hover);
+            transform: translateY(-2px);
+        }
+        .preset-title {
+            font-family: var(--font-display);
+            font-size: 1rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .preset-desc {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+
+        /* Log journal styles */
+        .log-container {
+            background: rgba(13, 15, 26, 0.6);
+            border: 1px solid var(--panel-border);
+            border-radius: 12px;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 0.8rem;
+            padding: 1rem;
+            max-height: 400px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+        }
+        body.light-theme .log-container {
+            background: rgba(15, 23, 42, 0.03);
+            color: #0f172a;
+        }
+        .log-row {
+            display: flex;
+            gap: 0.8rem;
+            line-height: 1.4;
+        }
+        .log-time {
+            color: var(--accent-cyan);
+            flex-shrink: 0;
+        }
+        .log-source {
+            color: var(--accent-indigo);
+            font-weight: 600;
+            flex-shrink: 0;
+            min-width: 90px;
+        }
+        .log-msg {
+            color: var(--text-primary);
+        }
+        .log-row.error .log-msg {
+            color: var(--color-error);
+        }
+        .log-row.success .log-msg {
+            color: var(--color-success);
+        }
+        .log-row.warning .log-msg {
+            color: var(--color-warning);
+        }
+    </style>
+</head>
+<body>
+    <div class="glow-blob blob-1"></div>
+    <div class="glow-blob blob-2"></div>
+
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="spinner"></div>
+        <div class="loading-text" id="loadingText">Завантаження прогнозу та оптимізація...</div>
+    </div>
+
+    <div class="app-container">
+        <!-- Header -->
+        <header>
+            <div class="logo-section">
+                <h1>UA Energy Arbitrage & Price Forecasting AI</h1>
+                <p>Моделювання цін РДН / ВДР, профіциту мережі та математично ідеального розкладу батарей</p>
+            </div>
+            <div class="header-actions">
+                <div class="metrics-badge" id="modelMetricsBadge">
+                    <i data-lucide="cpu" style="width:16px;height:16px"></i>
+                    XGBoost: R² = <span id="r2_metric">-</span> | MAE = <span id="mae_metric">-</span> грн
+                </div>
+                <button class="btn" id="themeToggleBtn" style="background:rgba(255,255,255,0.08);border-color:var(--panel-border);padding:0.6rem 0.8rem;" title="Змінити тему">
+                    <i data-lucide="sun" id="themeIcon" style="width:16px;height:16px;"></i>
+                </button>
+                <button class="btn" id="aboutBtn">
+                    <i data-lucide="info" style="width:16px;height:16px;color:var(--accent-cyan)"></i>
+                    Про проєкт
+                </button>
+                <button class="btn btn-success" id="retrainBtn">
+                    <i data-lucide="refresh-cw" style="width:16px;height:16px"></i>
+                    Перенавчити<span class="hide-mobile">&nbsp;AI модель</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- Sidebar (Controls) -->
+        <div class="sidebar">
+            <!-- 1. Date & Mode -->
+            <div>
+                <h3 class="section-title">
+                    <i data-lucide="calendar" style="width:18px;height:18px;color:var(--accent-cyan)"></i>
+                    Дата та режим роботи
+                </h3>
+                
+                <div class="date-row">
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label for="forecastDate">Оберіть дату для симуляції</label>
+                        <input type="date" class="form-control" id="forecastDate" value="2026-06-23" min="2025-01-01" max="2026-12-31">
+                    </div>
+                    <button class="btn btn-primary" id="runBtn" style="justify-content: center; font-weight: 600; width: 100%; white-space: nowrap;">
+                        <i data-lucide="play" style="width:16px;height:16px"></i>
+                        Розрахувати
+                    </button>
+                </div>
+
+                <div class="form-group">
+                    <label for="operationalMode">Сценарій використання батареї</label>
+                    <select class="form-control" id="operationalMode">
+                        <option value="arbitrage">Мережевий Арбітраж (FTM)</option>
+                        <option value="self_consumption">Зниження пиків споживача (BTM)</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="aiModel">Модель прогнозування</label>
+                    <select class="form-control" id="aiModel">
+                        <option value="lightgbm" selected>LightGBM Regressor (Рекомендовано)</option>
+                        <option value="xgboost">XGBoost Regressor (Градієнтний Бустинг)</option>
+                        <option value="mlp">Нейронна мережа (MLP Regressor)</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- 2. Market Driver Sliders -->
+            <div>
+                <h3 class="section-title">
+                    <i data-lucide="sliders" style="width:18px;height:18px;color:var(--accent-cyan)"></i>
+                    Фактори впливу на ринок
+                </h3>
+                
+                <div class="slider-group">
+                    <div class="slider-header">
+                        <span>Ціна на газ TTF (EUR/MWh)</span>
+                        <span class="val" id="gasVal">35</span>
+                    </div>
+                    <input type="range" class="range-slider" id="gasPrice" min="20" max="100" value="35">
+                </div>
+
+                <div class="slider-group">
+                    <div class="slider-header">
+                        <span>Виведено потужностей АЕС (%)</span>
+                        <span class="val" id="nukeVal">15%</span>
+                    </div>
+                    <input type="range" class="range-slider" id="nuclearOutage" min="0" max="100" value="15">
+                </div>
+
+                <div class="slider-group">
+                    <div class="slider-header">
+                        <span>Пошкодження сонячних СЕС (%)</span>
+                        <span class="val" id="solarVal">0%</span>
+                    </div>
+                    <input type="range" class="range-slider" id="solarStrike" min="0" max="100" value="0">
+                </div>
+
+                <div class="slider-group">
+                    <div class="slider-header">
+                        <span>Коефіцієнт попиту ринку</span>
+                        <span class="val" id="coeffVal">1.0</span>
+                    </div>
+                    <input type="range" class="range-slider" id="marketCoeff" min="0.5" max="1.5" step="0.05" value="1.0">
+                </div>
+
+                <div class="slider-group">
+                    <div class="slider-header">
+                        <span>Активність на ВДР (обсяг)</span>
+                        <span class="val" id="vdrVal">1.0</span>
+                    </div>
+                    <input type="range" class="range-slider" id="vdrVolume" min="0.2" max="2.0" step="0.1" value="1.0">
+                </div>
+
+                <div class="slider-group">
+                    <div class="slider-header">
+                        <span>Імпорт/Експорт мережі (MW)</span>
+                        <span class="val" id="gridVal">0</span>
+                    </div>
+                    <input type="range" class="range-slider" id="gridImport" min="-2000" max="2000" step="100" value="0">
+                </div>
+            </div>
+
+            <!-- 3. Battery Specs -->
+            <div>
+                <h3 class="section-title">
+                    <i data-lucide="battery" style="width:18px;height:18px;color:var(--accent-cyan)"></i>
+                    Характеристики батареї
+                </h3>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Ємність (кВт-год)</label>
+                        <input type="number" class="form-control" id="batCapacity" value="1000">
+                    </div>
+                    <div class="form-group">
+                        <label>Потужність (кВт)</label>
+                        <input type="number" class="form-control" id="batPower" value="250">
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>ККД Заряду (%)</label>
+                        <input type="number" class="form-control" id="effCharge" value="95">
+                    </div>
+                    <div class="form-group">
+                        <label>ККД Розряду (%)</label>
+                        <input type="number" class="form-control" id="effDischarge" value="95">
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Min SoC (%)</label>
+                        <input type="number" class="form-control" id="minSoc" value="10">
+                    </div>
+                    <div class="form-group">
+                        <label>Max SoC (%)</label>
+                        <input type="number" class="form-control" id="maxSoc" value="90">
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Вхідна ємність (Початковий SoC, %)</label>
+                        <input type="number" class="form-control" id="initSoc" value="20">
+                    </div>
+                    <div class="form-group">
+                        <label>Циклів на добу</label>
+                        <input type="number" class="form-control" id="maxCycles" step="0.1" value="1.5">
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Деградація UAH/кВт-год</label>
+                        <input type="number" class="form-control" id="degCost" step="0.1" value="1.2">
+                    </div>
+                    <div class="form-group">
+                        <!-- Spacer to balance grid -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- 4. Tariffs -->
+            <div>
+                <h3 class="section-title">
+                    <i data-lucide="dollar-sign" style="width:18px;height:18px;color:var(--accent-cyan)"></i>
+                    Тарифи на передачу та мережу
+                </h3>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Передача (грн/МВт-год)</label>
+                        <input type="number" class="form-control" id="tariffTrans" value="528.57">
+                    </div>
+                    <div class="form-group">
+                        <label>Розподіл (грн/МВт-год)</label>
+                        <input type="number" class="form-control" id="tariffDist" value="1500.0">
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Диспетчер (грн/МВт-год)</label>
+                        <input type="number" class="form-control" id="tariffDisp" value="104.57">
+                    </div>
+                    <div class="form-group">
+                        <label>Маржа (грн/МВт-год)</label>
+                        <input type="number" class="form-control" id="tariffMargin" value="100.0">
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Main Panel (Dashboard) -->
+        <div class="main-panel">
+            <!-- Navigation Tabs -->
+            <div class="tabs" style="margin-bottom: 1rem;">
+                <button class="tab-btn active" id="tabBtn-dashboard" onclick="switchTab('dashboard')">
+                    <i data-lucide="layout-dashboard" style="width:16px;height:16px;"></i>
+                    Панель інструментів
+                </button>
+                <button class="tab-btn" id="tabBtn-schedule-table" onclick="switchTab('schedule-table')">
+                    <i data-lucide="table" style="width:16px;height:16px;"></i>
+                    Погодинний графік
+                </button>
+                <button class="tab-btn" id="tabBtn-scenarios" onclick="switchTab('scenarios')">
+                    <i data-lucide="trending-up" style="width:16px;height:16px;"></i>
+                    Сценарний аналіз
+                </button>
+                <button class="tab-btn" id="tabBtn-directory" onclick="switchTab('directory')">
+                    <i data-lucide="book-open" style="width:16px;height:16px;"></i>
+                    Довідник тарифів та АКБ
+                </button>
+                <button class="tab-btn" id="tabBtn-logs" onclick="switchTab('logs')">
+                    <i data-lucide="terminal" style="width:16px;height:16px;"></i>
+                    Журнал імпортів та помилок
+                </button>
+            </div>
+
+            <!-- Tab 1: Dashboard -->
+            <div id="tab-dashboard" class="tab-content active">
+                <!-- KPI Cards Grid -->
+                <div class="kpi-grid">
+                    <div class="kpi-card">
+                        <div class="kpi-label">
+                            <i data-lucide="trending-up" style="width:14px;height:14px;color:var(--color-success)"></i>
+                            Чистий прибуток
+                        </div>
+                        <div class="kpi-value profit" id="kpiNetProfit">-</div>
+                        <div class="kpi-trend">З урахуванням зносу АКБ</div>
+                    </div>
+
+                    <div class="kpi-card">
+                        <div class="kpi-label">
+                            <i data-lucide="download" style="width:14px;height:14px;color:var(--color-warning)"></i>
+                            Вартість заряду
+                        </div>
+                        <div class="kpi-value cost" id="kpiChargeCost">-</div>
+                        <div class="kpi-trend">Включаючи тарифи мережі</div>
+                    </div>
+
+                    <div class="kpi-card">
+                        <div class="kpi-label">
+                            <i data-lucide="upload" style="width:14px;height:14px;color:var(--color-charge)"></i>
+                            Дохід від розряду
+                        </div>
+                        <div class="kpi-value revenue" id="kpiDischargeRevenue">-</div>
+                        <div class="kpi-trend">Продаж або заміщення</div>
+                    </div>
+
+                    <div class="kpi-card">
+                        <div class="kpi-label">
+                            <i data-lucide="repeat" style="width:14px;height:14px;color:var(--accent-indigo)"></i>
+                            Використано циклів
+                        </div>
+                        <div class="kpi-value cycles" id="kpiCycles">-</div>
+                        <div class="kpi-trend">Ліміт на добу: <span id="kpiMaxCycles">1.5</span></div>
+                    </div>
+                </div>
+
+                <!-- Price Chart -->
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <div class="chart-title">
+                            <i data-lucide="bar-chart-2" style="width:18px;height:18px;color:var(--accent-cyan)"></i>
+                            Ціни на електроенергію (РДН Україна)
+                        </div>
+                        <div id="chartTypeBadge" class="metrics-badge" style="background:rgba(6,182,212,0.1);border-color:rgba(6,182,212,0.3);color:var(--accent-cyan)">
+                            Прогноз
+                        </div>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="priceChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Battery Optimization Schedule Chart -->
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <div class="chart-title">
+                            <i data-lucide="zap" style="width:18px;height:18px;color:var(--color-success)"></i>
+                            Математичний графік заряду/розряду (PuLP Solver)
+                            <span class="text-muted hide-mobile" style="font-size:0.75rem; margin-left:1.5rem; display:inline-flex; align-items:center; gap:0.3rem; font-weight:normal;">
+                                <i data-lucide="info" style="width:12px;height:12px;color:var(--accent-cyan)"></i>
+                                Тягніть стовпчик горизонтально для перенесення години; або вертикально для зміни потужності
+                            </span>
+                        </div>
+                        <div id="socBadge" class="metrics-badge" style="background:rgba(16,185,129,0.1);border-color:rgba(16,185,129,0.3);color:var(--color-success)">
+                            Стан заряду (SoC)
+                        </div>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="batteryChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Market Analysis & Explanations -->
+                <div class="info-card">
+                    <h3>
+                        <i data-lucide="info" style="width:18px;height:18px"></i>
+                        Аналіз прогнозу та ринкові фактори
+                    </h3>
+                    <div id="dataStatusContainer" style="margin-bottom:0.8rem; display:none;">
+                        <div id="dataStatusBadge" class="metrics-badge" style="display:inline-flex; padding:0.4rem 0.8rem; font-size:0.8rem;"></div>
+                    </div>
+                    <div class="explanations-list" id="explanationsList">
+                        <div class="explanation-item">
+                            <i data-lucide="help-circle" class="explanation-icon" style="width:16px;height:16px;color:var(--text-muted)"></i>
+                            <div>Оберіть дату та натисніть кнопку "Розрахувати" для отримання аналізу.</div>
+                        </div>
+                    </div>
+
+                    <!-- Ukrainian Market Dynamics Details -->
+                    <div class="market-rules-grid">
+                        <div class="rule-card">
+                            <h4>
+                                <i data-lucide="sun" style="width:14px;height:14px;color:var(--color-warning)"></i>
+                                Чому ціна падає до 10 грн/МВт-год?
+                            </h4>
+                            <p>
+                                У періоди високого профіциту (надлишку) сонячної енергії в денні години (11:00-16:00), особливо у вихідні,
+                                генератори змушені подавати заявки за мінімально регульованою ціною (10 грн/МВт-год), щоб гарантувати викуп їхніх обсягів.
+                                Якщо профіцит перевищує споживання, ринкова ціна DAM закривається на цій позначці.
+                            </p>
+                        </div>
+
+                        <div class="rule-card">
+                            <h4>
+                                <i data-lucide="alert-triangle" style="width:14px;height:14px;color:var(--color-error)"></i>
+                                Вплив тарифів мережі на арбітраж
+                            </h4>
+                            <p>
+                                При купівлі енергії з мережі для заряджання юридичні особи сплачують DAM-ціну + тариф на передачу + тариф на розподіл.
+                                У режимі мережевого арбітражу продаж йде тільки за DAM-ціною, тому різниця повинна покривати суму мережевих тарифів (~2.2 грн/кВт-год).
+                                У режимі заміщення споживання (Behind-the-Meter) батарея економить повні витрати, роблячи цикли набагато вигіднішими.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 2: Hourly Schedule Table -->
+            <div id="tab-schedule-table" class="tab-content">
+                <div class="chart-card">
+                    <div class="chart-header" style="flex-wrap: wrap; gap: 0.8rem;">
+                        <div class="chart-title">
+                            <i data-lucide="table" style="width:18px;height:18px;color:var(--accent-cyan)"></i>
+                            Погодинна відомість заряду та розряду АКБ
+                        </div>
+                        <button class="btn" onclick="balanceScheduleBMS()" style="padding:0.4rem 0.8rem; font-size:0.8rem; background:rgba(16,185,129,0.1); border-color:rgba(16,185,129,0.3); color:var(--color-success); margin-right: 0.5rem;">
+                            <i data-lucide="shield-check" style="width:14px;height:14px;"></i>
+                            Авто-баланс BMS
+                        </button>
+                        <button class="btn" onclick="resetToOptimalSchedule()" style="padding:0.4rem 0.8rem; font-size:0.8rem; background:rgba(245,158,11,0.1); border-color:rgba(245,158,11,0.3); color:var(--color-warning); margin-right: 0.5rem;">
+                            <i data-lucide="rotate-ccw" style="width:14px;height:14px;"></i>
+                            Скинути до оптимуму
+                        </button>
+                        <button class="btn" onclick="exportHourlyTable()" style="padding:0.4rem 0.8rem; font-size:0.8rem; background:rgba(6,182,212,0.1); border-color:rgba(6,182,212,0.3); color:var(--accent-cyan);">
+                            <i data-lucide="download" style="width:14px;height:14px;"></i>
+                            Експорт в CSV
+                        </button>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table class="hourly-table" id="hourlyTable">
+                            <thead>
+                                <tr>
+                                    <th>Година</th>
+                                    <th>Прогноз (грн)</th>
+                                    <th>Факт (грн)</th>
+                                    <th>Тариф заряду (грн)</th>
+                                    <th>Режим АКБ</th>
+                                    <th>Потужність (кВт)</th>
+                                    <th>SoC (кВт-год)</th>
+                                    <th>SoC (%)</th>
+                                    <th>Прибуток (грн)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="hourlyTableBody">
+                                <tr>
+                                    <td colspan="9" style="text-align: center; color: var(--text-muted); padding: 2rem;">
+                                        Немає даних. Натисніть кнопку "Розрахувати" на панелі керування.
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 3: Scenario Analysis & Risks -->
+            <div id="tab-scenarios" class="tab-content">
+                <div class="info-card">
+                    <h3>
+                        <i data-lucide="trending-up" style="width:18px;height:18px;color:var(--accent-cyan);"></i>
+                        Сценарне моделювання роботи енергоринку
+                    </h3>
+                    <p style="font-size: 0.85rem; color: var(--text-secondary); line-height: 1.5;">
+                        Швидке завантаження стрес-тестів та аварійних ситуацій. Натискання на сценарій автоматично виставить
+                        відповідні ринкові слайдери на лівій панелі управління та виконає повторний розрахунок моделі.
+                    </p>
+                    <div class="preset-grid">
+                        <div class="preset-card">
+                            <div class="preset-title" style="color:var(--color-success)">
+                                <i data-lucide="check-circle" style="width:16px;height:16px"></i>
+                                Базовий сценарій
+                            </div>
+                            <div class="preset-desc">Нормальний стан енергосистеми. Помірний імпорт, середні ціни на паливо, сонячна генерація працює без додаткових обмежень.</div>
+                            <button class="btn" style="width:100%; margin-top:auto;" onclick="loadScenario('base')">Запустити сценарій</button>
+                        </div>
+                        <div class="preset-card">
+                            <div class="preset-title" style="color:var(--color-warning)">
+                                <i data-lucide="flame" style="width:16px;height:16px"></i>
+                                Світова газова криза
+                            </div>
+                            <div class="preset-desc">Різке зростання ціни європейського газу TTF до 85 EUR/MWh. Збільшує витрати теплової генерації та піднімає вечірні цінові піки.</div>
+                            <button class="btn" style="width:100%; margin-top:auto;" onclick="loadScenario('gas_crisis')">Запустити сценарій</button>
+                        </div>
+                        <div class="preset-card">
+                            <div class="preset-title" style="color:var(--color-error)">
+                                <i data-lucide="zap-off" style="width:16px;height:16px"></i>
+                                Систематичні обстріли СЕС
+                            </div>
+                            <div class="preset-desc">Пошкодження 50% потужностей сонячних станцій в Україні. Повністю ліквідує профіцит у денні години, піднімаючи ціну вище 10 грн.</div>
+                            <button class="btn" style="width:100%; margin-top:auto;" onclick="loadScenario('solar_strike')">Запустити сценарій</button>
+                        </div>
+                        <div class="preset-card">
+                            <div class="preset-title" style="color:var(--accent-indigo)">
+                                <i data-lucide="shield-alert" style="width:16px;height:16px"></i>
+                                Зимовий дефіцит АЕС
+                            </div>
+                            <div class="preset-desc">Виведення 45% блоків атомних станцій у ремонт або через обмеження. Високий коефіцієнт попиту. Дорогий імпорт у вечірній час.</div>
+                            <button class="btn" style="width:100%; margin-top:auto;" onclick="loadScenario('nuke_outage')">Запустити сценарій</button>
+                        </div>
+                        <div class="preset-card">
+                            <div class="preset-title" style="color:var(--accent-cyan)">
+                                <i data-lucide="droplet" style="width:16px;height:16px"></i>
+                                Весняна повінь (ГЕС)
+                            </div>
+                            <div class="preset-desc">Активна робота гідроелектростанцій по водопіллю та висока сонячна радіація. Тривалий денний профіцит до 10 грн навіть у будні дні.</div>
+                            <button class="btn" style="width:100%; margin-top:auto;" onclick="loadScenario('hydro_flood')">Запустити сценарій</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="info-card">
+                    <h3>
+                        <i data-lucide="shield-alert" style="width:18px;height:18px;color:var(--color-error)"></i>
+                        Оцінка ризиків та факторів невизначеності
+                    </h3>
+                    <div class="market-rules-grid" style="margin-top:0.5rem;">
+                        <div class="rule-card">
+                            <h4 style="color:var(--color-error)">
+                                <i data-lucide="trending-down" style="width:14px;height:14px"></i>
+                                Ризик прискореної деградації осередків
+                            </h4>
+                            <p style="font-size:0.8rem; line-height:1.5; color:var(--text-secondary); margin-top:0.4rem;">
+                                Експлуатація АКБ з кількістю циклів більше 1.5 на добу або при глибокому розряді (DoD > 90%)
+                                прискорює деградацію (втрату ємності). Використання LFP осередків дозволяє витримувати до 6000 циклів,
+                                проте недотримання температурного режиму (>35°C) збільшує швидкість деградації вдвічі. Рекомендовано
+                                тримати ліміт циклів на рівні 1.2-1.5 на добу та SoC не нижче 10%.
+                            </p>
+                        </div>
+                        <div class="rule-card">
+                            <h4 style="color:var(--color-warning)">
+                                <i data-lucide="alert-circle" style="width:14px;height:14px"></i>
+                                Регуляторний ризик прайс-кепів (Price Caps)
+                            </h4>
+                            <p style="font-size:0.8rem; line-height:1.5; color:var(--text-secondary); margin-top:0.4rem;">
+                                Граничні ціни (Price Caps) встановлюються НКРЕКП і обмежують максимальну вартість електроенергії на РДН.
+                                При скасуванні або значному зниженні прайс-кепів (наприклад, у нічний час) маржинальність арбітражу
+                                різко зменшується. І навпаки — підвищення лімітів підвищує прибутковість систем накопичення.
+                            </p>
+                        </div>
+                        <div class="rule-card">
+                            <h4 style="color:var(--color-warning)">
+                                <i data-lucide="calculator" style="width:14px;height:14px"></i>
+                                Ризик відхилень прогнозу та штрафи на ВР
+                            </h4>
+                            <p style="font-size:0.8rem; line-height:1.5; color:var(--text-secondary); margin-top:0.4rem;">
+                                Якщо реальні ціни РДН відрізняються від прогнозованих моделлю AI, батарея може зарядитися за дорогою ціною
+                                або розрядитися завчасно. Похибка моделі (MAE) на рівні 1500-1800 грн/МВт-год створює ризик неотримання
+                                планового прибутку. Робота на Балансуючому ринку (ВР) за неправильними командами веде до купівлі
+                                небалансів за штрафними цінами.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 4: Directory of Tariffs and Facility Parameters -->
+            <div id="tab-directory" class="tab-content">
+                <div class="chart-card">
+                    <div class="chart-title">
+                        <i data-lucide="book-open" style="width:18px;height:18px;color:var(--accent-cyan)"></i>
+                        Довідник діючих тарифів НКРЕКП для операторів систем розподілу (ОСР)
+                    </div>
+                    <p style="font-size: 0.8rem; color: var(--text-secondary); line-height: 1.4; margin-top: 0.2rem;">
+                        Тарифи на розподіл електроенергії для непобутових споживачів (діючі ставки без ПДВ). Оберіть тариф вашого ОСР
+                        та натисніть кнопку "Застосувати", щоб оновити параметри розрахунку в лівому меню.
+                    </p>
+                    <div style="overflow-x: auto; margin-top: 1rem;">
+                        <table class="hourly-table">
+                            <thead>
+                                <tr>
+                                    <th>Регіон / Оператор ГРМ (ОСР)</th>
+                                    <th>1 Клас напруги (грн/МВт-год)</th>
+                                    <th>2 Клас напруги (грн/МВт-год)</th>
+                                    <th>Дія (1 клас)</th>
+                                    <th>Дія (2 клас)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>ДТЕК Київські Електромережі (м. Київ)</td>
+                                    <td>321.40</td>
+                                    <td>1341.20</td>
+                                    <td><button class="btn" style="padding:0.25rem 0.5rem; font-size:0.75rem;" onclick="applyTariffPreset(321.40)">Застосувати</button></td>
+                                    <td><button class="btn" style="padding:0.25rem 0.5rem; font-size:0.75rem;" onclick="applyTariffPreset(1341.20)">Застосувати</button></td>
+                                </tr>
+                                <tr>
+                                    <td>ДТЕК Київські Регіональні Електромережі</td>
+                                    <td>412.50</td>
+                                    <td>1654.80</td>
+                                    <td><button class="btn" style="padding:0.25rem 0.5rem; font-size:0.75rem;" onclick="applyTariffPreset(412.50)">Застосувати</button></td>
+                                    <td><button class="btn" style="padding:0.25rem 0.5rem; font-size:0.75rem;" onclick="applyTariffPreset(1654.80)">Застосувати</button></td>
+                                </tr>
+                                <tr>
+                                    <td>НЕК "Укренерго" (Глобальний тариф на передачу)</td>
+                                    <td colspan="2" style="text-align:center; font-weight:600;">528.57 (для всіх споживачів)</td>
+                                    <td colspan="2" style="text-align:center;"><button class="btn" style="padding:0.25rem 0.5rem; font-size:0.75rem;" onclick="applyTariffPreset(null, 528.57)">Застосувати передачу</button></td>
+                                </tr>
+                                <tr>
+                                    <td>АТ "Львівобленерго"</td>
+                                    <td>420.30</td>
+                                    <td>1720.60</td>
+                                    <td><button class="btn" style="padding:0.25rem 0.5rem; font-size:0.75rem;" onclick="applyTariffPreset(420.30)">Застосувати</button></td>
+                                    <td><button class="btn" style="padding:0.25rem 0.5rem; font-size:0.75rem;" onclick="applyTariffPreset(1720.60)">Застосувати</button></td>
+                                </tr>
+                                <tr>
+                                    <td>АТ "Прикарпаттяобленерго"</td>
+                                    <td>440.10</td>
+                                    <td>1850.40</td>
+                                    <td><button class="btn" style="padding:0.25rem 0.5rem; font-size:0.75rem;" onclick="applyTariffPreset(440.10)">Застосувати</button></td>
+                                    <td><button class="btn" style="padding:0.25rem 0.5rem; font-size:0.75rem;" onclick="applyTariffPreset(1850.40)">Застосувати</button></td>
+                                </tr>
+                                <tr>
+                                    <td>АТ "Харківобленерго"</td>
+                                    <td>495.20</td>
+                                    <td>2054.10</td>
+                                    <td><button class="btn" style="padding:0.25rem 0.5rem; font-size:0.75rem;" onclick="applyTariffPreset(495.20)">Застосувати</button></td>
+                                    <td><button class="btn" style="padding:0.25rem 0.5rem; font-size:0.75rem;" onclick="applyTariffPreset(2054.10)">Застосувати</button></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="chart-card">
+                    <div class="chart-title">
+                        <i data-lucide="battery-charging" style="width:18px;height:18px;color:var(--color-success)"></i>
+                        Технічні параметри та знос систем накопичення енергії (BESS)
+                    </div>
+                    <div style="overflow-x: auto; margin-top:1rem;">
+                        <table class="hourly-table">
+                            <thead>
+                                <tr>
+                                    <th>Хімічний склад АКБ</th>
+                                    <th>Кількість циклів (до 80% ємності)</th>
+                                    <th>Рекомендована глибина розряду (DoD)</th>
+                                    <th>ККД системи (Roundtrip)</th>
+                                    <th>Переваги та недоліки</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td><strong>LFP (Літій-залізо-фосфат)</strong></td>
+                                    <td>5000 - 6000</td>
+                                    <td>10% - 90% (80% DoD)</td>
+                                    <td>90% - 95%</td>
+                                    <td><span style="color:var(--color-success)">Високий ресурс, пожежобезпечність, низька вартість циклу.</span> Важкі, менша питома ємність.</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>NMC (Нікель-марганець-кобальт)</strong></td>
+                                    <td>2000 - 3000</td>
+                                    <td>5% - 95% (90% DoD)</td>
+                                    <td>92% - 96%</td>
+                                    <td><span style="color:var(--accent-cyan)">Висока щільність енергії, компактність.</span> Менший ресурс, дорожчі, ризик термічного розгону.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 5: Imports, Events, and Errors Log -->
+            <div id="tab-logs" class="tab-content">
+                <div class="chart-card">
+                    <div class="chart-title">
+                        <i data-lucide="database" style="width:18px;height:18px;color:var(--accent-cyan)"></i>
+                        Стан інтеграції бази даних РДН та Weather Archive
+                    </div>
+                    <div class="kpi-grid" style="margin-top:1rem;">
+                        <div class="kpi-card" style="background:rgba(255,255,255,0.02)">
+                            <div class="kpi-label">Дата початку бази</div>
+                            <div class="kpi-value" id="logDbStartDate" style="font-size:1.2rem;">2021-01-01</div>
+                            <div class="kpi-trend">Вимога НКРЕКП: від 01.01.2021</div>
+                        </div>
+                        <div class="kpi-card" style="background:rgba(255,255,255,0.02)">
+                            <div class="kpi-label">Остання синхронізація</div>
+                            <div class="kpi-value" id="logDbEndDate" style="font-size:1.2rem;">-</div>
+                            <div class="kpi-trend">Оновлення з oree.com.ua</div>
+                        </div>
+                        <div class="kpi-card" style="background:rgba(255,255,255,0.02)">
+                            <div class="kpi-label">Кількість годин у базі</div>
+                            <div class="kpi-value" id="logDbHours" style="font-size:1.2rem;">-</div>
+                            <div class="kpi-trend">Безперервний погодинний ряд</div>
+                        </div>
+                        <div class="kpi-card" style="background:rgba(255,255,255,0.02)">
+                            <div class="kpi-label">Пропуски в базі даних</div>
+                            <div class="kpi-value" id="logDbGaps" style="font-size:1.2rem;">-</div>
+                            <div class="kpi-trend">Автоматично інтерпольовано</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <div class="chart-title">
+                            <i data-lucide="terminal" style="width:18px;height:18px;color:var(--color-warning)"></i>
+                            Консоль подій EMS & Scraper Logs
+                        </div>
+                        <button class="btn" onclick="clearSystemLogs()" style="padding:0.4rem 0.8rem; font-size:0.8rem;">
+                            Очистити консоль
+                        </button>
+                    </div>
+                    <div class="log-container" id="logContainerConsole">
+                        <!-- Populated dynamically -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    <!-- About Project Modal Overlay -->
+    <div class="modal-overlay" id="aboutModal">
+        <div class="modal-card">
+            <button class="modal-close" id="closeAboutModal">
+                <i data-lucide="x" style="width: 18px; height: 18px;"></i>
+            </button>
+            <div class="modal-title">Про проєкт: UA Energy Arbitrage AI</div>
+            
+            <div class="modal-section">
+                <div class="modal-section-title">
+                    <i data-lucide="info" style="width: 18px; height: 18px;"></i>
+                    Опис програми
+                </div>
+                <div class="modal-text">
+                    Цей інтелектуальний комплекс розроблений для прогнозування погодинних цін на ринку «на добу наперед» (РДН) в Україні та розрахунку математично оптимального розкладу роботи промислових систем накопичення енергії (BESS / акумуляторних батарей). Програма допомагає енергетичним компаніям, трейдерам та споживачам (юридичним особам) максимізувати дохід від арбітражу або мінімізувати витрати на купівлю електроенергії з урахуванням мережевих тарифів, фізичного зносу батареї та її технічних параметрів.
+                </div>
+            </div>
+
+            <div class="modal-section">
+                <div class="modal-section-title">
+                    <i data-lucide="activity" style="width: 18px; height: 18px;"></i>
+                    Принцип роботи
+                </div>
+                <div class="modal-text">
+                    Програма поєднує методи штучного інтелекту та математичної оптимізації:
+                    <ul class="modal-list">
+                        <li><strong>Прогнозування цін:</strong> Моделі машинного навчання <strong>XGBoost</strong> та нейромережа <strong>MLP (Multi-Layer Perceptron)</strong> аналізують історичні ціни, погоду та фундаментальні фактори ринку для побудови прогнозу цін РДН на наступні 24 години.</li>
+                        <li><strong>Лінійна оптимізація (PuLP Solver):</strong> На основі прогнозованих (або фактичних) цін математичний солвер розраховує ідеальний графік заряду/розряду, який максимізує прибуток. Він враховує ККД циклу, обмеження по ємності та потужності, максимальну кількість циклів на добу, а також вартість деградації (зносу) батареї на кожен кВт-год.</li>
+                        <li><strong>Облік тарифів:</strong> Система враховує повну структуру витрат споживача — тариф на передачу, розподіл, диспетчеризацію та маржу постачальника, оскільки зарядка купується за повною ціною, а розряд (у режимі арбітражу) продається за ціною РДН.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="modal-section">
+                <div class="modal-section-title">
+                    <i data-lucide="database" style="width: 18px; height: 18px;"></i>
+                    Які дані використовуються
+                </div>
+                <div class="modal-text">
+                    Для точного моделювання програма інтегрує декілька джерел даних:
+                    <ul class="modal-list">
+                        <li><strong>Офіційні ціни РДН:</strong> Погодинні ціни автоматично синхронізуються в реальному часі безпосередньо з сайту ДП «Оператор ринку» (<code>oree.com.ua</code>).</li>
+                        <li><strong>Погодні дані:</strong> Архівні метеодані (температура, хмарність, вітер, сонячна радіація) завантажуються з Open-Meteo, а оперативний прогноз на добу наперед — з <strong>OpenWeather API</strong>.</li>
+                        <li><strong>Моделювання генерації:</strong> Оскільки Укренерго обмежує публікацію даних про генерацію з міркувань безпеки, система фізично моделює сонячну та вітрову генерацію на основі метеопараметрів у реальному часі.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="modal-section">
+                <div class="modal-section-title">
+                    <i data-lucide="calendar-check" style="width: 18px; height: 18px;"></i>
+                    Щоденний робочий процес
+                </div>
+                <div class="modal-text">
+                    Для щоденного використання програми виконуйте такі кроки:
+                    <ol class="modal-list" style="list-style-type: decimal;">
+                        <li><strong>Виберіть дату:</strong> Зазначте завтрашній день для планування реального розкладу або будь-яку минулу дату для ретроспективного аналізу (система автоматично завантажить фактичні ціни).</li>
+                        <li><strong>Налаштуйте параметри:</strong> Перевірте специфікації батареї та введіть актуальні для вашого підприємства тарифи на розподіл та передачу у лівій панелі (вони зберігаються автоматично).</li>
+                        <li><strong>Оцініть фактори ринку:</strong> Якщо очікуються форс-мажори, ремонт блоків АЕС чи різкі зміни цін на паливо, скоригуйте слайдери факторів впливу для побудови альтернативного сценарію прогнозу.</li>
+                        <li><strong>Запустіть розрахунок:</strong> Натисніть кнопку <strong>"Розрахувати Розклад"</strong>. Система оновить ціни, виконає прогноз та побудує оптимальну стратегію.</li>
+                        <li><strong>Застосуйте графік:</strong> Отриманий графік заряду (позитивний кВт) та розряду (негативний кВт) можна використовувати для програмування локальної системи управління енергією (EMS) акумуляторної батареї.</li>
+                    </ol>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Logic Script -->
+    <script>
+        // Init Lucide Icons
+        lucide.createIcons();
+
+        let lastLoadedDate = null;
+        let lastForecastData = null;
+
+        // Theme Switcher & Persistence
+        const themeToggleBtn = document.getElementById('themeToggleBtn');
+        const themeIcon = document.getElementById('themeIcon');
+
+        function applyTheme(theme) {
+            if (theme === 'light') {
+                document.body.classList.add('light-theme');
+                if (themeIcon) themeIcon.setAttribute('data-lucide', 'moon');
+            } else {
+                document.body.classList.remove('light-theme');
+                if (themeIcon) themeIcon.setAttribute('data-lucide', 'sun');
+            }
+            lucide.createIcons();
+            
+            // Re-render charts with correct colors if data is available
+            if (lastForecastData) {
+                renderPriceChart(lastForecastData);
+                renderBatteryScheduleChart(lastForecastData);
+            }
+        }
+
+        if (themeToggleBtn) {
+            themeToggleBtn.addEventListener('click', () => {
+                const currentTheme = document.body.classList.contains('light-theme') ? 'dark' : 'light';
+                localStorage.setItem('BESS_theme', currentTheme);
+                applyTheme(currentTheme);
+            });
+        }
+
+        // About Modal Triggers
+        const aboutModal = document.getElementById('aboutModal');
+        const aboutBtn = document.getElementById('aboutBtn');
+        const closeAboutModal = document.getElementById('closeAboutModal');
+
+        if (aboutBtn && aboutModal && closeAboutModal) {
+            aboutBtn.addEventListener('click', () => {
+                aboutModal.style.display = 'flex';
+            });
+            closeAboutModal.addEventListener('click', () => {
+                aboutModal.style.display = 'none';
+            });
+            // Close modal when clicking outside content card
+            aboutModal.addEventListener('click', (e) => {
+                if (e.target === aboutModal) {
+                    aboutModal.style.display = 'none';
+                }
+            });
+        }
+
+        // Sliders Realtime Values Updates
+        const sliders = [
+            { id: 'gasPrice', valId: 'gasVal', suffix: '' },
+            { id: 'nuclearOutage', valId: 'nukeVal', suffix: '%' },
+            { id: 'solarStrike', valId: 'solarVal', suffix: '%' },
+            { id: 'marketCoeff', valId: 'coeffVal', suffix: '' },
+            { id: 'vdrVolume', valId: 'vdrVal', suffix: '' },
+            { id: 'gridImport', valId: 'gridVal', suffix: ' MW' }
+        ];
+
+        const inputsToPersist = [
+            'forecastDate', 'operationalMode', 'aiModel',
+            'gasPrice', 'nuclearOutage', 'solarStrike', 'marketCoeff', 'vdrVolume', 'gridImport',
+            'batCapacity', 'batPower', 'effCharge', 'effDischarge', 'minSoc', 'maxSoc', 'maxCycles', 'degCost',
+            'tariffTrans', 'tariffDist', 'tariffDisp', 'tariffMargin'
+        ];
+
+        function saveSettings() {
+            const settings = {};
+            inputsToPersist.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    settings[id] = el.value;
+                }
+            });
+            localStorage.setItem('BESS_dashboard_settings', JSON.stringify(settings));
+        }
+
+        function loadSettings() {
+            const settingsStr = localStorage.getItem('BESS_dashboard_settings');
+            if (settingsStr) {
+                try {
+                    const settings = JSON.parse(settingsStr);
+                    inputsToPersist.forEach(id => {
+                        if (settings[id] !== undefined) {
+                            const el = document.getElementById(id);
+                            if (el) {
+                                el.value = settings[id];
+                            }
+                        }
+                    });
+                } catch (e) {
+                    console.error('Error loading settings from localStorage', e);
+                }
+            }
+        }
+
+        function updateSliderLabels() {
+            sliders.forEach(slider => {
+                const input = document.getElementById(slider.id);
+                const valueSpan = document.getElementById(slider.valId);
+                if (input && valueSpan) {
+                    valueSpan.textContent = input.value + slider.suffix;
+                }
+            });
+        }
+
+        sliders.forEach(slider => {
+            const input = document.getElementById(slider.id);
+            const valueSpan = document.getElementById(slider.valId);
+            input.addEventListener('input', () => {
+                valueSpan.textContent = input.value + slider.suffix;
+                saveSettings();
+            });
+        });
+
+        // Add input/change listeners for persistence
+        inputsToPersist.forEach(id => {
+            const el = document.getElementById(id);
+            if (el && el.tagName === 'INPUT' && el.type !== 'range') {
+                el.addEventListener('input', saveSettings);
+            } else if (el) {
+                el.addEventListener('change', saveSettings);
+            }
+        });
+
+        // Chart References
+        let priceChart = null;
+        let batteryChart = null;
+        let activeOptimizationResult = null;
+        let dragOriginalPower = 0;
+        let dragOriginalMode = 'standby';
+        let dragOriginalCharge = [];
+        let dragOriginalDischarge = [];
+        let dragSourceHour = null;
+
+        // Fetch Metrics on Load
+        function fetchMetrics() {
+            fetch('/api/metrics')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.lightgbm) {
+                        const r2 = data.lightgbm.r2.toFixed(3);
+                        const mae = data.lightgbm.mae.toFixed(1);
+                        document.getElementById('modelMetricsBadge').innerHTML = 
+                            `<i data-lucide="cpu" style="width:16px;height:16px"></i> LightGBM: R² = <span>${r2}</span> | MAE = <span>${mae}</span> грн`;
+                        lucide.createIcons();
+                    } else if (data.xgboost) {
+                        const r2 = data.xgboost.r2.toFixed(3);
+                        const mae = data.xgboost.mae.toFixed(1);
+                        document.getElementById('modelMetricsBadge').innerHTML = 
+                            `<i data-lucide="cpu" style="width:16px;height:16px"></i> XGBoost: R² = <span>${r2}</span> | MAE = <span>${mae}</span> грн`;
+                        lucide.createIcons();
+                    }
+                })
+                .catch(err => console.log('Metrics not available yet'));
+        }
+
+        // Retrain Model
+        document.getElementById('retrainBtn').addEventListener('click', () => {
+            const overlay = document.getElementById('loadingOverlay');
+            const text = document.getElementById('loadingText');
+            overlay.style.display = 'flex';
+            text.textContent = 'Перенавчання моделей на повних історичних даних (2025-2026 рр). Це займе близько 10-20 секунд...';
+            
+            fetch('/api/retrain', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    overlay.style.display = 'none';
+                    if (data.success) {
+                        alert('Модель успішно перенавчена!');
+                        fetchMetrics();
+                    } else {
+                        alert('Помилка перенавчання: ' + data.message);
+                    }
+                })
+                .catch(err => {
+                    overlay.style.display = 'none';
+                    alert('Мережева помилка при перенавчанні');
+                });
+        });
+
+        // Run Optimization
+        document.getElementById('runBtn').addEventListener('click', runForecastAndOptimization);
+
+        function runForecastAndOptimization() {
+            const targetDateVal = document.getElementById('forecastDate').value;
+            addSystemLog('EMS', 'Запуск моделювання для дати ' + targetDateVal + '...', 'info');
+            saveSettings();
+            const overlay = document.getElementById('loadingOverlay');
+            overlay.style.display = 'flex';
+            document.getElementById('loadingText').textContent = 'Завантаження прогнозу погоди та оптимізація PuLP...';
+
+            const payload = {
+                date: document.getElementById('forecastDate').value,
+                mode: document.getElementById('operationalMode').value,
+                selected_model: document.getElementById('aiModel').value,
+                lat: 49.53,
+                lon: 30.40,
+                openweather_api_key: '',
+                
+                // Sliders
+                gas_price: document.getElementById('gasPrice').value,
+                nuclear_outage: document.getElementById('nuclearOutage').value / 100.0,
+                solar_strike: document.getElementById('solarStrike').value / 100.0,
+                market_coeff: document.getElementById('marketCoeff').value,
+                vdr_volume: document.getElementById('vdrVolume').value,
+                grid_import_export: document.getElementById('gridImport').value,
+                
+                // Battery specs
+                battery_capacity: document.getElementById('batCapacity').value,
+                max_charge_power: document.getElementById('batPower').value,
+                max_discharge_power: document.getElementById('batPower').value,
+                charge_efficiency: document.getElementById('effCharge').value,
+                discharge_efficiency: document.getElementById('effDischarge').value,
+                initial_soc: document.getElementById('initSoc').value || 20.0,
+                min_soc: document.getElementById('minSoc').value,
+                max_soc: document.getElementById('maxSoc').value,
+                max_cycles_per_day: document.getElementById('maxCycles').value,
+                degradation_cost: document.getElementById('degCost').value,
+                
+                // Tariffs
+                transmission_tariff: document.getElementById('tariffTrans').value,
+                distribution_tariff: document.getElementById('tariffDist').value,
+                dispatch_tariff: document.getElementById('tariffDisp').value,
+                supplier_margin: document.getElementById('tariffMargin').value
+            };
+
+            fetch('/api/forecast', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(r => r.json())
+            .then(data => {
+                overlay.style.display = 'none';
+                if (data.error) {
+                    alert('Помилка: ' + data.error);
+                    return;
+                }
+                
+                updateDashboard(data);
+            })
+            .catch(err => {
+                overlay.style.display = 'none';
+                alert('Помилка з\'єднання з бекендом');
+            });
+        }
+
+        function updateDashboard(data) {
+            lastForecastData = data;
+
+            // Update Data Status Check
+            const statusContainer = document.getElementById('dataStatusContainer');
+            const statusBadge = document.getElementById('dataStatusBadge');
+            
+            if (data.data_status && statusContainer && statusBadge) {
+                statusContainer.style.display = 'block';
+                const ds = data.data_status;
+                if (ds.status === 'OK') {
+                    statusBadge.innerHTML = `<i data-lucide="check-circle" style="width:14px;height:14px;color:var(--color-success)"></i> База даних РДН (2021-${new Date().getFullYear()}): Перевірено (АЕС/ТЕС/ГЕС/СЕС/ВЕС/Імпорт)`;
+                    statusBadge.style.background = 'rgba(16,185,129,0.1)';
+                    statusBadge.style.borderColor = 'rgba(16,185,129,0.3)';
+                    statusBadge.style.color = 'var(--color-success)';
+                } else if (ds.status === 'WARNING') {
+                    statusBadge.innerHTML = `<i data-lucide="alert-triangle" style="width:14px;height:14px;color:var(--color-warning)"></i> Попередження даних: ${ds.warnings[0]}`;
+                    statusBadge.style.background = 'rgba(245,158,11,0.1)';
+                    statusBadge.style.borderColor = 'rgba(245,158,11,0.3)';
+                    statusBadge.style.color = 'var(--color-warning)';
+                } else {
+                    statusBadge.innerHTML = `<i data-lucide="x-circle" style="width:14px;height:14px;color:var(--color-error)"></i> Помилка перевірки даних: ${ds.errors[0]}`;
+                    statusBadge.style.background = 'rgba(239,68,68,0.1)';
+                    statusBadge.style.borderColor = 'rgba(239,68,68,0.3)';
+                    statusBadge.style.color = 'var(--color-error)';
+                }
+                lucide.createIcons();
+            }
+
+            // If historical date and we have actual factors, we can update the sliders to show actual values
+            // (but only if it's the first load of this date, to allow what-if adjustments).
+            if (data.is_historical && data.actual_factors && lastLoadedDate !== data.date) {
+                lastLoadedDate = data.date;
+                document.getElementById('gasPrice').value = Math.round(data.actual_factors.gas_price);
+                document.getElementById('nuclearOutage').value = Math.round(data.actual_factors.nuclear_outage);
+                document.getElementById('solarStrike').value = Math.round(data.actual_factors.solar_strike);
+                document.getElementById('marketCoeff').value = data.actual_factors.market_coeff.toFixed(2);
+                document.getElementById('vdrVolume').value = data.actual_factors.vdr_volume.toFixed(1);
+                document.getElementById('gridImport').value = Math.round(data.actual_factors.grid_import_export / 100) * 100;
+                
+                updateSliderLabels();
+                // Trigger a re-run to fetch forecast with actual factors
+                runForecastAndOptimization();
+                return; // Stop processing this response, the next one will update the dashboard
+            } else if (!data.is_historical) {
+                // Reset lastLoadedDate so changing back to a historical date works
+                lastLoadedDate = null;
+            }
+
+            // Determine which optimization results to use (actual or predicted)
+            const isHist = data.is_historical && data.actual_optimization;
+            activeOptimizationResult = JSON.parse(JSON.stringify(isHist ? data.actual_optimization : data.optimization));
+            const optRes = activeOptimizationResult;
+
+            // Update KPIs
+            document.getElementById('kpiNetProfit').textContent = optRes.net_profit_uah.toFixed(0) + ' грн';
+            document.getElementById('kpiChargeCost').textContent = optRes.cost_charging_uah.toFixed(0) + ' грн';
+            document.getElementById('kpiDischargeRevenue').textContent = optRes.revenue_discharging_uah.toFixed(0) + ' грн';
+            document.getElementById('kpiCycles').textContent = optRes.cycles_used.toFixed(2);
+            document.getElementById('kpiMaxCycles').textContent = document.getElementById('maxCycles').value;
+
+            // Highlight historical vs prediction badge
+            const badge = document.getElementById('chartTypeBadge');
+            if (data.is_historical) {
+                badge.textContent = 'Історичний день (порівняння)';
+                badge.style.background = 'rgba(16,185,129,0.15)';
+                badge.style.borderColor = 'rgba(16,185,129,0.4)';
+                badge.style.color = 'var(--color-success)';
+            } else {
+                badge.textContent = 'Прогноз на добу';
+                badge.style.background = 'rgba(6,182,212,0.15)';
+                badge.style.borderColor = 'rgba(6,182,212,0.4)';
+                badge.style.color = 'var(--accent-cyan)';
+            }
+
+            // Explanations List
+            const explanationsList = document.getElementById('explanationsList');
+            explanationsList.innerHTML = '';
+            
+            // Add weather indicator explanation
+            const maxRad = Math.max(...data.weather.radiation);
+            const avgTemp = (data.weather.temp.reduce((a,b)=>a+b, 0) / 24).toFixed(1);
+            let weatherIcon = 'cloud-sun';
+            let weatherDesc = `Прогноз погоди: середня температура ${avgTemp}°C. `;
+            if (maxRad > 500) {
+                weatherDesc += `Сонячно (макс. радіація ${maxRad.toFixed(0)} Вт/м²). Високий потенціал сонячної генерації.`;
+                weatherIcon = 'sun';
+            } else if (maxRad > 200) {
+                weatherDesc += `Мінлива хмарність (макс. радіація ${maxRad.toFixed(0)} Вт/м²).`;
+                weatherIcon = 'cloud-sun';
+            } else {
+                weatherDesc += `Хмарно / ніч (радіація вкрай низька).`;
+                weatherIcon = 'cloud';
+            }
+
+            // Append weather explanation
+            explanationsList.appendChild(createExplanationItem(weatherIcon, weatherDesc));
+
+            // Append other explanations
+            data.explanations.forEach(text => {
+                explanationsList.appendChild(createExplanationItem('activity', text));
+            });
+
+            // Re-render Price Chart
+            renderPriceChart(data);
+
+            // Re-render Battery Schedule Chart
+            renderBatteryScheduleChart(data);
+
+            // Re-render hourly schedule table
+            renderHourlyTable(data);
+
+            // Log optimization status
+            addSystemLog('SOLVER', 'Оптимізація завершена. Статус: ' + optRes.status + ', Прибуток: ' + optRes.net_profit_uah.toFixed(0) + ' грн', 'success');
+        }
+
+        function createExplanationItem(iconName, text) {
+            const div = document.createElement('div');
+            div.className = 'explanation-item';
+            div.innerHTML = `
+                <i data-lucide="${iconName}" class="explanation-icon" style="width:16px;height:16px;color:var(--accent-cyan)"></i>
+                <div>${text}</div>
+            `;
+            lucide.createIcons({
+                attrs: {
+                    class: 'explanation-icon'
+                }
+            });
+            return div;
+        }
+
+        function renderPriceChart(data) {
+            const ctx = document.getElementById('priceChart').getContext('2d');
+            if (priceChart) {
+                priceChart.destroy();
+            }
+
+            const isLight = document.body.classList.contains('light-theme');
+            const gridColor = isLight ? 'rgba(15, 23, 42, 0.08)' : 'rgba(255, 255, 255, 0.05)';
+            const ticksColor = isLight ? '#475569' : '#9ca3af';
+            const legendColor = isLight ? '#0f172a' : '#f3f4f6';
+
+            const modelType = document.getElementById('aiModel').value;
+            const predictedPrices = data.forecast[modelType] || data.forecast.lightgbm;
+            
+            // Determine which buy prices to show (actual or predicted)
+            const optRes = activeOptimizationResult || (data.is_historical && data.actual_optimization ? data.actual_optimization : data.optimization);
+            const buyPrices = optRes.hourly_buy_prices;
+            
+            const datasets = [
+                {
+                    label: 'Прогноз цін РДН (грн/МВт-год)',
+                    data: predictedPrices,
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    borderWidth: 3,
+                    tension: 0.3,
+                    fill: true
+                },
+                {
+                    label: 'Ціна купівлі (з мережевими тарифами)',
+                    data: buyPrices,
+                    borderColor: 'rgba(245, 158, 11, 0.6)',
+                    borderWidth: 1.5,
+                    borderDash: [5, 5],
+                    tension: 0.3,
+                    fill: false
+                }
+            ];
+
+            // If actual prices are available, show them too (even if it's tomorrow's forecast)
+            if (data.forecast.actual) {
+                datasets.push({
+                    label: 'Фактичні ціни РДН (грн/МВт-год)',
+                    data: data.forecast.actual,
+                    borderColor: '#10b981',
+                    borderWidth: 2.5,
+                    tension: 0.3,
+                    fill: false
+                });
+            }
+
+            priceChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: data.forecast.hours.map(h => `${h + 1}`),
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    onClick: (event, elements) => {
+                        if (elements.length > 0) {
+                            const elementIndex = elements[0].index;
+                            cycleChartHourMode(elementIndex);
+                        }
+                    },
+                    scales: {
+                        y: {
+                            grid: { color: gridColor },
+                            ticks: { color: ticksColor }
+                        },
+                        x: {
+                            grid: { color: gridColor },
+                            ticks: { color: ticksColor }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            labels: { color: legendColor, font: { family: 'Inter' } }
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderBatteryScheduleChart(data) {
+            const ctx = document.getElementById('batteryChart').getContext('2d');
+            if (batteryChart) {
+                batteryChart.destroy();
+            }
+
+            const isLight = document.body.classList.contains('light-theme');
+            const gridColor = isLight ? 'rgba(15, 23, 42, 0.08)' : 'rgba(255, 255, 255, 0.05)';
+            const ticksColor = isLight ? '#475569' : '#9ca3af';
+            const legendColor = isLight ? '#0f172a' : '#f3f4f6';
+
+            const optRes = activeOptimizationResult || (data.is_historical && data.actual_optimization ? data.actual_optimization : data.optimization);
+            
+            // Build charge/discharge array where charge is positive, discharge is negative
+            const powerSchedule = [];
+            for (let h = 0; h < 24; h++) {
+                if (optRes.charge[h] > 0) {
+                    powerSchedule.push(optRes.charge[h]);
+                } else if (optRes.discharge[h] > 0) {
+                    powerSchedule.push(-optRes.discharge[h]);
+                } else {
+                    powerSchedule.push(0);
+                }
+            }
+
+            batteryChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: Array.from({length: 24}, (_, i) => `${i + 1}`),
+                    datasets: [
+                        {
+                            label: 'Заряд (+) / Розряд (-) (кВт)',
+                            data: powerSchedule,
+                            backgroundColor: powerSchedule.map(v => v >= 0 ? 'rgba(6, 182, 212, 0.6)' : 'rgba(244, 63, 94, 0.6)'),
+                            borderColor: powerSchedule.map(v => v >= 0 ? '#06b6d4' : '#f43f5e'),
+                            borderWidth: 1.5,
+                            yAxisID: 'y_power',
+                        },
+                        {
+                            label: 'Рівень заряду SoC (кВт-год)',
+                            data: optRes.soc.slice(1),
+                            type: 'line',
+                            borderColor: '#10b981',
+                            backgroundColor: 'rgba(16, 185, 129, 0.05)',
+                            borderWidth: 3,
+                            tension: 0.2,
+                            fill: true,
+                            yAxisID: 'y_soc',
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        dragData: {
+                            round: 0,
+                            showTooltip: true,
+                            onDragStart: function(e, datasetIndex, index, value) {
+                                // Only allow dragging the power schedule (dataset index 0)
+                                if (datasetIndex !== 0) return false;
+                                
+                                // Store the original value and mode before drag changes them
+                                if (activeOptimizationResult) {
+                                    dragSourceHour = index;
+                                    dragOriginalCharge = [...activeOptimizationResult.charge];
+                                    dragOriginalDischarge = [...activeOptimizationResult.discharge];
+                                    
+                                    if (activeOptimizationResult.charge[index] > 0.01) {
+                                        dragOriginalMode = 'charge';
+                                        dragOriginalPower = activeOptimizationResult.charge[index];
+                                    } else if (activeOptimizationResult.discharge[index] > 0.01) {
+                                        dragOriginalMode = 'discharge';
+                                        dragOriginalPower = activeOptimizationResult.discharge[index];
+                                    } else {
+                                        dragOriginalMode = 'standby';
+                                        dragOriginalPower = 0;
+                                    }
+                                }
+                            },
+                            onDrag: function(e, datasetIndex, index, value) {
+                                e.target.style.cursor = 'grabbing';
+                            },
+                            onDragEnd: function(e, datasetIndex, index, value) {
+                                e.target.style.cursor = 'default';
+                                
+                                // Identify which hour column the mouse/touch was released on
+                                let targetHour = index;
+                                if (batteryChart && e) {
+                                    const rect = batteryChart.canvas.getBoundingClientRect();
+                                    
+                                    // Handle touch and mouse events safely
+                                    let clientX = 0;
+                                    let clientY = 0;
+                                    if (e.clientX !== undefined) {
+                                        clientX = e.clientX;
+                                        clientY = e.clientY;
+                                    } else if (e.changedTouches && e.changedTouches[0]) {
+                                        clientX = e.changedTouches[0].clientX;
+                                        clientY = e.changedTouches[0].clientY;
+                                    } else if (e.touches && e.touches[0]) {
+                                        clientX = e.touches[0].clientX;
+                                        clientY = e.touches[0].clientY;
+                                    }
+                                    
+                                    // Translate to canvas-relative coordinates
+                                    const canvasX = clientX - rect.left;
+                                    const canvasY = clientY - rect.top;
+                                    
+                                    const fakeEvent = {
+                                        x: canvasX,
+                                        y: canvasY,
+                                        type: 'mouseup',
+                                        native: e
+                                    };
+                                    
+                                    const activeElements = batteryChart.getElementsAtEventForMode(fakeEvent, 'index', { intersect: false }, true);
+                                    if (activeElements.length > 0) {
+                                        targetHour = activeElements[0].index;
+                                    }
+                                }
+                                onChartDragOrMoveEnd(index, targetHour, value);
+                            }
+                        },
+                        legend: {
+                            labels: { color: legendColor, font: { family: 'Inter' } }
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false
+                        }
+                    },
+                    scales: {
+                        y_power: {
+                            type: 'linear',
+                            position: 'left',
+                            title: { display: true, text: 'Потужність АКБ (кВт)', color: ticksColor },
+                            grid: { color: gridColor },
+                            ticks: { color: ticksColor },
+                            min: -parseFloat(document.getElementById('batPower').value || 250),
+                            max: parseFloat(document.getElementById('batPower').value || 250)
+                        },
+                        y_soc: {
+                            type: 'linear',
+                            position: 'right',
+                            title: { display: true, text: 'Рівень заряду (кВт-год)', color: ticksColor },
+                            grid: { drawOnChartArea: false }, // only show grid for left axis
+                            ticks: { color: ticksColor }
+                        },
+                        x: {
+                            grid: { color: gridColor },
+                            ticks: { color: ticksColor }
+                        }
+                    },
+
+                }
+            });
+        }
+
+        // Logging System
+        let systemLogs = [];
+
+        function addSystemLog(source, message, type = 'info') {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString();
+            const log = { time: timeStr, source: source, message: message, type: type };
+            systemLogs.unshift(log);
+            if (systemLogs.length > 100) systemLogs.pop();
+            renderSystemLogs();
+        }
+
+        function renderSystemLogs() {
+            const container = document.getElementById('logContainerConsole');
+            if (!container) return;
+            container.innerHTML = systemLogs.map(log => `
+                <div class="log-row ${log.type}">
+                    <span class="log-time">[${log.time}]</span>
+                    <span class="log-source">[${log.source}]</span>
+                    <span class="log-msg">${log.message}</span>
+                </div>
+            `).join('');
+        }
+
+        function clearSystemLogs() {
+            systemLogs = [];
+            addSystemLog('EMS', 'Консоль логів очищено користувачем', 'info');
+        }
+
+        // Tab Navigation Switcher
+        function switchTab(tabId) {
+            const contents = document.querySelectorAll('.tab-content');
+            contents.forEach(c => c.classList.remove('active'));
+            
+            const buttons = document.querySelectorAll('.tab-btn');
+            buttons.forEach(b => b.classList.remove('active'));
+            
+            const targetContent = document.getElementById('tab-' + tabId);
+            if (targetContent) {
+                targetContent.classList.add('active');
+            }
+            
+            const targetBtn = document.getElementById('tabBtn-' + tabId);
+            if (targetBtn) {
+                targetBtn.classList.add('active');
+            }
+            
+            addSystemLog('UI', 'Переключено на розділ: ' + (targetBtn ? targetBtn.textContent.trim() : tabId), 'info');
+            
+            if (tabId === 'logs') {
+                fetchDbStatus();
+            }
+        }
+
+        // Database Integration Verification
+        function fetchDbStatus() {
+            addSystemLog('DATABASE', 'Запит поточного стану бази даних РДН...', 'info');
+            fetch('/api/db_status')
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('logDbStartDate').textContent = data.details.start_date || '2021-01-01 00:00';
+                    document.getElementById('logDbEndDate').textContent = data.details.end_date || '-';
+                    document.getElementById('logDbHours').textContent = data.details.actual_hours || '-';
+                    document.getElementById('logDbGaps').textContent = data.details.gap_count || '0';
+                    
+                    if (data.status === 'OK') {
+                        addSystemLog('DATABASE', `База даних цілісна. Завантажено ${data.details.actual_hours} годин.`, 'success');
+                    } else if (data.status === 'WARNING') {
+                        addSystemLog('DATABASE', `Попередження бази даних: ${data.warnings.join(', ')}`, 'warning');
+                    } else {
+                        addSystemLog('DATABASE', `Помилка цілісності бази даних: ${data.errors.join(', ')}`, 'error');
+                    }
+                })
+                .catch(err => {
+                    addSystemLog('DATABASE', "Не вдалося з'єднатися з API бази даних: " + err.message, 'error');
+                });
+        }
+
+        // Operational Scenario Loader
+        function loadScenario(presetName) {
+            addSystemLog('SCENARIO', `Запуск сценарію "${presetName}"...`, 'warning');
+            if (presetName === 'base') {
+                document.getElementById('gasPrice').value = 35;
+                document.getElementById('nuclearOutage').value = 15;
+                document.getElementById('solarStrike').value = 0;
+                document.getElementById('marketCoeff').value = 1.0;
+                document.getElementById('vdrVolume').value = 1.0;
+                document.getElementById('gridImport').value = 0;
+                addSystemLog('SCENARIO', 'Сценарій "Базовий" успішно активовано.', 'success');
+            } else if (presetName === 'gas_crisis') {
+                document.getElementById('gasPrice').value = 85;
+                document.getElementById('nuclearOutage').value = 20;
+                document.getElementById('solarStrike').value = 10;
+                document.getElementById('marketCoeff').value = 1.15;
+                addSystemLog('SCENARIO', 'Сценарій "Газова криза" успішно активовано (TTF Газ = 85 EUR/MWh).', 'success');
+            } else if (presetName === 'solar_strike') {
+                document.getElementById('gasPrice').value = 45;
+                document.getElementById('nuclearOutage').value = 15;
+                document.getElementById('solarStrike').value = 50;
+                document.getElementById('marketCoeff').value = 1.1;
+                addSystemLog('SCENARIO', 'Сценарій "Обстріли СЕС" успішно активовано (Втрати СЕС = 50%).', 'success');
+            } else if (presetName === 'nuke_outage') {
+                document.getElementById('gasPrice').value = 50;
+                document.getElementById('nuclearOutage').value = 45;
+                document.getElementById('solarStrike').value = 0;
+                document.getElementById('marketCoeff').value = 1.25;
+                document.getElementById('gridImport').value = 1000;
+                addSystemLog('SCENARIO', 'Сценарій "Дефіцит АЕС" успішно активовано (Ремонт АЕС = 45%).', 'success');
+            } else if (presetName === 'hydro_flood') {
+                document.getElementById('gasPrice').value = 30;
+                document.getElementById('nuclearOutage').value = 10;
+                document.getElementById('solarStrike').value = 0;
+                document.getElementById('marketCoeff').value = 0.8;
+                document.getElementById('vdrVolume').value = 1.5;
+                document.getElementById('gridImport').value = -1200;
+                addSystemLog('SCENARIO', 'Сценарій "Весняна повінь" успішно активовано (Висока робота ГЕС).', 'success');
+            }
+            updateSliderLabels();
+            runForecastAndOptimization();
+            switchTab('dashboard');
+        }
+
+        // Apply Tariff Presets from DSO Directory
+        function applyTariffPreset(distTariff, transTariff) {
+            addSystemLog('TARIFF', 'Оновлення тарифних сіток...', 'info');
+            if (distTariff !== null && distTariff !== undefined) {
+                document.getElementById('tariffDist').value = distTariff;
+                addSystemLog('TARIFF', `Встановлено тариф на розподіл: ${distTariff} грн/МВт-год.`, 'success');
+            }
+            if (transTariff !== null && transTariff !== undefined) {
+                document.getElementById('tariffTrans').value = transTariff;
+                addSystemLog('TARIFF', `Встановлено тариф на передачу: ${transTariff} грн/МВт-год.`, 'success');
+            }
+            saveSettings();
+            runForecastAndOptimization();
+        }
+
+        // Interactive table mode change
+        function onTableModeChange(hour, mode) {
+            if (!activeOptimizationResult) return;
+            const maxPower = parseFloat(document.getElementById('batPower').value) || 250;
+            
+            if (mode === 'charge') {
+                activeOptimizationResult.charge[hour] = maxPower;
+                activeOptimizationResult.discharge[hour] = 0;
+            } else if (mode === 'discharge') {
+                activeOptimizationResult.charge[hour] = 0;
+                activeOptimizationResult.discharge[hour] = maxPower;
+            } else {
+                activeOptimizationResult.charge[hour] = 0;
+                activeOptimizationResult.discharge[hour] = 0;
+            }
+            recalculateManualSchedule();
+        }
+
+        // Interactive table power change
+        function onTablePowerChange(hour, val) {
+            if (!activeOptimizationResult) return;
+            let power = parseFloat(val) || 0;
+            const maxPower = parseFloat(document.getElementById('batPower').value) || 250;
+            power = Math.max(0, Math.min(power, maxPower));
+            
+            if (activeOptimizationResult.charge[hour] > 0) {
+                activeOptimizationResult.charge[hour] = power;
+            } else if (activeOptimizationResult.discharge[hour] > 0) {
+                activeOptimizationResult.discharge[hour] = power;
+            }
+            recalculateManualSchedule();
+        }
+
+        // Chart Drag-and-Drop Power / Hour Adjustment Handler
+        function onChartDragOrMoveEnd(sourceHour, targetHour, value) {
+            if (!activeOptimizationResult) return;
+            
+            // 1. Restore complete snapshot to undo any accidental adjacent bar modifications during dragging
+            activeOptimizationResult.charge = [...dragOriginalCharge];
+            activeOptimizationResult.discharge = [...dragOriginalDischarge];
+            
+            const maxPower = parseFloat(document.getElementById('batPower').value) || 250;
+            let power = parseFloat(value) || 0;
+            power = Math.max(-maxPower, Math.min(power, maxPower));
+            
+            // 2. Identify the true source hour where the drag originally started
+            const trueSourceHour = dragSourceHour !== null ? dragSourceHour : sourceHour;
+            
+            if (trueSourceHour === targetHour) {
+                // Vertical resizing: apply the new height (power)
+                applyPowerToHour(trueSourceHour, power);
+                if (power > 0.01) {
+                    addSystemLog('UI', `Графік: год ${trueSourceHour}:00 переведено в режим ЗАРЯДУ (${power.toFixed(0)} кВт)`, 'warning');
+                } else if (power < -0.01) {
+                    addSystemLog('UI', `Графік: год ${trueSourceHour}:00 переведено в режим РОЗРЯДУ (${(-power).toFixed(0)} кВт)`, 'warning');
+                } else {
+                    addSystemLog('UI', `Графік: год ${trueSourceHour}:00 переведено в режим ОЧІКУВАННЯ`, 'warning');
+                }
+            } else {
+                // Horizontal shift-dragging column: preserve original height and mode!
+                applyPowerToHour(trueSourceHour, 0); // clear original hour
+                
+                // Keep the original power level and mode, ignoring drag height
+                const targetPower = dragOriginalMode === 'charge' ? dragOriginalPower : -dragOriginalPower;
+                applyPowerToHour(targetHour, targetPower);
+                
+                const modeStr = dragOriginalMode === 'charge' ? 'ЗАРЯД' : (dragOriginalMode === 'discharge' ? 'РОЗРЯД' : 'ОЧІКУВАННЯ');
+                addSystemLog('UI', `Переміщено: год ${trueSourceHour}:00 перенесено на год ${targetHour}:00 (${modeStr} ${dragOriginalPower.toFixed(0)} кВт)`, 'info');
+            }
+            
+            // Defer recalculation to avoid Chart.js plugin lifecycle errors
+            setTimeout(recalculateManualSchedule, 50);
+        }
+
+        function applyPowerToHour(hour, power) {
+            if (power > 0.01) {
+                activeOptimizationResult.charge[hour] = power;
+                activeOptimizationResult.discharge[hour] = 0;
+            } else if (power < -0.01) {
+                activeOptimizationResult.charge[hour] = 0;
+                activeOptimizationResult.discharge[hour] = -power;
+            } else {
+                activeOptimizationResult.charge[hour] = 0;
+                activeOptimizationResult.discharge[hour] = 0;
+            }
+        }
+
+        // Chart Click-to-Cycle Mode
+        function cycleChartHourMode(hour) {
+            if (!activeOptimizationResult) return;
+            const maxPower = parseFloat(document.getElementById('batPower').value) || 250;
+            const isCharging = activeOptimizationResult.charge[hour] > 0.01;
+            const isDischarging = activeOptimizationResult.discharge[hour] > 0.01;
+            
+            if (!isCharging && !isDischarging) {
+                // Standby -> Charge
+                activeOptimizationResult.charge[hour] = maxPower;
+                activeOptimizationResult.discharge[hour] = 0;
+                addSystemLog('UI', `Графік: год ${hour}:00 переведено в режим ЗАРЯДУ`, 'warning');
+            } else if (isCharging) {
+                // Charge -> Discharge
+                activeOptimizationResult.charge[hour] = 0;
+                activeOptimizationResult.discharge[hour] = maxPower;
+                addSystemLog('UI', `Графік: год ${hour}:00 переведено в режим РОЗРЯДУ`, 'warning');
+            } else {
+                // Discharge -> Standby
+                activeOptimizationResult.charge[hour] = 0;
+                activeOptimizationResult.discharge[hour] = 0;
+                addSystemLog('UI', `Графік: год ${hour}:00 переведено в режим ОЧІКУВАННЯ`, 'warning');
+            }
+            recalculateManualSchedule();
+        }
+
+        // Reset overridden schedule back to optimal
+        function resetToOptimalSchedule() {
+            if (!lastForecastData) return;
+            addSystemLog('UI', 'Скинуто до оптимального розкладу PuLP Solver', 'info');
+            const isHist = lastForecastData.is_historical && lastForecastData.actual_optimization;
+            activeOptimizationResult = JSON.parse(JSON.stringify(isHist ? lastForecastData.actual_optimization : lastForecastData.optimization));
+            
+            // Reset KPI borders
+            const profitCard = document.getElementById('kpiNetProfit').closest('.kpi-card');
+            if (profitCard) {
+                profitCard.style.borderColor = '';
+                profitCard.style.boxShadow = '';
+            }
+            
+            recalculateManualSchedule();
+        }
+
+        // Explicitly trigger BMS auto-balancing on the current schedule
+        function balanceScheduleBMS() {
+            if (!activeOptimizationResult || !lastForecastData) return;
+            
+            const batCapacity = parseFloat(document.getElementById('batCapacity').value) || 1000;
+            const effCharge = (parseFloat(document.getElementById('effCharge').value) || 95) / 100;
+            const effDischarge = (parseFloat(document.getElementById('effDischarge').value) || 95) / 100;
+            
+            const minSocPct = parseFloat(document.getElementById('minSoc').value) || 10;
+            const maxSocPct = parseFloat(document.getElementById('maxSoc').value) || 90;
+            const minSocKwh = (minSocPct / 100) * batCapacity;
+            const maxSocKwh = (maxSocPct / 100) * batCapacity;
+            
+            const initSocPct = parseFloat(document.getElementById('initSoc').value) || 20;
+            const initialSocKwh = (initSocPct / 100) * batCapacity;
+            
+            addSystemLog('BMS', 'Запуск примусового авто-балансування...', 'warning');
+            
+            let tempSoc = initialSocKwh;
+            
+            // 1. Forward Pass: mutually exclusive and clamp physical constraints
+            for (let t = 0; t < 24; t++) {
+                let pCharge = activeOptimizationResult.charge[t];
+                let pDischarge = activeOptimizationResult.discharge[t];
+                
+                if (pCharge > 0.01 && pDischarge > 0.01) {
+                    if (pCharge >= pDischarge) {
+                        pCharge -= pDischarge;
+                        pDischarge = 0;
+                    } else {
+                        pDischarge -= pCharge;
+                        pCharge = 0;
+                    }
+                    activeOptimizationResult.charge[t] = pCharge;
+                    activeOptimizationResult.discharge[t] = pDischarge;
+                }
+                
+                if (pDischarge > 0.01) {
+                    let maxAllowedDischarge = (tempSoc + pCharge * effCharge - minSocKwh) * effDischarge;
+                    maxAllowedDischarge = Math.max(0, maxAllowedDischarge);
+                    if (pDischarge > maxAllowedDischarge + 0.1) {
+                        pDischarge = maxAllowedDischarge;
+                        activeOptimizationResult.discharge[t] = pDischarge;
+                        addSystemLog('BMS', `Обмеження розряду: год ${t}:00 знижено до ${pDischarge.toFixed(0)} кВт для збереження мін. SoC`, 'warning');
+                    }
+                }
+                
+                let estNextSoc = tempSoc + pCharge * effCharge - pDischarge / effDischarge;
+                
+                if (estNextSoc > maxSocKwh + 0.1) {
+                    let maxAllowedCharge = (maxSocKwh + pDischarge / effDischarge - tempSoc) / effCharge;
+                    maxAllowedCharge = Math.max(0, maxAllowedCharge);
+                    if (pCharge > maxAllowedCharge + 0.1) {
+                        pCharge = maxAllowedCharge;
+                        activeOptimizationResult.charge[t] = pCharge;
+                        addSystemLog('BMS', `Обмеження заряду: год ${t}:00 знижено до ${pCharge.toFixed(0)} кВт для збереження макс. SoC`, 'warning');
+                    }
+                    estNextSoc = tempSoc + pCharge * effCharge - pDischarge / effDischarge;
+                }
+                
+                tempSoc = estNextSoc;
+            }
+            
+            // 2. Backward Pass: restore balance to target initial SoC
+            let finalDeficit = initialSocKwh - tempSoc;
+            if (finalDeficit > 0.1) {
+                for (let t = 23; t >= 0 && finalDeficit > 0.1; t--) {
+                    let pDischarge = activeOptimizationResult.discharge[t];
+                    if (pDischarge > 0.01) {
+                        const maxSoCSaved = pDischarge / effDischarge;
+                        if (maxSoCSaved <= finalDeficit + 0.01) {
+                            activeOptimizationResult.discharge[t] = 0;
+                            finalDeficit -= maxSoCSaved;
+                            addSystemLog('BMS', `Авто-баланс: год ${t}:00 розряд вимкнено`, 'info');
+                        } else {
+                            const reductionKw = finalDeficit * effDischarge;
+                            activeOptimizationResult.discharge[t] -= reductionKw;
+                            finalDeficit = 0;
+                            addSystemLog('BMS', `Авто-баланс: год ${t}:00 розряд зменшено на ${reductionKw.toFixed(0)} кВт`, 'info');
+                        }
+                    }
+                }
+            } else if (finalDeficit < -0.1) {
+                let finalSurplus = -finalDeficit;
+                for (let t = 23; t >= 0 && finalSurplus > 0.1; t--) {
+                    let pCharge = activeOptimizationResult.charge[t];
+                    if (pCharge > 0.01) {
+                        const maxSoCSaved = pCharge * effCharge;
+                        if (maxSoCSaved <= finalSurplus + 0.01) {
+                            activeOptimizationResult.charge[t] = 0;
+                            finalSurplus -= maxSoCSaved;
+                            addSystemLog('BMS', `Авто-баланс: год ${t}:00 заряд вимкнено`, 'info');
+                        } else {
+                            const reductionKw = finalSurplus / effCharge;
+                            activeOptimizationResult.charge[t] -= reductionKw;
+                            finalSurplus = 0;
+                            addSystemLog('BMS', `Авто-баланс: год ${t}:00 заряд зменшено на ${reductionKw.toFixed(0)} кВт`, 'info');
+                        }
+                    }
+                }
+            }
+            
+            addSystemLog('BMS', 'Примусове авто-балансування завершено.', 'success');
+            recalculateManualSchedule();
+        }
+
+        // Mathematical recalculation of manual overrides (Manual Freedom Edition)
+        function recalculateManualSchedule() {
+            if (!activeOptimizationResult || !lastForecastData) return;
+            
+            const batCapacity = parseFloat(document.getElementById('batCapacity').value) || 1000;
+            const effCharge = (parseFloat(document.getElementById('effCharge').value) || 95) / 100;
+            const effDischarge = (parseFloat(document.getElementById('effDischarge').value) || 95) / 100;
+            const degCost = parseFloat(document.getElementById('degCost').value) || 1.2;
+            
+            const minSocPct = parseFloat(document.getElementById('minSoc').value) || 10;
+            const maxSocPct = parseFloat(document.getElementById('maxSoc').value) || 90;
+            const minSocKwh = (minSocPct / 100) * batCapacity;
+            const maxSocKwh = (maxSocPct / 100) * batCapacity;
+            
+            const tariffTrans = (parseFloat(document.getElementById('tariffTrans').value) || 528.57) / 1000;
+            const tariffDist = (parseFloat(document.getElementById('tariffDist').value) || 1500.0) / 1000;
+            const tariffDisp = (parseFloat(document.getElementById('tariffDisp').value) || 104.57) / 1000;
+            const tariffMargin = (parseFloat(document.getElementById('tariffMargin').value) || 100.0) / 1000;
+            const totalBuyTariff = tariffTrans + tariffDist + tariffDisp + tariffMargin;
+            
+            const modelType = document.getElementById('aiModel').value;
+            const predictedPrices = lastForecastData.forecast[modelType] || lastForecastData.forecast.lightgbm;
+            const isHist = lastForecastData.is_historical && lastForecastData.actual_optimization;
+            const basePrices = isHist ? (lastForecastData.forecast.actual || predictedPrices) : predictedPrices;
+            
+            const initSocPct = parseFloat(document.getElementById('initSoc').value) || 20;
+            const initialSocKwh = (initSocPct / 100) * batCapacity;
+            
+            let currentSoc = initialSocKwh;
+            let socArray = [currentSoc];
+            let totalCost = 0;
+            let totalRevenue = 0;
+            let totalDegradation = 0;
+            
+            activeOptimizationResult.hourly_buy_prices = [];
+            activeOptimizationResult.hourly_sell_prices = [];
+            
+            for (let t = 0; t < 24; t++) {
+                const pCharge = activeOptimizationResult.charge[t];
+                const pDischarge = activeOptimizationResult.discharge[t];
+                
+                const pricePerKwh = basePrices[t] / 1000.0;
+                const buyPricePerKwh = pricePerKwh + totalBuyTariff;
+                
+                activeOptimizationResult.hourly_buy_prices.push(buyPricePerKwh * 1000.0);
+                activeOptimizationResult.hourly_sell_prices.push(pricePerKwh * 1000.0);
+                
+                if (pCharge > 0) {
+                    currentSoc = currentSoc + pCharge * effCharge;
+                    totalCost += pCharge * buyPricePerKwh;
+                } else if (pDischarge > 0) {
+                    currentSoc = currentSoc - (pDischarge / effDischarge);
+                    totalRevenue += pDischarge * pricePerKwh;
+                    totalDegradation += pDischarge * degCost;
+                }
+                socArray.push(currentSoc);
+            }
+            
+            activeOptimizationResult.soc = socArray;
+            activeOptimizationResult.net_profit_uah = totalRevenue - totalCost - totalDegradation;
+            activeOptimizationResult.cost_charging_uah = totalCost;
+            activeOptimizationResult.revenue_discharging_uah = totalRevenue;
+            activeOptimizationResult.degradation_cost_uah = totalDegradation;
+            activeOptimizationResult.cycles_used = activeOptimizationResult.discharge.reduce((a, b) => a + b, 0) / batCapacity;
+            
+            // Check violations
+            let hasViolation = false;
+            for (let t = 0; t <= 24; t++) {
+                if (socArray[t] < minSocKwh - 0.01 || socArray[t] > maxSocKwh + 0.01) {
+                    hasViolation = true;
+                    break;
+                }
+            }
+            
+            // Check if overridden compared to optimal solver
+            const solverRes = isHist ? lastForecastData.actual_optimization : lastForecastData.optimization;
+            let isOverridden = false;
+            for (let t = 0; t < 24; t++) {
+                if (Math.abs(activeOptimizationResult.charge[t] - solverRes.charge[t]) > 0.1 ||
+                    Math.abs(activeOptimizationResult.discharge[t] - solverRes.discharge[t]) > 0.1) {
+                    isOverridden = true;
+                    break;
+                }
+            }
+            
+            // Update KPIs
+            if (isOverridden) {
+                document.getElementById('kpiNetProfit').innerHTML = `
+                    ${activeOptimizationResult.net_profit_uah.toFixed(0)} грн
+                    <span class="manual-badge" style="display:block; font-size:0.65rem; font-weight:600; color:var(--color-warning); margin-top:0.2rem;">
+                        <i data-lucide="user" style="width:10px;height:10px;display:inline-block;vertical-align:middle;"></i> Ручне керування
+                    </span>
+                `;
+                const profitCard = document.getElementById('kpiNetProfit').closest('.kpi-card');
+                if (profitCard) {
+                    profitCard.style.borderColor = 'var(--color-warning)';
+                    profitCard.style.boxShadow = '0 0 10px rgba(217, 119, 6, 0.15)';
+                }
+            } else {
+                document.getElementById('kpiNetProfit').textContent = activeOptimizationResult.net_profit_uah.toFixed(0) + ' грн';
+                const profitCard = document.getElementById('kpiNetProfit').closest('.kpi-card');
+                if (profitCard) {
+                    profitCard.style.borderColor = '';
+                    profitCard.style.boxShadow = '';
+                }
+            }
+            
+            document.getElementById('kpiChargeCost').textContent = activeOptimizationResult.cost_charging_uah.toFixed(0) + ' грн';
+            document.getElementById('kpiDischargeRevenue').textContent = activeOptimizationResult.revenue_discharging_uah.toFixed(0) + ' грн';
+            document.getElementById('kpiCycles').textContent = activeOptimizationResult.cycles_used.toFixed(2);
+            
+            // Update the SoC Badge dynamically with start and end SoC levels
+            const socBadge = document.getElementById('socBadge');
+            if (socBadge) {
+                const startPct = initSocPct;
+                const endPct = ((socArray[24] / batCapacity) * 100).toFixed(0);
+                socBadge.innerHTML = `<i data-lucide="battery" style="width:14px;height:14px;display:inline-block;vertical-align:middle;"></i> Стан заряду (SoC): Початковий ${startPct}% ➔ Кінцевий ${endPct}%`;
+                lucide.createIcons();
+            }
+            
+            // Re-render plots and tables
+            renderPriceChart(lastForecastData);
+            renderBatteryScheduleChart(lastForecastData);
+            renderHourlyTable(lastForecastData);
+            
+            if (isUserTriggered()) {
+                if (hasViolation) {
+                    addSystemLog('SOLVER', 'Попередження: Ручний графік порушує технічні ліміти SoC батареї!', 'warning');
+                } else {
+                    addSystemLog('SOLVER', 'Перерахунок виконано. Новий прибуток: ' + activeOptimizationResult.net_profit_uah.toFixed(0) + ' грн', 'success');
+                }
+            }
+            lucide.createIcons();
+        }
+
+        // Helper to check if recalculation is from user action
+        let logSuppressor = false;
+        function isUserTriggered() {
+            if (logSuppressor) return false;
+            return true;
+        }
+
+        // Render Hourly Schedule Detail Table (Interactive Edition)
+        function renderHourlyTable(data) {
+            const tbody = document.getElementById('hourlyTableBody');
+            if (!tbody) return;
+            
+            logSuppressor = true; // suppress redundant solver logs during render
+            const optRes = activeOptimizationResult || (data.is_historical && data.actual_optimization ? data.actual_optimization : data.optimization);
+            const modelType = document.getElementById('aiModel').value;
+            const predictedPrices = data.forecast[modelType] || data.forecast.lightgbm;
+            
+            const batCapacity = parseFloat(document.getElementById('batCapacity').value) || 1000;
+            const maxPower = parseFloat(document.getElementById('batPower').value) || 250;
+            const degCost = parseFloat(document.getElementById('degCost').value) || 1.2;
+            
+            const minSocPct = parseFloat(document.getElementById('minSoc').value) || 10;
+            const maxSocPct = parseFloat(document.getElementById('maxSoc').value) || 90;
+            const minSocKwh = (minSocPct / 100) * batCapacity;
+            const maxSocKwh = (maxSocPct / 100) * batCapacity;
+            
+            let html = '';
+            for (let t = 0; t < 24; t++) {
+                const hourStr = `${String(t).padStart(2, '0')}:00 - ${String(t + 1).padStart(2, '0')}:00`;
+                const priceForecast = predictedPrices[t] ? predictedPrices[t].toFixed(0) : '-';
+                const priceActual = (data.forecast.actual && data.forecast.actual[t]) ? data.forecast.actual[t].toFixed(0) : '-';
+                const priceBuyWithTariff = optRes.hourly_buy_prices[t] ? optRes.hourly_buy_prices[t].toFixed(0) : '-';
+                
+                let mode = 'standby';
+                let powerVal = 0;
+                let hourlyProfit = 0;
+                
+                if (optRes.charge[t] > 0.01) {
+                    mode = 'charge';
+                    powerVal = optRes.charge[t];
+                    hourlyProfit = -(optRes.charge[t] * (optRes.hourly_buy_prices[t] / 1000.0));
+                } else if (optRes.discharge[t] > 0.01) {
+                    mode = 'discharge';
+                    powerVal = optRes.discharge[t];
+                    hourlyProfit = (optRes.discharge[t] * (optRes.hourly_sell_prices[t] / 1000.0)) - (optRes.discharge[t] * degCost);
+                }
+                
+                const endSocKwh = optRes.soc[t + 1];
+                const endSocPct = ((endSocKwh / batCapacity) * 100).toFixed(0);
+                
+                const isViolated = endSocKwh < minSocKwh - 0.01 || endSocKwh > maxSocKwh + 0.01;
+                const violationStyle = isViolated ? 'color: var(--color-error); font-weight: 700; background: rgba(220, 38, 38, 0.1);' : '';
+                
+                let profitStyle = '';
+                let profitPrefix = '';
+                if (hourlyProfit > 0.01) {
+                    profitStyle = 'color: var(--color-success); font-weight: 600;';
+                    profitPrefix = '+';
+                } else if (hourlyProfit < -0.01) {
+                    profitStyle = 'color: var(--color-discharge);';
+                }
+                
+                const profitText = hourlyProfit !== 0 ? `${profitPrefix}${hourlyProfit.toFixed(0)}` : '0';
+                
+                html += `
+                    <tr style="${isViolated ? 'background: rgba(220, 38, 38, 0.02);' : ''}">
+                        <td>${hourStr}</td>
+                        <td>${priceForecast}</td>
+                        <td>${priceActual}</td>
+                        <td>${priceBuyWithTariff}</td>
+                        <td>
+                            <select class="form-control table-select" onchange="onTableModeChange(${t}, this.value)" style="padding: 0.25rem 0.5rem; font-size: 0.8rem; background: rgba(0,0,0,0.2); border: 1px solid var(--panel-border); color: var(--text-primary); border-radius: 6px;">
+                                <option value="standby" ${mode === 'standby' ? 'selected' : ''}>Очікування</option>
+                                <option value="charge" ${mode === 'charge' ? 'selected' : ''}>Заряд</option>
+                                <option value="discharge" ${mode === 'discharge' ? 'selected' : ''}>Розряд</option>
+                            </select>
+                        </td>
+                        <td>
+                            <input type="number" class="form-control table-input" value="${powerVal.toFixed(0)}" min="0" max="${maxPower}" onchange="onTablePowerChange(${t}, this.value)" style="width: 80px; padding: 0.25rem 0.5rem; font-size: 0.8rem; background: rgba(0,0,0,0.2); border: 1px solid var(--panel-border); color: var(--text-primary); border-radius: 6px; text-align: center;" ${mode === 'standby' ? 'disabled' : ''}>
+                        </td>
+                        <td style="${violationStyle}">${endSocKwh.toFixed(0)}</td>
+                        <td style="${violationStyle}">${endSocPct}%</td>
+                        <td style="${profitStyle}">${profitText} грн</td>
+                    </tr>
+                `;
+            }
+            
+            tbody.innerHTML = html;
+            logSuppressor = false;
+            lucide.createIcons();
+        }
+
+        // Export Hourly Schedule Detail to CSV
+        function exportHourlyTable() {
+            if (!lastForecastData) {
+                alert('Неможливо експортувати: спочатку розрахуйте розклад');
+                return;
+            }
+            
+            const isHist = lastForecastData.is_historical && lastForecastData.actual_optimization;
+            const optRes = isHist ? lastForecastData.actual_optimization : lastForecastData.optimization;
+            const modelType = document.getElementById('aiModel').value;
+            const predictedPrices = lastForecastData.forecast[modelType] || lastForecastData.forecast.lightgbm;
+            const batCapacity = parseFloat(document.getElementById('batCapacity').value) || 1000;
+            const degCost = parseFloat(document.getElementById('degCost').value) || 1.2;
+            
+            let csv = 'Hour,Forecast DAM (UAH/MWh),Actual DAM (UAH/MWh),Buy Price with Tariffs (UAH/MWh),BESS Mode,BESS Power (kW),End SoC (kWh),End SoC (%),Hourly Profit (UAH)\n';
+            
+            for (let t = 0; t < 24; t++) {
+                const hourStr = `"${t}:00 - ${t + 1}:00"`;
+                const priceForecast = predictedPrices[t] ? predictedPrices[t].toFixed(2) : '0';
+                const priceActual = (lastForecastData.forecast.actual && lastForecastData.forecast.actual[t]) ? lastForecastData.forecast.actual[t].toFixed(2) : '0';
+                const priceBuyWithTariff = optRes.hourly_buy_prices[t] ? optRes.hourly_buy_prices[t].toFixed(2) : '0';
+                
+                let mode = 'Standby';
+                let powerVal = 0;
+                let hourlyProfit = 0;
+                
+                if (optRes.charge[t] > 0.01) {
+                    mode = 'Charge';
+                    powerVal = optRes.charge[t];
+                    hourlyProfit = -(optRes.charge[t] * (optRes.hourly_buy_prices[t] / 1000.0));
+                } else if (optRes.discharge[t] > 0.01) {
+                    mode = 'Discharge';
+                    powerVal = -optRes.discharge[t];
+                    hourlyProfit = (optRes.discharge[t] * (optRes.hourly_sell_prices[t] / 1000.0)) - (optRes.discharge[t] * degCost);
+                }
+                
+                const endSocKwh = optRes.soc[t + 1];
+                const endSocPct = ((endSocKwh / batCapacity) * 100).toFixed(1);
+                
+                csv += `${hourStr},${priceForecast},${priceActual},${priceBuyWithTariff},${mode},${powerVal.toFixed(1)},${endSocKwh.toFixed(1)},${endSocPct},${hourlyProfit.toFixed(2)}\n`;
+            }
+            
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', `BESS_arbitrage_schedule_${lastForecastData.date}.csv`);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            addSystemLog('UI', 'Графік успішно експортовано в CSV', 'success');
+        }
+
+        // Seed initial system logs
+        setTimeout(() => {
+            addSystemLog('EMS', 'Ініціалізація UA Energy Arbitrage AI EMS v2.0...', 'info');
+            addSystemLog('DATABASE', 'Завантаження історичних цін РДН з 2021 року...', 'info');
+            addSystemLog('MODEL', 'Завантаження моделей прогнозування MLP & XGBoost...', 'info');
+            addSystemLog('EMS', 'EMS Інтерфейс успішно адаптовано.', 'success');
+            fetchDbStatus();
+        }, 500);
+
+        // On Page Load
+        const savedTheme = localStorage.getItem('BESS_theme') || 'dark';
+        applyTheme(savedTheme);
+        loadSettings();
+        updateSliderLabels();
+        fetchMetrics();
+        // Trigger initial forecast run for default date
+        runForecastAndOptimization();
+    </script>
+</body>
+</html>
