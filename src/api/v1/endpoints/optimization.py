@@ -47,8 +47,15 @@ def run_optimization_background_job(
             PriceForecast.forecast_run_at == target_dt_start
         ).order_by(PriceForecast.timestamp).all()
         
+        price_lower = None
+        price_upper = None
         if len(forecasts) == 24:
             prices = [f.predicted_price_uah for f in forecasts]
+            # P10/P90 conformal-калібрований інтервал (Фаза 3), якщо forecast/run
+            # його порахував — реальні квантилі замість вигаданого ±1.64σ.
+            if all(f.lower_bound_uah is not None and f.upper_bound_uah is not None for f in forecasts):
+                price_lower = [f.lower_bound_uah for f in forecasts]
+                price_upper = [f.upper_bound_uah for f in forecasts]
         else:
             # Generate mock prices if DB is empty
             prices = [
@@ -57,7 +64,7 @@ def run_optimization_background_job(
                 2000.0, 1800.0, 1200.0, 1000.0, 1500.0, 2200.0,
                 4500.0, 6000.0, 7500.0, 8500.0, 6500.0, 4500.0
             ]
-            
+
         battery_params = {
             'battery_capacity': asset.capacity_mwh * 1000.0,
             'max_charge_power': asset.power_mw * 1000.0,
@@ -79,6 +86,8 @@ def run_optimization_background_job(
         # Run scenarios and VaR
         scenarios_results = opt.optimize_with_scenarios_and_risks(
             prices=prices,
+            price_lower=price_lower,
+            price_upper=price_upper,
             num_simulations=simulations_count,
             **battery_params
         )
@@ -120,6 +129,7 @@ def run_optimization_background_job(
 
 @router.post("/run", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
 async def run_optimization(req: RunOptimizationRequest, background_tasks: BackgroundTasks):
+    job_id = f"job_opt_{uuid.uuid4().hex[:8]}"
     created_at = datetime.datetime.utcnow().isoformat() + "Z"
     job = {
         "job_id": job_id,
@@ -218,14 +228,16 @@ async def get_manual_overrides(asset_id: str, date: str):
         for p in plans:
             plan_map[p.timestamp.hour] = p
             
-        # Get base market prices from CSV or database for prices fallback
+        # Get base market prices: реальна ціна за факт (якщо доба вже минула),
+        # інакше — реальний збережений прогноз (PriceForecast), і лише як
+        # останній fallback — умовна константа (немає ні факту, ні прогнозу).
         import pandas as pd
         import os
         csv_path = os.path.join(settings.DATA_DIR, "historical_data_merged.csv")
         if not os.path.exists(csv_path):
             csv_path = "/home/oleg/agy_energo/data/historical_data_merged.csv"
-            
-        day_prices = [3000.0] * 24
+
+        day_prices = None
         try:
             if os.path.exists(csv_path):
                 df = pd.read_csv(csv_path)
@@ -235,6 +247,16 @@ async def get_manual_overrides(asset_id: str, date: str):
                     day_prices = df_day['Price'].tolist()
         except Exception:
             pass
+
+        if day_prices is None:
+            forecasts = db.query(PriceForecast).filter(
+                PriceForecast.forecast_run_at == dt_start
+            ).order_by(PriceForecast.timestamp).all()
+            if len(forecasts) == 24:
+                day_prices = [f.predicted_price_uah for f in forecasts]
+
+        if day_prices is None:
+            day_prices = [3000.0] * 24
             
         schedule = []
         for hour in range(24):
@@ -333,29 +355,50 @@ class SystemSettingsModel(BaseModel):
 
 @router.get("/settings", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
 async def get_system_settings():
+    """
+    launch_date/osr/voltage_class/margin — з JSON (не мають окремого поля в
+    Asset). capacity_kw/power_kw/efficiency_pct — З ТАБЛИЦІ Asset, тієї самої,
+    яку реально використовують optimization/run і scheduler для розрахунку
+    графіка. Раніше ці два джерела були розсинхронізовані: форма показувала
+    значення з JSON, а MILP рахував на зовсім інших числах з Asset — диспетчер
+    бачив налаштування "4000 кВт-год", а графік будувався на застарілих 1000
+    (реальний баг, знайдений і виправлений).
+    """
     import json
     import os
     path = os.path.join(settings.DATA_DIR, "system_settings.json")
-    
-    # Defaults
+
     data = {
         "launch_date": settings.BESS_LAUNCH_DATE,
         "osr": "dtek_kiev",
         "voltage_class": 1,
         "margin": 100.0,
-        "capacity_kw": 2000.0,
-        "power_kw": 1000.0,
-        "efficiency_pct": 95.0
     }
-    
+
     if os.path.exists(path):
         try:
             with open(path, "r") as f:
                 saved = json.load(f)
-                data.update(saved)
+                for key in ("launch_date", "osr", "voltage_class", "margin"):
+                    if key in saved:
+                        data[key] = saved[key]
         except Exception:
             pass
-            
+
+    db = SessionLocal()
+    try:
+        asset = db.query(Asset).first()
+        if asset:
+            data["capacity_kw"] = asset.capacity_mwh * 1000.0
+            data["power_kw"] = asset.power_mw * 1000.0
+            data["efficiency_pct"] = ((asset.efficiency_charge + asset.efficiency_discharge) / 2.0) * 100.0
+        else:
+            data["capacity_kw"] = 2000.0
+            data["power_kw"] = 1000.0
+            data["efficiency_pct"] = 95.0
+    finally:
+        db.close()
+
     return data
 
 @router.post("/settings", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
@@ -363,22 +406,31 @@ async def save_system_settings(req: SystemSettingsModel):
     import json
     import os
     path = os.path.join(settings.DATA_DIR, "system_settings.json")
-    
+
+    db = SessionLocal()
     try:
         data = {
             "launch_date": req.launch_date,
             "osr": req.osr,
             "voltage_class": req.voltage_class,
             "margin": req.margin,
-            "capacity_kw": req.capacity_kw,
-            "power_kw": req.power_kw,
-            "efficiency_pct": req.efficiency_pct
         }
-        
+
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
             json.dump(data, f)
-            
+
+        # Технічні параметри батареї — пишемо в Asset, а не тільки в JSON:
+        # саме звідси їх бере MILP-оптимізатор (optimization/run, scheduler).
+        asset = db.query(Asset).first()
+        if asset:
+            asset.capacity_mwh = req.capacity_kw / 1000.0
+            asset.power_mw = req.power_kw / 1000.0
+            eff = req.efficiency_pct / 100.0
+            asset.efficiency_charge = eff
+            asset.efficiency_discharge = eff
+            db.commit()
+
         # Invalidate executive cache file
         cache_dir = settings.DATA_DIR
         for file in os.listdir(cache_dir):
@@ -387,10 +439,13 @@ async def save_system_settings(req: SystemSettingsModel):
                     os.remove(os.path.join(cache_dir, file))
                 except:
                     pass
-                    
+
         return {
             "status": "success",
             "message": "System settings saved successfully and cache cleared."
         }
     except Exception as e:
+        db.rollback()
         raise HTTPException(status_code=500, detail=f"Error saving settings: {str(e)}")
+    finally:
+        db.close()

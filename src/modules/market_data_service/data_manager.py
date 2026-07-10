@@ -9,6 +9,9 @@ import numpy as np
 from bs4 import BeautifulSoup
 
 from src.core.config import settings
+import src.modules.external_data_service.gas_price as ext_gas
+import src.modules.external_data_service.telegram_public as ext_tg
+import src.modules.external_data_service.entsoe as ext_entsoe
 
 # Load parameters from settings
 LAT = settings.LAT
@@ -35,21 +38,26 @@ def parse_prices_file(filepath):
     
     return melted[['Datetime', 'Price']].sort_values('Datetime').reset_index(drop=True)
 
-def fetch_oree_prices_for_month(month, year):
-    cache_path = os.path.join(DATA_DIR, "prices_cache", f"prices_{year}_{month:02d}.csv")
+def fetch_oree_market_month(month, year, market='DAM', value_col='Price', cache_subdir='prices_cache'):
+    """
+    Общий загрузчик почасовых цен с oree.com.ua (ДП «Оператор ринку»).
+    Используется и для РДН (market='DAM'), и для ВДР/внутрішньодобового ринку
+    (market='IDM') — обе таблицы имеют идентичную структуру (дата + 24 колонки годин).
+    """
+    cache_path = os.path.join(DATA_DIR, cache_subdir, f"{market.lower()}_{year}_{month:02d}.csv")
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-    
+
     now = datetime.datetime.now()
     is_current_month = (year == now.year) and (month == now.month)
-    
+
     if os.path.exists(cache_path) and not is_current_month:
         try:
             df = pd.read_csv(cache_path)
             df['Datetime'] = pd.to_datetime(df['Datetime'])
             return df
         except Exception as e:
-            print(f"Error reading price cache: {e}")
-            
+            print(f"Error reading {market} cache: {e}")
+
     url = "https://www.oree.com.ua/index.php/pricectr/data_view"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -57,10 +65,10 @@ def fetch_oree_prices_for_month(month, year):
     date_str = f"{month:02d}.{year}"
     data = {
         'date': date_str,
-        'market': 'DAM',
+        'market': market,
         'zone': 'IPS'
     }
-    
+
     retries = 3
     for attempt in range(retries):
         try:
@@ -71,13 +79,13 @@ def fetch_oree_prices_for_month(month, year):
                 if not content:
                     time.sleep(1.5)
                     continue
-                    
+
                 soup = BeautifulSoup(content, 'html.parser')
                 table = soup.find('table', id='price_table')
                 if table:
                     rows = table.find('tbody').find_all('tr') if table.find('tbody') else table.find_all('tr')
                     records = []
-                    
+
                     for row in rows:
                         cols = [td.text.strip() for td in row.find_all(['td', 'th'])]
                         if cols and re.match(r'^\d{2}\.\d{2}\.\d{4}$', cols[0]):
@@ -88,18 +96,18 @@ def fetch_oree_prices_for_month(month, year):
                                     try:
                                         price = float(price_str)
                                         dt = pd.to_datetime(date_val, format='%d.%m.%Y') + pd.to_timedelta(h, unit='h')
-                                        records.append({'Datetime': dt, 'Price': price})
+                                        records.append({'Datetime': dt, value_col: price})
                                     except ValueError:
                                         pass
-                                        
+
                     if records:
                         df = pd.DataFrame(records).sort_values('Datetime').reset_index(drop=True)
                         df.to_csv(cache_path, index=False)
                         return df
         except Exception as e:
-            print(f"Error fetching oree prices: {e}")
+            print(f"Error fetching oree {market} data: {e}")
         time.sleep(2.0 * (attempt + 1))
-        
+
     if os.path.exists(cache_path):
         try:
             df = pd.read_csv(cache_path)
@@ -108,6 +116,9 @@ def fetch_oree_prices_for_month(month, year):
         except:
             pass
     return pd.DataFrame()
+
+def fetch_oree_prices_for_month(month, year):
+    return fetch_oree_market_month(month, year, market='DAM', value_col='Price', cache_subdir='prices_cache')
 
 def fetch_oree_prices_full_history():
     now = datetime.datetime.now()
@@ -205,27 +216,57 @@ def get_combined_historical_data():
     if prices.empty:
         raise ValueError("Could not fetch price history from oree.com.ua!")
     prices['Price'] = prices['Price'].interpolate(method='linear').bfill().ffill()
-    
+
+    # Реальний ВДР (внутрішньодобовий ринок) — окремий модуль, лежить тут,
+    # а не в add_real_market_factors, щоб уникнути циклічного імпорту
+    # (external_data_service.intraday_market імпортує цей файл).
+    import src.modules.external_data_service.intraday_market as ext_idm
+    prices = ext_idm.merge_idm_into_prices(prices)
+
     weather = fetch_weather_archive_full(start_year=2021)
     if weather.empty:
         raise ValueError("Could not fetch weather history!")
-        
+
     merged = pd.merge(prices, weather, on='Datetime', how='inner')
-    merged = add_generation_and_market_factors(merged)
-    
+    merged = add_real_market_factors(merged)
+
     os.makedirs(DATA_DIR, exist_ok=True)
     merged.to_csv(MERGED_DATA_PATH, index=False)
     sync_realtime_data(force=True)
     return pd.read_csv(MERGED_DATA_PATH)
 
-def add_generation_and_market_factors(df):
+def add_real_market_factors(df):
+    """
+    Замінює колишній add_generation_and_market_factors (np.random-шум) на
+    реальні джерела. Nuclear_Gen/Hydro_Gen/Thermal_Gen прибрані повністю —
+    Україна припинила публікацію генерації по типах в ENTSO-E з 25.02.2022
+    (воєнне обмеження, підтверджено розвідкою) і не відновлювала — чесного
+    джерела для них немає. Grid_Net_Export_MW — РЕАЛЬНІ транскордонні
+    перетоки (звітуються сусідами: PL/RO/SK/HU/MD), доступні безперервно
+    2021-сьогодні. Solar_Gen/Wind_Gen — детермінована фізична оцінка з
+    РЕАЛЬНОЇ погоди (радіація, вітер), а не вигадка.
+    """
     df = df.copy()
-    df['Day_of_Year'] = df['Datetime'].dt.dayofyear
     df['Month'] = df['Datetime'].dt.month
     df['Hour'] = df['Datetime'].dt.hour
-    
+    df['Date'] = df['Datetime'].dt.normalize()
+
+    flow = ext_entsoe.fetch_net_export_series(start_year=2021)
+    if not flow.empty:
+        df = df.merge(flow, on='Datetime', how='left')
+    else:
+        df['Grid_Net_Export_MW'] = np.nan
+
+    # Експериментальна ознака (поки НЕ в продових FEATURES моделі — див.
+    # ml_pipeline.py): реальна день-наперед ціна сусідніх зон ENTSO-E.
+    dam_eu = ext_entsoe.fetch_eu_dam_price_series(start_year=2021)
+    if not dam_eu.empty:
+        df = df.merge(dam_eu, on='Datetime', how='left')
+    else:
+        df['EU_DAM_Price_EUR_MWh'] = np.nan
+
     df['Solar_Gen'] = np.clip(6500.0 * (df['Shortwave_Radiation'] / 1000.0) * (1.0 - 0.003 * (df['Temperature'] - 25.0)), 0.0, 5500.0)
-    
+
     def wind_curve(ws):
         if ws < 8.0 or ws > 80.0:
             return 0.0
@@ -234,33 +275,33 @@ def add_generation_and_market_factors(df):
         else:
             return 1800.0 * ((ws - 8.0) / (45.0 - 8.0)) ** 3
     df['Wind_Gen'] = df['Wind_Speed'].apply(wind_curve)
-    
-    np.random.seed(42)
-    nuke_base = 8500.0 - 2500.0 * (df['Month'].isin([6, 7, 8])).astype(float)
-    nuke_noise = np.random.normal(0, 150, size=len(df))
-    df['Nuclear_Gen'] = np.clip(nuke_base + nuke_noise, 4000.0, 9500.0)
-    
-    base_gas = 35.0
-    seasonal_gas = 12.0 * np.cos(2 * np.pi * (df['Day_of_Year'] - 15) / 365.0)
-    noise_gas = np.random.normal(0, 2.5, size=len(df))
-    trend_gas = np.cumsum(np.random.normal(0, 0.05, size=len(df)))
-    df['Gas_Price'] = np.clip(base_gas + seasonal_gas + noise_gas + trend_gas, 15.0, 90.0)
-    
-    df['Nuclear_Outage'] = (9500.0 - df['Nuclear_Gen']) / 9500.0
-    
-    df['Solar_Strike'] = 0.0
-    df.loc[(df['Datetime'].dt.year == 2024) & (df['Month'] == 6) & (df['Datetime'].dt.day.between(5, 15)), 'Solar_Strike'] = 0.35
-    df.loc[(df['Datetime'].dt.year == 2025) & (df['Month'] == 7) & (df['Datetime'].dt.day.between(10, 18)), 'Solar_Strike'] = 0.40
-    
-    df['Solar_Gen'] = df['Solar_Gen'] * (1.0 - df['Solar_Strike'])
-    df['Market_Coeff'] = 1.0
-    df['VDR_Volume'] = np.clip(1.0 + np.random.normal(0, 0.15, size=len(df)), 0.3, 1.8)
-    df['Grid_Import_Export'] = 400.0 * np.sin(2 * np.pi * (df['Day_of_Year'] - 80) / 365.0) + 200.0 * (df['Hour'].isin([8,9,10,18,19,20,21])).astype(float)
-    
-    df['Hydro_Gen'] = np.clip(800.0 + 700.0 * df['Hour'].isin([8,9,10,18,19,20,21]).astype(float) + np.random.normal(0, 80, size=len(df)), 200.0, 2000.0)
-    df['Thermal_Gen'] = np.clip(12000.0 - df['Nuclear_Gen'] - df['Solar_Gen'] - df['Wind_Gen'] - df['Grid_Import_Export'] - df['Hydro_Gen'], 1500.0, 7500.0)
-    
-    return df.drop(columns=['Day_of_Year'])
+
+    # Реальний накопичувальний лог ціни газу (росте з часом; NaN до початку збору)
+    gas_log = ext_gas.load_daily_log()
+    if not gas_log.empty:
+        gas_log = gas_log.rename(columns={'Date': 'Date'})
+        df = df.merge(gas_log, on='Date', how='left')
+    else:
+        df['Gas_Price_EUR_MWh'] = np.nan
+
+    # Реальний keyword-сигнал зі публічних каналів Укренерго/Міненерго
+    stress = ext_tg.daily_grid_stress_signal()
+    if stress:
+        stress_df = pd.DataFrame([
+            {'Date': pd.to_datetime(k), **v} for k, v in stress.items()
+        ])
+        df = df.merge(stress_df, on='Date', how='left')
+    for col in ['grid_stress_high', 'grid_stress_medium', 'mentions']:
+        if col not in df.columns:
+            df[col] = 0
+        df[col] = df[col].fillna(0)
+    df = df.rename(columns={
+        'grid_stress_high': 'Grid_Stress_High',
+        'grid_stress_medium': 'Grid_Stress_Medium',
+        'mentions': 'Telegram_Mentions',
+    })
+
+    return df.drop(columns=['Date'])
 
 def sync_realtime_data(force=False):
     if not force and os.path.exists(MERGED_DATA_PATH):
@@ -324,11 +365,16 @@ def sync_realtime_data(force=False):
             })
         df_weather = pd.DataFrame(records)
         
+    import src.modules.external_data_service.intraday_market as ext_idm
+    df_prices = ext_idm.merge_idm_into_prices(df_prices)
+
     new_month_data = pd.merge(df_prices, df_weather, on='Datetime', how='inner')
     if new_month_data.empty:
         return False
-        
-    new_month_data = add_generation_and_market_factors(new_month_data)
+
+    new_month_data = add_real_market_factors(new_month_data)
+    ext_gas.append_daily_snapshot()
+    ext_tg.sync_all(max_pages=2)
     
     if os.path.exists(MERGED_DATA_PATH):
         try:
@@ -487,7 +533,8 @@ def verify_data_completeness():
             
         required_cols = [
             'Price', 'Temperature', 'Cloud_Cover', 'Wind_Speed', 'Shortwave_Radiation',
-            'Solar_Gen', 'Wind_Gen', 'Nuclear_Gen', 'Hydro_Gen', 'Thermal_Gen', 'Grid_Import_Export'
+            'Solar_Gen', 'Wind_Gen', 'IDM_Price', 'DAM_IDM_Spread', 'Grid_Net_Export_MW',
+            'Gas_Price_EUR_MWh', 'Grid_Stress_High', 'Grid_Stress_Medium', 'Telegram_Mentions'
         ]
         
         missing_cols = [c for c in required_cols if c not in df.columns]

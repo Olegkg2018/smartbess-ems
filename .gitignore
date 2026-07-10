@@ -17,8 +17,19 @@ ua-energy-arbitrage/
 # Large model / data files
 data/prices_cache/
 data/historical_data_merged.csv
+data/historical_data_merged.csv.bak*
 data/model_*.pkl
 data/scaler.pkl
 data/metrics_report.json
 data/weather_archive_*.csv
 data/executive_cache_*.json
+
+# Regenerable external-data caches and backtest report artifacts
+data/external_cache/
+data/idm_cache/
+data/backtest_report.json
+data/conformal_calibration.json
+data/quantile_coverage_report.json
+
+# Claude Code project config (local tooling, not app code)
+.claude/

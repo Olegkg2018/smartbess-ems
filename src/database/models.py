@@ -32,7 +32,7 @@ class MarketPrice(Base):
     __tablename__ = "market_prices"
 
     timestamp = Column(DateTime, primary_key=True, nullable=False)
-    price_eur = Column(Float, nullable=False)
+    price_eur = Column(Float, nullable=True)  # немає чесного відкритого курсу без окремої інтеграції — не вигадуємо
     price_uah = Column(Float, nullable=False)
     volume_mwh = Column(Float, nullable=True)
     area = Column(String(10), default="UA_IPS")

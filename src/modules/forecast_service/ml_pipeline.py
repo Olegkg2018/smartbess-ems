@@ -3,35 +3,62 @@ import json
 import pickle
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.preprocessing import StandardScaler
 from xgboost import XGBRegressor
 from sklearn.neural_network import MLPRegressor
-from lightgbm import LGBMRegressor
+from lightgbm import LGBMRegressor, LGBMClassifier
 
 from src.core.config import settings
 import src.modules.market_data_service.data_manager as dm
+from src.modules.tariff_service.services import TariffService
 
 DATA_DIR = settings.DATA_DIR
+PRICE_FLOOR = TariffService.PRICE_FLOOR_UAH_MWH
+PRICE_CAP = 16000.0
 LGBM_MODEL_PATH = os.path.join(DATA_DIR, "model_lightgbm.pkl")
 XGB_MODEL_PATH = os.path.join(DATA_DIR, "model_xgboost.pkl")
 MLP_MODEL_PATH = os.path.join(DATA_DIR, "model_mlp.pkl")
 SCALER_PATH = os.path.join(DATA_DIR, "scaler.pkl")
+BACKTEST_REPORT_PATH = os.path.join(DATA_DIR, "backtest_report.json")
+Q_LOWER_MODEL_PATH = os.path.join(DATA_DIR, "model_lightgbm_q_lower.pkl")
+Q_UPPER_MODEL_PATH = os.path.join(DATA_DIR, "model_lightgbm_q_upper.pkl")
+CONFORMAL_CALIBRATION_PATH = os.path.join(DATA_DIR, "conformal_calibration.json")
+QUANTILE_LOWER = 0.1
+QUANTILE_UPPER = 0.9
 
+# Тільки реальні джерела (oree.com.ua, Open-Meteo) + фізично обґрунтовані
+# оцінки Solar_Gen/Wind_Gen з реальної погоди. Раніше тут були Gas_Price,
+# Nuclear_Outage, Solar_Strike, Market_Coeff, VDR_Volume, Grid_Import_Export —
+# усі фейкові (np.random). Прибрані повністю, а не замінені вигадкою.
+#
+# Gas_Price_EUR_MWh / Grid_Stress_High / Grid_Stress_Medium вже збираються
+# реально (src/modules/external_data_service/), але поки що мають занадто
+# коротку історію (перші дні/тижні роботи), щоб модель могла на них чомусь
+# навчитись — намеренно НЕ включені в FEATURES. Додати їх сюди, коли
+# накопичиться достатньо днів (перевіряти через dm.verify_data_completeness()
+# та частку не-NaN значень у historical_data_merged.csv).
 FEATURES = [
     'Hour', 'Month', 'DayOfWeek', 'Is_Weekend', 'Is_Holiday', 'Is_Weekend_Or_Holiday',
     'Temperature', 'Cloud_Cover', 'Wind_Speed', 'Shortwave_Radiation',
-    'Gas_Price', 'Nuclear_Outage', 'Solar_Strike', 'Market_Coeff',
-    'VDR_Volume', 'Grid_Import_Export',
-    'Solar_Gen', 'Wind_Gen', 'Nuclear_Gen',
+    'Solar_Gen', 'Wind_Gen',
     'Hour_Sin', 'Hour_Cos', 'Month_Sin', 'Month_Cos',
     'DayOfYear_Sin', 'DayOfYear_Cos',
     'Is_Night', 'Is_Morning_Peak', 'Is_Daytime', 'Is_Evening_Peak',
     'Price_Lag_24', 'Price_Lag_48', 'Price_Lag_168', 'Price_Mean_24h',
     'Temp_Lag_3', 'Temp_Lag_6',
     'Cloud_Lag_3', 'Cloud_Lag_6',
-    'Radiation_Lag_3', 'Radiation_Lag_6'
+    'Radiation_Lag_3', 'Radiation_Lag_6',
+    # Спред ВДР/РДН лагований на 24г — ВДР торгується ПІСЛЯ публікації РДН,
+    # тож спред за той самий час, що прогнозується, використовувати не можна
+    # (витік даних з майбутнього). Лаг на 24г — це вже відомий на момент
+    # прогнозу реальний ринковий сигнал про волатильність/розбіжність ринків.
+    'IDM_Price_Lag_24', 'DAM_IDM_Spread_Lag_24', 'Spread_Mean_24h',
+    # Реальний транскордонний нетто-експорт (ENTSO-E, звітується сусідами
+    # PL/RO/SK/HU/MD — не залежить від воєнних обмежень публікації України).
+    # Лаговано на 24г з тієї ж причини, що й ВДР-спред: ENTSO-E публікує з
+    # затримкою, "сьогоднішнє" значення на момент прогнозу ще не відоме.
+    'Grid_Net_Export_Lag_24', 'Grid_Net_Export_Mean_24h',
 ]
 
 def is_ukrainian_holiday(dt):
@@ -46,68 +73,101 @@ def prepare_features(df):
     df = df.copy()
     df['Datetime'] = pd.to_datetime(df['Datetime'])
     df = df.sort_values('Datetime').set_index('Datetime')
-    
+
     full_range = pd.date_range(start=df.index.min(), end=df.index.max(), freq='h')
     df = df.reindex(full_range)
     df.index.name = 'Datetime'
-    
+
     df['Price'] = df['Price'].interpolate(method='linear').bfill().ffill()
     df['Temperature'] = df['Temperature'].interpolate(method='linear').bfill().ffill()
     df['Cloud_Cover'] = df['Cloud_Cover'].interpolate(method='linear').fillna(50.0)
     df['Wind_Speed'] = df['Wind_Speed'].interpolate(method='linear').fillna(15.0)
     df['Shortwave_Radiation'] = df['Shortwave_Radiation'].interpolate(method='linear').fillna(0.0)
-    
-    df['Solar_Strike'] = df['Solar_Strike'].fillna(0.0)
-    df['Nuclear_Outage'] = df['Nuclear_Outage'].fillna(0.15)
-    
-    df['Solar_Gen'] = df['Solar_Gen'].interpolate(method='linear')
-    df['Wind_Gen'] = df['Wind_Gen'].interpolate(method='linear')
-    df['Nuclear_Gen'] = df['Nuclear_Gen'].interpolate(method='linear')
-    if 'Hydro_Gen' in df.columns:
-        df['Hydro_Gen'] = df['Hydro_Gen'].interpolate(method='linear')
-    if 'Thermal_Gen' in df.columns:
-        df['Thermal_Gen'] = df['Thermal_Gen'].interpolate(method='linear')
-        
-    df['Gas_Price'] = df['Gas_Price'].interpolate(method='linear').fillna(35.0)
-    df['Market_Coeff'] = df['Market_Coeff'].fillna(1.0)
-    df['VDR_Volume'] = df['VDR_Volume'].interpolate(method='linear').fillna(1.0)
-    df['Grid_Import_Export'] = df['Grid_Import_Export'].interpolate(method='linear').fillna(0.0)
-    
+
+    df['Solar_Gen'] = df['Solar_Gen'].interpolate(method='linear').fillna(0.0)
+    df['Wind_Gen'] = df['Wind_Gen'].interpolate(method='linear').fillna(0.0)
+
+    # IDM/спред — реальні дані з невеликими прогалинами (вихідні/збої джерела);
+    # інтерполюємо лінійно, як і ціну РДН, а не підставляємо вигадані числа.
+    if 'IDM_Price' not in df.columns:
+        df['IDM_Price'] = np.nan
+    if 'DAM_IDM_Spread' not in df.columns:
+        df['DAM_IDM_Spread'] = np.nan
+    df['IDM_Price'] = df['IDM_Price'].interpolate(method='linear').bfill().ffill()
+    df['DAM_IDM_Spread'] = df['DAM_IDM_Spread'].interpolate(method='linear').fillna(0.0)
+
+    # Реальний ENTSO-E нетто-експорт — доступний з 2021, крім останніх кількох
+    # годин (публікаційна затримка). Лінійна інтерполяція заповнює цю затримку
+    # й вихідні прогалини, не вигадуючи режим (на відміну від старого
+    # add_generation_and_market_factors).
+    if 'Grid_Net_Export_MW' not in df.columns:
+        df['Grid_Net_Export_MW'] = np.nan
+    df['Grid_Net_Export_MW'] = df['Grid_Net_Export_MW'].interpolate(method='linear').bfill().ffill()
+
+    # Експериментальна ознака (EU_DAM_Price_Lag_24, EU_DAM_Price_Mean_24h нижче)
+    # — реальна ENTSO-E день-наперед ціна сусідніх зон (PL/RO/SK/HU), поки НЕ
+    # в продових FEATURES, перевіряється walk_forward_backtest(extra_features=...).
+    #
+    # РЕЗУЛЬТАТ ПЕРЕВІРКИ (walk_forward_backtest, test_days=60,
+    # retrain_every_days=7, дані 2021-2026): агрегований WAPE практично не
+    # змінився (22.522% без ознаки → 22.486% з нею — шум, як і з ціновими
+    # стелями). Але last_7d_mean_mape (466.6→487.8) і last_30d_mean_mape
+    # (352.9→380.0) — тобто саме ті останні/волатильні дні, які й треба було
+    # покращити — стали ГІРШЕ, не краще. Гіпотеза (єдиний європейський ринок
+    # через перетоки має тягнути ціну) не підтвердилась на реальних даних у
+    # цій формі (простий mean по зонах, лаг 24г). Ознака НЕ додана в FEATURES.
+    # Дані лишаються зібраними в historical_data_merged.csv (реальні, шкоди
+    # немає) — можна спробувати інше кодування (напр. зважене по напрямку
+    # потоку, різниця EU-UA замість рівня) з новим бектестом, а не повторювати
+    # цей самий варіант.
+    if 'EU_DAM_Price_EUR_MWh' not in df.columns:
+        df['EU_DAM_Price_EUR_MWh'] = np.nan
+    df['EU_DAM_Price_EUR_MWh'] = df['EU_DAM_Price_EUR_MWh'].interpolate(method='linear').bfill().ffill()
+
     df = df.reset_index()
-    
+
     df['Hour'] = df['Datetime'].dt.hour
     df['Month'] = df['Datetime'].dt.month
     df['DayOfWeek'] = df['Datetime'].dt.dayofweek
     df['Is_Weekend'] = df['DayOfWeek'].isin([5, 6]).astype(int)
     df['Is_Holiday'] = df['Datetime'].apply(is_ukrainian_holiday)
     df['Is_Weekend_Or_Holiday'] = ((df['Is_Weekend'] == 1) | (df['Is_Holiday'] == 1)).astype(int)
-    
+
     df['Hour_Sin'] = np.sin(2 * np.pi * df['Hour'] / 24.0)
     df['Hour_Cos'] = np.cos(2 * np.pi * df['Hour'] / 24.0)
     df['Month_Sin'] = np.sin(2 * np.pi * df['Month'] / 12.0)
     df['Month_Cos'] = np.cos(2 * np.pi * df['Month'] / 12.0)
-    
+
     df['DayOfYear'] = df['Datetime'].dt.dayofyear
     df['DayOfYear_Sin'] = np.sin(2 * np.pi * df['DayOfYear'] / 365.25)
     df['DayOfYear_Cos'] = np.cos(2 * np.pi * df['DayOfYear'] / 365.25)
-    
+
     df['Is_Night'] = df['Hour'].isin([0, 1, 2, 3, 4, 5, 6, 23]).astype(int)
     df['Is_Morning_Peak'] = df['Hour'].isin([7, 8, 9, 10]).astype(int)
     df['Is_Daytime'] = df['Hour'].isin([11, 12, 13, 14, 15, 16]).astype(int)
     df['Is_Evening_Peak'] = df['Hour'].isin([17, 18, 19, 20, 21, 22]).astype(int)
-    
+
     df['Price_Lag_24'] = df['Price'].shift(24)
     df['Price_Lag_48'] = df['Price'].shift(48)
     df['Price_Lag_168'] = df['Price'].shift(168)
-    
     df['Price_Mean_24h'] = df['Price'].shift(24).rolling(window=24).mean()
-    
+
     for lag in [3, 6]:
         df[f'Temp_Lag_{lag}'] = df['Temperature'].shift(lag)
         df[f'Cloud_Lag_{lag}'] = df['Cloud_Cover'].shift(lag)
         df[f'Radiation_Lag_{lag}'] = df['Shortwave_Radiation'].shift(lag)
-        
-    df = df.dropna().reset_index(drop=True)
+
+    df['IDM_Price_Lag_24'] = df['IDM_Price'].shift(24)
+    df['DAM_IDM_Spread_Lag_24'] = df['DAM_IDM_Spread'].shift(24)
+    df['Spread_Mean_24h'] = df['DAM_IDM_Spread'].shift(24).rolling(window=24).mean()
+
+    df['Grid_Net_Export_Lag_24'] = df['Grid_Net_Export_MW'].shift(24)
+    df['Grid_Net_Export_Mean_24h'] = df['Grid_Net_Export_MW'].shift(24).rolling(window=24).mean()
+
+    df['EU_DAM_Price_Lag_24'] = df['EU_DAM_Price_EUR_MWh'].shift(24)
+    df['EU_DAM_Price_Mean_24h'] = df['EU_DAM_Price_EUR_MWh'].shift(24).rolling(window=24).mean()
+
+    df = df.dropna(subset=FEATURES + ['Price']).reset_index(drop=True)
     return df
 
 def calculate_mape_wape(y_true, y_pred):
@@ -118,79 +178,91 @@ def calculate_mape_wape(y_true, y_pred):
     wape = (np.sum(np.abs(y_true - y_pred)) / np.sum(np.abs(y_true))) * 100 if np.sum(np.abs(y_true)) != 0 else 0.0
     return float(mape), float(wape)
 
+def _make_lgbm():
+    return LGBMRegressor(
+        n_estimators=300, max_depth=7, learning_rate=0.06, subsample=0.85, colsample_bytree=0.85,
+        random_state=42, n_jobs=-1, verbose=-1
+    )
+
+def _make_xgb():
+    return XGBRegressor(
+        n_estimators=300, max_depth=7, learning_rate=0.06, subsample=0.85, colsample_bytree=0.85,
+        min_child_weight=3, random_state=42, n_jobs=-1
+    )
+
+def _make_mlp():
+    return MLPRegressor(
+        hidden_layer_sizes=(128, 64, 32), activation='relu', solver='adam', max_iter=500,
+        random_state=42, early_stopping=True, validation_fraction=0.1
+    )
+
+# ПРИМІТКА: частка годин з ціною на підлозі (<=15 грн, профіцит СЕС) реально
+# зросла з ~0.2-0.5% у 2021-2025 до ~4% (і ~20% влітку опівдні) у 2026 —
+# звідси гірший WAPE саме по суботах (найбільше сонця + найменший попит).
+# Пробували exponential recency weighting (half-life ~180 днів) як фікс —
+# емпірично на walk_forward_backtest ПОГІРШИЛО і суботи, і останні 14 днів
+# (перевірено, не здогадка) — відкочено. Не переробляти без нового бектесту.
 def train_models():
     df_raw = dm.get_combined_historical_data()
     df = prepare_features(df_raw)
-    
+
     X = df[FEATURES]
     y = df['Price']
-    
+
     split_idx = int(len(df) * 0.85)
     X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
     y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
-    
+
     scaler_eval = StandardScaler()
     X_train_scaled = scaler_eval.fit_transform(X_train)
     X_test_scaled = scaler_eval.transform(X_test)
-    
-    lgb_eval = LGBMRegressor(
-        n_estimators=300, max_depth=7, learning_rate=0.06, subsample=0.85, colsample_bytree=0.85, random_state=42, n_jobs=-1, verbose=-1
-    )
+
+    lgb_eval = _make_lgbm()
     lgb_eval.fit(X_train, y_train)
     y_pred_lgb = lgb_eval.predict(X_test)
     mae_lgb = mean_absolute_error(y_test, y_pred_lgb)
     rmse_lgb = np.sqrt(mean_squared_error(y_test, y_pred_lgb))
     r2_lgb = r2_score(y_test, y_pred_lgb)
     mape_lgb, wape_lgb = calculate_mape_wape(y_test, y_pred_lgb)
-    
-    xgb_eval = XGBRegressor(
-        n_estimators=300, max_depth=7, learning_rate=0.06, subsample=0.85, colsample_bytree=0.85, min_child_weight=3, random_state=42, n_jobs=-1
-    )
+
+    xgb_eval = _make_xgb()
     xgb_eval.fit(X_train, y_train)
     y_pred_xgb = xgb_eval.predict(X_test)
     mae_xgb = mean_absolute_error(y_test, y_pred_xgb)
     rmse_xgb = np.sqrt(mean_squared_error(y_test, y_pred_xgb))
     r2_xgb = r2_score(y_test, y_pred_xgb)
     mape_xgb, wape_xgb = calculate_mape_wape(y_test, y_pred_xgb)
-    
-    mlp_eval = MLPRegressor(
-        hidden_layer_sizes=(128, 64, 32), activation='relu', solver='adam', max_iter=500, random_state=42, early_stopping=True, validation_fraction=0.1
-    )
+
+    mlp_eval = _make_mlp()
     mlp_eval.fit(X_train_scaled, y_train)
     y_pred_mlp = mlp_eval.predict(X_test_scaled)
     mae_mlp = mean_absolute_error(y_test, y_pred_mlp)
     rmse_mlp = np.sqrt(mean_squared_error(y_test, y_pred_mlp))
     r2_mlp = r2_score(y_test, y_pred_mlp)
     mape_mlp, wape_mlp = calculate_mape_wape(y_test, y_pred_mlp)
-    
+
     metrics = {
         'lightgbm': {'mae': float(mae_lgb), 'rmse': float(rmse_lgb), 'r2': float(r2_lgb), 'mape': mape_lgb, 'wape': wape_lgb},
         'xgboost': {'mae': float(mae_xgb), 'rmse': float(rmse_xgb), 'r2': float(r2_xgb), 'mape': mape_xgb, 'wape': wape_xgb},
         'mlp': {'mae': float(mae_mlp), 'rmse': float(rmse_mlp), 'r2': float(r2_mlp), 'mape': mape_mlp, 'wape': wape_mlp}
     }
-    
+
     metrics_path = os.path.join(DATA_DIR, "metrics_report.json")
     with open(metrics_path, 'w') as f:
         json.dump(metrics, f, indent=4)
-        
-    lgb_final = LGBMRegressor(
-        n_estimators=300, max_depth=7, learning_rate=0.06, subsample=0.85, colsample_bytree=0.85, random_state=42, n_jobs=-1, verbose=-1
-    )
+
+    lgb_final = _make_lgbm()
     lgb_final.fit(X, y)
-    
-    xgb_final = XGBRegressor(
-        n_estimators=300, max_depth=7, learning_rate=0.06, subsample=0.85, colsample_bytree=0.85, min_child_weight=3, random_state=42, n_jobs=-1
-    )
+
+    xgb_final = _make_xgb()
     xgb_final.fit(X, y)
-    
+
     scaler_final = StandardScaler()
     X_scaled = scaler_final.fit_transform(X)
-    
-    mlp_final = MLPRegressor(
-        hidden_layer_sizes=(128, 64, 32), activation='relu', solver='adam', max_iter=500, random_state=42, early_stopping=True, validation_fraction=0.1
-    )
+
+    mlp_final = _make_mlp()
     mlp_final.fit(X_scaled, y)
-    
+
     os.makedirs(DATA_DIR, exist_ok=True)
     with open(LGBM_MODEL_PATH, 'wb') as f:
         pickle.dump(lgb_final, f)
@@ -200,13 +272,428 @@ def train_models():
         pickle.dump(mlp_final, f)
     with open(SCALER_PATH, 'wb') as f:
         pickle.dump(scaler_final, f)
-        
+
     return metrics
 
-def predict_next_day(forecast_date, forecast_weather, last_prices, factors):
+def _make_quantile_lgbm(alpha):
+    return LGBMRegressor(
+        objective='quantile', alpha=alpha,
+        n_estimators=300, max_depth=7, learning_rate=0.06, subsample=0.85, colsample_bytree=0.85,
+        random_state=42, n_jobs=-1, verbose=-1
+    )
+
+def train_quantile_models(calibration_days=60):
+    """
+    Навчає LightGBM quantile regressors для P10/P90 (тими самими FEATURES, що
+    й точковий прогноз) і калібрує їх split-conformal поправкою на реальному
+    held-out вікні (останні calibration_days) — щоб інтервал [P10,P90] мав
+    приблизно номінальне ~80% покриття на РЕАЛЬНИХ даних, а не просто
+    теоретичне покриття квантильної регресії (яке на практиці часто гірше
+    заявленого через зсув моделі).
+    """
+    df_raw = dm.get_combined_historical_data()
+    df = prepare_features(df_raw)
+    df = df.sort_values('Datetime').reset_index(drop=True)
+
+    n = len(df)
+    calib_hours = calibration_days * 24
+    if n < calib_hours * 3:
+        calib_hours = max(24 * 14, n // 5)
+
+    split_idx = n - calib_hours
+    df_train = df.iloc[:split_idx]
+    df_calib = df.iloc[split_idx:]
+
+    X_train, y_train = df_train[FEATURES], df_train['Price']
+    lower_model = _make_quantile_lgbm(QUANTILE_LOWER)
+    lower_model.fit(X_train, y_train)
+    upper_model = _make_quantile_lgbm(QUANTILE_UPPER)
+    upper_model.fit(X_train, y_train)
+
+    # Split conformal calibration (CQR-style): наскільки сирий інтервал
+    # промахується повз реальні дані на held-out вікні, яке модель не бачила.
+    X_calib, y_calib = df_calib[FEATURES], df_calib['Price'].values
+    pred_lower_calib = lower_model.predict(X_calib)
+    pred_upper_calib = upper_model.predict(X_calib)
+
+    scores = np.maximum(pred_lower_calib - y_calib, y_calib - pred_upper_calib)
+    target_coverage = QUANTILE_UPPER - QUANTILE_LOWER  # 0.8
+    conformal_alpha = 1.0 - target_coverage
+    q_level = float(np.clip(np.ceil((len(scores) + 1) * (1 - conformal_alpha)) / len(scores), 0.0, 1.0))
+    correction = max(0.0, float(np.quantile(scores, q_level)))
+
+    coverage_raw = float(np.mean((y_calib >= pred_lower_calib) & (y_calib <= pred_upper_calib)))
+    coverage_conformal = float(np.mean((y_calib >= pred_lower_calib - correction) & (y_calib <= pred_upper_calib + correction)))
+
+    # Фінальні продові моделі — перенавчені на всіх даних (як і в train_models),
+    # conformal-поправка лишається зафіксованою з чесного held-out калібрування.
+    X_all, y_all = df[FEATURES], df['Price']
+    lower_final = _make_quantile_lgbm(QUANTILE_LOWER)
+    lower_final.fit(X_all, y_all)
+    upper_final = _make_quantile_lgbm(QUANTILE_UPPER)
+    upper_final.fit(X_all, y_all)
+
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(Q_LOWER_MODEL_PATH, 'wb') as f:
+        pickle.dump(lower_final, f)
+    with open(Q_UPPER_MODEL_PATH, 'wb') as f:
+        pickle.dump(upper_final, f)
+
+    calibration = {
+        'quantile_lower': QUANTILE_LOWER,
+        'quantile_upper': QUANTILE_UPPER,
+        'target_coverage': target_coverage,
+        'conformal_correction_uah': correction,
+        'calibration_hours': int(len(df_calib)),
+        'coverage_raw_quantile_regression': coverage_raw,
+        'coverage_after_conformal_correction': coverage_conformal,
+    }
+    with open(CONFORMAL_CALIBRATION_PATH, 'w') as f:
+        json.dump(calibration, f, indent=2)
+
+    return calibration
+
+QUANTILE_COVERAGE_REPORT_PATH = os.path.join(DATA_DIR, "quantile_coverage_report.json")
+
+def quantile_coverage_backtest(test_days=60, retrain_every_days=14, calib_days=14):
+    """
+    Чесна walk-forward перевірка калібрування P10/P90 інтервалу на реальних
+    історичних даних — не одне статичне вікно, а день у день по всьому
+    test_days: train -> невеликий conformal calib -> тест, вікно рухається
+    вперед, моделі й conformal-поправка перераховуються раз на
+    retrain_every_days (як і в проді). Перевіряємо ПОКРИТТЯ (чи потрапляє
+    факт у [P10,P90]), а не точність точки.
+    """
+    df_raw = dm.get_combined_historical_data()
+    df = prepare_features(df_raw)
+    df = df.sort_values('Datetime').reset_index(drop=True)
+
+    if len(df) < 24 * (test_days + calib_days + 60):
+        test_days = max(14, len(df) // 24 - calib_days - 60)
+
+    last_date = df['Datetime'].max().normalize()
+    first_test_day = last_date - pd.Timedelta(days=test_days - 1)
+
+    daily_results = []
+    lower_model = upper_model = None
+    correction = 0.0
+    days_since_retrain = 0
+    target_coverage = QUANTILE_UPPER - QUANTILE_LOWER
+
+    day = first_test_day
+    while day <= last_date:
+        train_mask = df['Datetime'] < (day - pd.Timedelta(days=calib_days))
+        calib_mask = (df['Datetime'] >= (day - pd.Timedelta(days=calib_days))) & (df['Datetime'] < day)
+        test_mask = (df['Datetime'] >= day) & (df['Datetime'] < day + pd.Timedelta(days=1))
+
+        df_train = df[train_mask]
+        df_calib = df[calib_mask]
+        df_test = df[test_mask]
+
+        if len(df_train) < 24 * 60 or len(df_calib) < 24 * 7 or df_test.empty:
+            day += pd.Timedelta(days=1)
+            continue
+
+        if lower_model is None or days_since_retrain >= retrain_every_days:
+            lower_model = _make_quantile_lgbm(QUANTILE_LOWER)
+            lower_model.fit(df_train[FEATURES], df_train['Price'])
+            upper_model = _make_quantile_lgbm(QUANTILE_UPPER)
+            upper_model.fit(df_train[FEATURES], df_train['Price'])
+
+            pred_lower_calib = lower_model.predict(df_calib[FEATURES])
+            pred_upper_calib = upper_model.predict(df_calib[FEATURES])
+            y_calib = df_calib['Price'].values
+            scores = np.maximum(pred_lower_calib - y_calib, y_calib - pred_upper_calib)
+            conformal_alpha = 1.0 - target_coverage
+            q_level = float(np.clip(np.ceil((len(scores) + 1) * (1 - conformal_alpha)) / len(scores), 0.0, 1.0))
+            correction = max(0.0, float(np.quantile(scores, q_level)))
+            days_since_retrain = 0
+
+        y_pred_lower = lower_model.predict(df_test[FEATURES]) - correction
+        y_pred_upper = upper_model.predict(df_test[FEATURES]) + correction
+        y_true = df_test['Price'].values
+
+        covered = (y_true >= y_pred_lower) & (y_true <= y_pred_upper)
+        daily_results.append({
+            'date': day.strftime('%Y-%m-%d'),
+            'coverage': float(np.mean(covered)),
+            'mean_band_width_uah': float(np.mean(y_pred_upper - y_pred_lower)),
+            'n_hours': int(len(df_test)),
+        })
+
+        days_since_retrain += 1
+        day += pd.Timedelta(days=1)
+
+    if not daily_results:
+        return {'daily': [], 'summary': {}}
+
+    coverages = [d['coverage'] for d in daily_results]
+    summary = {
+        'test_days': len(daily_results),
+        'retrain_every_days': retrain_every_days,
+        'target_coverage': target_coverage,
+        'mean_coverage': float(np.mean(coverages)),
+        'median_coverage': float(np.median(coverages)),
+        'pct_days_within_10pp_of_target': float(np.mean([abs(c - target_coverage) <= 0.10 for c in coverages])),
+        'mean_band_width_uah': float(np.mean([d['mean_band_width_uah'] for d in daily_results])),
+    }
+
+    report = {'daily': daily_results, 'summary': summary}
+    with open(QUANTILE_COVERAGE_REPORT_PATH, 'w') as f:
+        json.dump(report, f, indent=2)
+
+    return report
+
+SURPLUS_PRICE_THRESHOLD = 20.0  # UAH/MWh — поріг "режиму профіциту" (ціна біля підлоги)
+SURPLUS_FLOOR_ESTIMATE = 12.0   # UAH/MWh — типове значення всередині профіцитного кластеру
+
+def _make_surplus_classifier():
+    return LGBMClassifier(
+        n_estimators=300, max_depth=6, learning_rate=0.06, subsample=0.85, colsample_bytree=0.85,
+        random_state=42, n_jobs=-1, verbose=-1, class_weight='balanced'
+    )
+
+def _blend_with_surplus_proba(point_pred, surplus_proba, floor_estimate=SURPLUS_FLOOR_ESTIMATE):
+    """
+    point_pred — точковий прогноз регресії; surplus_proba — P(ціна впаде до
+    профіцитної підлоги) з окремого класифікатора на тих самих ознаках.
+    Лінійна суміш замість жорсткого порогу — уникає різкого "перемикання".
+    """
+    return surplus_proba * floor_estimate + (1.0 - surplus_proba) * point_pred
+
+def walk_forward_backtest(test_days=90, retrain_every_days=7, model_type='lightgbm', use_surplus_classifier=False, extra_features=None):
+    """
+    Чесна оцінка точності день-наперед прогнозу: розширюване вікно навчання,
+    прогноз на наступну добу (24г), крок вперед. Модель перенавчається раз на
+    retrain_every_days (як і в проді — раз на тиждень), а не одноразовий
+    85/15 holdout, який не показує, як точність змінюється у часі.
+
+    use_surplus_classifier=True — експериментальний двоступеневий режим:
+    окремий LightGBM-класифікатор "ця година потрапить у профіцитну підлогу"
+    (клас Price<=20, class_weight='balanced' через рідкість класу), змішаний
+    з точковою регресією. Перевіряється ТУТ, у бектесті, на реальних даних,
+    ДО того як потрапити у прод (як і з recency weighting — не віримо
+    гіпотезі на слово).
+
+    extra_features — список додаткових колонок (напр. EU_DAM_Price_Lag_24),
+    які додаються поверх продових FEATURES ЛИШЕ для цього прогону A/B-тесту,
+    без зміни глобального FEATURES.
+
+    Повертає щоденний MAPE/WAPE + підсумкову статистику, зберігає у
+    data/backtest_report.json.
+    """
+    df_raw = dm.get_combined_historical_data()
+    df = prepare_features(df_raw)
+    df = df.sort_values('Datetime').reset_index(drop=True)
+
+    features = FEATURES + list(extra_features) if extra_features else FEATURES
+
+    if len(df) < 24 * (test_days + 30):
+        test_days = max(7, len(df) // 24 - 30)
+
+    last_date = df['Datetime'].max().normalize()
+    first_test_day = last_date - pd.Timedelta(days=test_days - 1)
+
+    model_builders = {'lightgbm': _make_lgbm, 'xgboost': _make_xgb}
+    build_model = model_builders.get(model_type, _make_lgbm)
+
+    daily_results = []
+    model = None
+    surplus_clf = None
+    day = first_test_day
+    days_since_retrain = 0
+
+    while day <= last_date:
+        train_mask = df['Datetime'] < day
+        test_mask = (df['Datetime'] >= day) & (df['Datetime'] < day + pd.Timedelta(days=1))
+
+        df_train = df[train_mask]
+        df_test = df[test_mask]
+
+        if len(df_train) < 24 * 30 or df_test.empty:
+            day += pd.Timedelta(days=1)
+            continue
+
+        if model is None or days_since_retrain >= retrain_every_days:
+            model = build_model()
+            model.fit(df_train[features], df_train['Price'])
+            if use_surplus_classifier:
+                y_surplus = (df_train['Price'] <= SURPLUS_PRICE_THRESHOLD).astype(int)
+                if y_surplus.nunique() > 1:
+                    surplus_clf = _make_surplus_classifier()
+                    surplus_clf.fit(df_train[features], y_surplus)
+                else:
+                    surplus_clf = None
+            days_since_retrain = 0
+
+        y_pred = model.predict(df_test[features])
+        if use_surplus_classifier and surplus_clf is not None:
+            surplus_proba = surplus_clf.predict_proba(df_test[features])[:, 1]
+            y_pred = _blend_with_surplus_proba(y_pred, surplus_proba)
+
+        y_true = df_test['Price'].values
+        mape, wape = calculate_mape_wape(y_true, y_pred)
+        mae = float(mean_absolute_error(y_true, y_pred))
+
+        daily_results.append({
+            'date': day.strftime('%Y-%m-%d'),
+            'mape': mape,
+            'wape': wape,
+            'mae': mae,
+            'n_hours': int(len(df_test)),
+        })
+
+        days_since_retrain += 1
+        day += pd.Timedelta(days=1)
+
+    if not daily_results:
+        return {'daily': [], 'summary': {}}
+
+    mape_series = [d['mape'] for d in daily_results]
+    wape_series = [d['wape'] for d in daily_results]
+    summary = {
+        'model_type': model_type,
+        'test_days': len(daily_results),
+        'retrain_every_days': retrain_every_days,
+        'use_surplus_classifier': use_surplus_classifier,
+        'mean_mape': float(np.mean(mape_series)),
+        'median_mape': float(np.median(mape_series)),
+        'p90_mape': float(np.percentile(mape_series, 90)),
+        'mean_wape': float(np.mean(wape_series)),
+        'last_7d_mean_mape': float(np.mean(mape_series[-7:])),
+        'last_30d_mean_mape': float(np.mean(mape_series[-30:])) if len(mape_series) >= 30 else None,
+    }
+
+    report = {'daily': daily_results, 'summary': summary}
+    with open(BACKTEST_REPORT_PATH, 'w') as f:
+        json.dump(report, f, indent=2)
+
+    return report
+
+def build_forecast_feature_matrix(forecast_date, forecast_weather, last_prices):
+    """
+    Будує матрицю ознак (FEATURES) для прогнозу на 24 години наперед. Спільна
+    для точкового прогнозу (predict_next_day) і квантильного інтервалу
+    невизначеності (predict_price_band) — та сама логіка лагів/фічей, щоб
+    обидва прогнози завжди узгоджувались між собою.
+    """
+    df_hist = pd.read_csv(dm.MERGED_DATA_PATH)
+    df_hist['Datetime'] = pd.to_datetime(df_hist['Datetime'])
+    df_hist = df_hist.sort_values('Datetime')
+
+    forecast_dt_start = pd.to_datetime(forecast_date)
+    hist_before_target = df_hist[df_hist['Datetime'] < forecast_dt_start].sort_values('Datetime')
+
+    def _last_n(col, n, fallback):
+        if col in hist_before_target.columns and len(hist_before_target) >= n:
+            return hist_before_target[col].iloc[-n:].tolist()
+        return [fallback] * n
+
+    last_temps = _last_n('Temperature', 24, 15.0)
+    last_clouds = _last_n('Cloud_Cover', 24, 40.0)
+    last_rads = _last_n('Shortwave_Radiation', 24, 0.0)
+
+    if len(last_prices) < 168:
+        mean_p = np.mean(last_prices) if len(last_prices) > 0 else 4000.0
+        last_prices = [mean_p] * (168 - len(last_prices)) + list(last_prices)
+
+    # IDM за найсвіжіші години (сьогодні) часто ще не опублікований, поки триває
+    # внутрішньодобова торгівля — інтерполюємо/переносимо останнє відоме
+    # значення, як і при підготовці навчальних ознак (prepare_features), а не
+    # залишаємо NaN, що впаде в модель.
+    last_idm = pd.Series(_last_n('IDM_Price', 168, np.nan)).interpolate(limit_direction='both').fillna(np.mean(last_prices)).tolist()
+    last_spreads = pd.Series(_last_n('DAM_IDM_Spread', 168, np.nan)).interpolate(limit_direction='both').fillna(0.0).tolist()
+    # ENTSO-E теж публікується із затримкою (за 5 кордонами PL/RO/SK/HU/MD) —
+    # той самий інтерполяційний підхід, що і для IDM вище.
+    last_flows = pd.Series(_last_n('Grid_Net_Export_MW', 168, np.nan)).interpolate(limit_direction='both').fillna(0.0).tolist()
+
+    records = []
+    for h in range(24):
+        dt = pd.to_datetime(forecast_date) + pd.to_timedelta(h, unit='h')
+        weather_row = forecast_weather.iloc[h] if h < len(forecast_weather) else forecast_weather.iloc[-1]
+
+        lag_24 = last_prices[-24 + h]
+        lag_48 = last_prices[-48 + h]
+        lag_168 = last_prices[-168 + h]
+        mean_24h = np.mean(last_prices[121 + h: 145 + h])
+
+        idm_lag_24 = last_idm[-24 + h]
+        spread_lag_24 = last_spreads[-24 + h]
+        spread_mean_24h = np.mean(last_spreads[121 + h: 145 + h])
+
+        flow_lag_24 = last_flows[-24 + h]
+        flow_mean_24h = np.mean(last_flows[121 + h: 145 + h])
+
+        rad = float(weather_row.get('Shortwave_Radiation', 0.0))
+        clouds = float(weather_row.get('Cloud_Cover', 40.0))
+        temp = float(weather_row.get('Temperature', 15.0))
+        ws = float(weather_row.get('Wind_Speed', 12.0))
+
+        temp_lag_3 = float(forecast_weather.iloc[h - 3]['Temperature'] if h >= 3 else last_temps[-3 + h])
+        temp_lag_6 = float(forecast_weather.iloc[h - 6]['Temperature'] if h >= 6 else last_temps[-6 + h])
+
+        cloud_lag_3 = float(forecast_weather.iloc[h - 3]['Cloud_Cover'] if h >= 3 else last_clouds[-3 + h])
+        cloud_lag_6 = float(forecast_weather.iloc[h - 6]['Cloud_Cover'] if h >= 6 else last_clouds[-6 + h])
+
+        rad_lag_3 = float(forecast_weather.iloc[h - 3]['Shortwave_Radiation'] if h >= 3 else last_rads[-3 + h])
+        rad_lag_6 = float(forecast_weather.iloc[h - 6]['Shortwave_Radiation'] if h >= 6 else last_rads[-6 + h])
+
+        solar_gen = np.clip(6500.0 * (rad / 1000.0) * (1.0 - 0.003 * (temp - 25.0)), 0.0, 5500.0)
+        if ws < 8.0 or ws > 80.0:
+            wind_gen = 0.0
+        elif ws > 45.0:
+            wind_gen = 1800.0
+        else:
+            wind_gen = 1800.0 * ((ws - 8.0) / (45.0 - 8.0)) ** 3
+
+        hour_sin = np.sin(2 * np.pi * h / 24.0)
+        hour_cos = np.cos(2 * np.pi * h / 24.0)
+        month_sin = np.sin(2 * np.pi * dt.month / 12.0)
+        month_cos = np.cos(2 * np.pi * dt.month / 12.0)
+
+        day_of_year = dt.dayofyear
+        day_of_year_sin = np.sin(2 * np.pi * day_of_year / 365.25)
+        day_of_year_cos = np.cos(2 * np.pi * day_of_year / 365.25)
+
+        is_night = int(h in [0, 1, 2, 3, 4, 5, 6, 23])
+        is_morning_peak = int(h in [7, 8, 9, 10])
+        is_daytime = int(h in [11, 12, 13, 14, 15, 16])
+        is_evening_peak = int(h in [17, 18, 19, 20, 21, 22])
+
+        is_we = int(dt.dayofweek in [5, 6])
+        is_hol = is_ukrainian_holiday(dt)
+        is_we_or_hol = int(is_we == 1 or is_hol == 1)
+
+        records.append({
+            'Hour': h, 'Month': dt.month, 'DayOfWeek': dt.dayofweek, 'Is_Weekend': is_we, 'Is_Holiday': is_hol,
+            'Is_Weekend_Or_Holiday': is_we_or_hol, 'Temperature': temp, 'Cloud_Cover': clouds, 'Wind_Speed': ws,
+            'Shortwave_Radiation': rad, 'Solar_Gen': float(solar_gen), 'Wind_Gen': float(wind_gen),
+            'Hour_Sin': hour_sin, 'Hour_Cos': hour_cos, 'Month_Sin': month_sin, 'Month_Cos': month_cos,
+            'DayOfYear_Sin': day_of_year_sin, 'DayOfYear_Cos': day_of_year_cos, 'Is_Night': is_night,
+            'Is_Morning_Peak': is_morning_peak, 'Is_Daytime': is_daytime, 'Is_Evening_Peak': is_evening_peak,
+            'Price_Lag_24': float(lag_24), 'Price_Lag_48': float(lag_48), 'Price_Lag_168': float(lag_168),
+            'Price_Mean_24h': float(mean_24h), 'Temp_Lag_3': temp_lag_3, 'Temp_Lag_6': temp_lag_6,
+            'Cloud_Lag_3': cloud_lag_3, 'Cloud_Lag_6': cloud_lag_6, 'Radiation_Lag_3': rad_lag_3, 'Radiation_Lag_6': rad_lag_6,
+            'IDM_Price_Lag_24': float(idm_lag_24), 'DAM_IDM_Spread_Lag_24': float(spread_lag_24),
+            'Spread_Mean_24h': float(spread_mean_24h),
+            'Grid_Net_Export_Lag_24': float(flow_lag_24), 'Grid_Net_Export_Mean_24h': float(flow_mean_24h),
+        })
+
+    X_forecast = pd.DataFrame(records)[FEATURES]
+    return X_forecast, records
+
+def predict_next_day(forecast_date, forecast_weather, last_prices, factors=None):
+    """
+    factors лишений опціональним параметром заради зворотної сумісності з
+    існуючими викликами (scheduler.py, forecast endpoint) — АЛЕ більше не
+    застосовує довільні хардкод-поправки (gas_adj/nuke_adj/solar_strike тощо),
+    як було раніше: ці "фактори" були фейковими вхідними даними, яких
+    диспетчер мав вручну вгадувати щодня. Реальний вплив ринкових умов тепер
+    навчається моделлю напряму з реальних Solar_Gen/Wind_Gen/IDM-спреду.
+    """
     if not os.path.exists(LGBM_MODEL_PATH):
         train_models()
-        
+
     with open(LGBM_MODEL_PATH, 'rb') as f:
         lgbm_model = pickle.load(f)
     with open(XGB_MODEL_PATH, 'rb') as f:
@@ -215,145 +702,18 @@ def predict_next_day(forecast_date, forecast_weather, last_prices, factors):
         mlp_model = pickle.load(f)
     with open(SCALER_PATH, 'rb') as f:
         scaler = pickle.load(f)
-        
-    df_hist = pd.read_csv(os.path.join(DATA_DIR, "historical_data_merged.csv"))
-    df_hist['Datetime'] = pd.to_datetime(df_hist['Datetime'])
-    df_hist = df_hist.sort_values('Datetime')
-    
-    forecast_dt_start = pd.to_datetime(forecast_date)
-    hist_before_target = df_hist[df_hist['Datetime'] < forecast_dt_start].sort_values('Datetime')
-    
-    if len(hist_before_target) >= 24:
-        last_temps = hist_before_target['Temperature'].iloc[-24:].tolist()
-        last_clouds = hist_before_target['Cloud_Cover'].iloc[-24:].tolist()
-        last_rads = hist_before_target['Shortwave_Radiation'].iloc[-24:].tolist()
-    else:
-        last_temps = [15.0] * 24
-        last_clouds = [40.0] * 24
-        last_rads = [0.0] * 24
-        
-    records = []
-    if len(last_prices) < 168:
-        mean_p = np.mean(last_prices) if len(last_prices) > 0 else 4000.0
-        last_prices = [mean_p] * (168 - len(last_prices)) + list(last_prices)
-        
-    for h in range(24):
-        dt = pd.to_datetime(forecast_date) + pd.to_timedelta(h, unit='h')
-        weather_row = forecast_weather.iloc[h] if h < len(forecast_weather) else forecast_weather.iloc[-1]
-        
-        lag_24 = last_prices[-24 + h]
-        lag_48 = last_prices[-48 + h]
-        lag_168 = last_prices[-168 + h]
-        mean_24h = np.mean(last_prices[121 + h : 145 + h])
-        
-        rad = float(weather_row.get('Shortwave_Radiation', 0.0))
-        clouds = float(weather_row.get('Cloud_Cover', 40.0))
-        temp = float(weather_row.get('Temperature', 15.0))
-        ws = float(weather_row.get('Wind_Speed', 12.0))
-        
-        temp_lag_3 = float(forecast_weather.iloc[h-3]['Temperature'] if h >= 3 else last_temps[-3 + h])
-        temp_lag_6 = float(forecast_weather.iloc[h-6]['Temperature'] if h >= 6 else last_temps[-6 + h])
-        
-        cloud_lag_3 = float(forecast_weather.iloc[h-3]['Cloud_Cover'] if h >= 3 else last_clouds[-3 + h])
-        cloud_lag_6 = float(forecast_weather.iloc[h-6]['Cloud_Cover'] if h >= 6 else last_clouds[-6 + h])
-        
-        rad_lag_3 = float(forecast_weather.iloc[h-3]['Shortwave_Radiation'] if h >= 3 else last_rads[-3 + h])
-        rad_lag_6 = float(forecast_weather.iloc[h-6]['Shortwave_Radiation'] if h >= 6 else last_rads[-6 + h])
-        
-        solar_strike = float(factors.get('Solar_Strike', 0.0))
-        nuke_outage = float(factors.get('Nuclear_Outage', 0.15))
-        
-        solar_gen = np.clip(6500.0 * (rad / 1000.0) * (1.0 - 0.003 * (temp - 25.0)), 0.0, 5500.0)
-        solar_gen = solar_gen * (1.0 - solar_strike)
-        
-        if ws < 8.0 or ws > 80.0:
-            wind_gen = 0.0
-        elif ws > 45.0:
-            wind_gen = 1800.0
-        else:
-            wind_gen = 1800.0 * ((ws - 8.0) / (45.0 - 8.0)) ** 3
-            
-        nuclear_gen = 9500.0 * (1.0 - nuke_outage)
-        
-        hour_sin = np.sin(2 * np.pi * h / 24.0)
-        hour_cos = np.cos(2 * np.pi * h / 24.0)
-        month_sin = np.sin(2 * np.pi * dt.month / 12.0)
-        month_cos = np.cos(2 * np.pi * dt.month / 12.0)
-        
-        day_of_year = dt.dayofyear
-        day_of_year_sin = np.sin(2 * np.pi * day_of_year / 365.25)
-        day_of_year_cos = np.cos(2 * np.pi * day_of_year / 365.25)
-        
-        is_night = int(h in [0, 1, 2, 3, 4, 5, 6, 23])
-        is_morning_peak = int(h in [7, 8, 9, 10])
-        is_daytime = int(h in [11, 12, 13, 14, 15, 16])
-        is_evening_peak = int(h in [17, 18, 19, 20, 21, 22])
-        
-        is_we = int(dt.dayofweek in [5, 6])
-        is_hol = is_ukrainian_holiday(dt)
-        is_we_or_hol = int(is_we == 1 or is_hol == 1)
-        
-        records.append({
-            'Hour': h, 'Month': dt.month, 'DayOfWeek': dt.dayofweek, 'Is_Weekend': is_we, 'Is_Holiday': is_hol,
-            'Is_Weekend_Or_Holiday': is_we_or_hol, 'Temperature': temp, 'Cloud_Cover': clouds, 'Wind_Speed': ws,
-            'Shortwave_Radiation': rad, 'Gas_Price': float(factors.get('Gas_Price', 35.0)), 'Nuclear_Outage': nuke_outage,
-            'Solar_Strike': solar_strike, 'Market_Coeff': float(factors.get('Market_Coeff', 1.0)), 'VDR_Volume': float(factors.get('VDR_Volume', 1.0)),
-            'Grid_Import_Export': float(factors.get('Grid_Import_Export', 0.0)), 'Solar_Gen': float(solar_gen), 'Wind_Gen': float(wind_gen),
-            'Nuclear_Gen': float(nuclear_gen), 'Hour_Sin': hour_sin, 'Hour_Cos': hour_cos, 'Month_Sin': month_sin, 'Month_Cos': month_cos,
-            'DayOfYear_Sin': day_of_year_sin, 'DayOfYear_Cos': day_of_year_cos, 'Is_Night': is_night, 'Is_Morning_Peak': is_morning_peak,
-            'Is_Daytime': is_daytime, 'Is_Evening_Peak': is_evening_peak, 'Price_Lag_24': float(lag_24), 'Price_Lag_48': float(lag_48),
-            'Price_Lag_168': float(lag_168), 'Price_Mean_24h': float(mean_24h), 'Temp_Lag_3': temp_lag_3, 'Temp_Lag_6': temp_lag_6,
-            'Cloud_Lag_3': cloud_lag_3, 'Cloud_Lag_6': cloud_lag_6, 'Radiation_Lag_3': rad_lag_3, 'Radiation_Lag_6': rad_lag_6
-        })
-        
-    X_forecast = pd.DataFrame(records)[FEATURES]
-    
+
+    X_forecast, records = build_forecast_feature_matrix(forecast_date, forecast_weather, last_prices)
+
     pred_lgb = lgbm_model.predict(X_forecast)
     pred_xgb = xgb_model.predict(X_forecast)
     X_forecast_scaled = scaler.transform(X_forecast)
     pred_mlp = mlp_model.predict(X_forecast_scaled)
-    
-    gas_val = float(factors.get('Gas_Price', 35.0))
-    nuke_outage_val = float(factors.get('Nuclear_Outage', 0.15))
-    market_coeff_val = float(factors.get('Market_Coeff', 1.0))
-    grid_import_val = float(factors.get('Grid_Import_Export', 0.0))
-    solar_strike_val = float(factors.get('Solar_Strike', 0.0))
-    
-    gas_adj = (gas_val - 35.0) * 15.0
-    nuke_adj = (nuke_outage_val - 0.15) * 4000.0
-    import_adj = -(grid_import_val / 1000.0) * 300.0
-    
-    final_lgb, final_xgb, final_mlp = [], [], []
-    for h in range(24):
-        p_lgb = (pred_lgb[h] + gas_adj + nuke_adj + import_adj) * market_coeff_val
-        p_xgb = (pred_xgb[h] + gas_adj + nuke_adj + import_adj) * market_coeff_val
-        p_mlp = (pred_mlp[h] + gas_adj + nuke_adj + import_adj) * market_coeff_val
-        
-        is_midday = 10 <= h <= 16
-        rad = records[h]['Shortwave_Radiation']
-        clouds = records[h]['Cloud_Cover']
-        is_we = records[h]['Is_Weekend']
-        wind = records[h]['Wind_Speed']
-        
-        if is_midday and rad > 0:
-            p_lgb += solar_strike_val * 800.0
-            p_xgb += solar_strike_val * 800.0
-            p_mlp += solar_strike_val * 800.0
-            
-        solar_surplus = is_midday and (rad > 500) and (clouds < 25) and (solar_strike_val < 0.3) and (is_we == 1 or market_coeff_val < 0.85)
-        wind_surplus = (wind > 35) and (is_we == 1)
-        
-        if (solar_surplus or wind_surplus) and nuke_outage_val < 0.35:
-            p_lgb, p_xgb, p_mlp = 10.0, 10.0, 10.0
-            
-        p_lgb = np.clip(p_lgb, 10.0, 16000.0)
-        p_xgb = np.clip(p_xgb, 10.0, 16000.0)
-        p_mlp = np.clip(p_mlp, 10.0, 16000.0)
-        
-        final_lgb.append(float(p_lgb))
-        final_xgb.append(float(p_xgb))
-        final_mlp.append(float(p_mlp))
-        
+
+    final_lgb = [float(np.clip(p, PRICE_FLOOR, PRICE_CAP)) for p in pred_lgb]
+    final_xgb = [float(np.clip(p, PRICE_FLOOR, PRICE_CAP)) for p in pred_xgb]
+    final_mlp = [float(np.clip(p, PRICE_FLOOR, PRICE_CAP)) for p in pred_mlp]
+
     return {
         'hours': list(range(24)),
         'lightgbm': final_lgb,
@@ -361,3 +721,38 @@ def predict_next_day(forecast_date, forecast_weather, last_prices, factors):
         'mlp': final_mlp,
         'features': records
     }
+
+def predict_price_band(forecast_date, forecast_weather, last_prices):
+    """
+    P10/P90 conformal-калібрований інтервал невизначеності для тих самих 24
+    годин прогнозу (побудований на тій же матриці ознак, що й точковий
+    прогноз). Використовується MILP-оптимізатором для Pessimistic/Aggressive
+    сценаріїв замість вигаданого ±1.64σ log-normal припущення про волатильність.
+    """
+    if not os.path.exists(Q_LOWER_MODEL_PATH) or not os.path.exists(Q_UPPER_MODEL_PATH):
+        train_quantile_models()
+
+    with open(Q_LOWER_MODEL_PATH, 'rb') as f:
+        lower_model = pickle.load(f)
+    with open(Q_UPPER_MODEL_PATH, 'rb') as f:
+        upper_model = pickle.load(f)
+
+    correction = 0.0
+    if os.path.exists(CONFORMAL_CALIBRATION_PATH):
+        with open(CONFORMAL_CALIBRATION_PATH) as f:
+            calibration = json.load(f)
+        correction = calibration.get('conformal_correction_uah', 0.0)
+
+    X_forecast, _ = build_forecast_feature_matrix(forecast_date, forecast_weather, last_prices)
+
+    pred_lower = lower_model.predict(X_forecast) - correction
+    pred_upper = upper_model.predict(X_forecast) + correction
+
+    lower_clipped = [float(np.clip(p, PRICE_FLOOR, PRICE_CAP)) for p in pred_lower]
+    upper_clipped = [float(np.clip(p, PRICE_FLOOR, PRICE_CAP)) for p in pred_upper]
+    # Після clip/conformal-поправки полоса теоретично може "перевернутись" —
+    # підстраховуємось, щоб lower завжди <= upper.
+    lower_final = [min(lo, up) for lo, up in zip(lower_clipped, upper_clipped)]
+    upper_final = [max(lo, up) for lo, up in zip(lower_clipped, upper_clipped)]
+
+    return {'hours': list(range(24)), 'lower_uah': lower_final, 'upper_uah': upper_final}

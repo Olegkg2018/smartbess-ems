@@ -3,6 +3,7 @@ import numpy_financial as npf
 from typing import Dict, Any, List
 
 from src.modules.optimization_service.milp_model import optimize_battery_schedule
+from src.modules.reporting_service.forecast_accuracy import get_profit_capture_ratio
 
 class ReportingService:
     @classmethod
@@ -203,6 +204,12 @@ class ReportingService:
         if start_date >= today:
             start_date = today - datetime.timedelta(days=30)
             
+        # 2b. Реальний коефіцієнт "захопленого" прибутку — заміна фейкового
+        # accuracy_rate=0.80. Джерело (жива точність / бектест / fallback)
+        # видно в capture_info['source'] і в самому кеші нижче.
+        capture_info = get_profit_capture_ratio(db)
+        profit_capture_ratio = capture_info['ratio']
+
         # 3. Try to read from cache to make it sub-millisecond fast!
         cache_path = os.path.join(settings.DATA_DIR, f"executive_cache_{asset_id}.json")
         cached_days = {}
@@ -355,11 +362,13 @@ class ReportingService:
                                 supplier_margin=supplier_margin
                             )
                             opt_profit = opt_res.get('net_profit_uah', 0.0)
-                            
-                            # Apply 80% accuracy constraint (forecast error multiplier)
-                            actual_simulation_profit = opt_profit * 0.80
+
+                            # Дораховуємо РЕАЛЬНИМ виміряним коефіцієнтом точності
+                            # прогнозу (profit_capture_ratio), а не фейковою
+                            # константою 0.80 — джерело див. capture_info['source'].
+                            actual_simulation_profit = opt_profit * profit_capture_ratio
                             degr_cost_day = sum(opt_res.get('discharge', [])) * (deg_cost_mwh / 1000.0)
-                            
+
                             sim_charge_cost = 0.0
                             sim_discharge_revenue = 0.0
                             charge_list = opt_res.get('charge', [])
@@ -375,10 +384,11 @@ class ReportingService:
                                 "optimal_profit_uah": float(opt_profit),
                                 "actual_profit_uah": float(actual_simulation_profit),
                                 "degradation_cost_uah": float(degr_cost_day),
-                                "charge_cost_uah": float(sim_charge_cost * 0.80),
-                                "discharge_revenue_uah": float(sim_discharge_revenue * 0.80),
+                                "charge_cost_uah": float(sim_charge_cost * profit_capture_ratio),
+                                "discharge_revenue_uah": float(sim_discharge_revenue * profit_capture_ratio),
                                 "status": "simulated",
-                                "accuracy_rate": 0.80
+                                "accuracy_rate": profit_capture_ratio,
+                                "accuracy_source": capture_info['source'],
                             }
                         except Exception as oe:
                             print(f"Error solving optimization for date {d_str}: {oe}")
@@ -389,7 +399,8 @@ class ReportingService:
                                 "charge_cost_uah": 0.0,
                                 "discharge_revenue_uah": 0.0,
                                 "status": "simulated",
-                                "accuracy_rate": 0.80
+                                "accuracy_rate": profit_capture_ratio,
+                                "accuracy_source": capture_info['source'],
                             }
                     else:
                         cached_days[d_str] = {
@@ -399,7 +410,8 @@ class ReportingService:
                             "charge_cost_uah": 0.0,
                             "discharge_revenue_uah": 0.0,
                             "status": "simulated",
-                            "accuracy_rate": 0.80
+                            "accuracy_rate": profit_capture_ratio,
+                            "accuracy_source": capture_info['source'],
                         }
             
             # Save updated cache

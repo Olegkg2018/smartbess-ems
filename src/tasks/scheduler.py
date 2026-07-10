@@ -7,6 +7,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 import src.modules.market_data_service.data_manager as dm
 import src.modules.forecast_service.ml_pipeline as mt
 import src.modules.optimization_service.milp_model as opt
+from src.modules.reporting_service.forecast_accuracy import sync_market_prices_to_db
+import src.modules.external_data_service.telegram_bot as telegram_bot
 from src.database.session import SessionLocal
 from src.database.models import Asset, PriceForecast, ChargeDischargePlan
 
@@ -19,9 +21,25 @@ def run_daily_forecast_and_optimization():
         tomorrow_str = tomorrow.strftime('%Y-%m-%d')
         print(f"Target date for optimization: {tomorrow_str}")
         
-        # 1. Sync real-time data
+        # 1. Sync real-time data (ціни РДН/ВДР, погода, реальний Gas_Price/Telegram-сигнал)
         dm.sync_realtime_data(force=True)
-        
+
+        # 1b. Записати вчорашню/сьогоднішню реальну ціну в MarketPrice —
+        # це і є "факт", з яким завтра звірятиметься сьогоднішній прогноз.
+        n_new_prices = sync_market_prices_to_db(db)
+        if n_new_prices:
+            print(f"Synced {n_new_prices} new MarketPrice rows.")
+
+        # 1c. Реальний push-алерт диспетчеру в Telegram, якщо сьогодні
+        # виявлено grid-stress сигнал (аварії/обстріли з постів Укренерго) —
+        # best-effort, не валить основний job при збої сповіщення.
+        try:
+            alert_result = telegram_bot.check_and_send_grid_stress_alert()
+            if alert_result.get("sent"):
+                print(f"Telegram alert sent: severity={alert_result.get('severity')}")
+        except Exception as alert_err:
+            print(f"Warning: grid-stress Telegram alert failed: {alert_err}")
+
         # 2. Load weather forecast
         weather_forecast = dm.fetch_weather_forecast()
         
@@ -36,18 +54,21 @@ def run_daily_forecast_and_optimization():
         else:
             last_prices = df_hist['Price'].iloc[:168].tolist()
             
-        # 4. Run prediction (using LightGBM)
-        factors = {
-            'Gas_Price': 35.0,
-            'Nuclear_Outage': 0.15,
-            'Solar_Strike': 0.0,
-            'Market_Coeff': 1.0,
-            'VDR_Volume': 1.0,
-            'Grid_Import_Export': 0.0
-        }
-        prediction_results = mt.predict_next_day(tomorrow_str, weather_forecast, last_prices, factors)
+        # 4. Run prediction (using LightGBM). Раніше тут стояли хардкод-константи
+        # (Gas_Price=35.0, Nuclear_Outage=0.15 і т.д.) — модель щодня "прогнозувала",
+        # ніби на ринку нічого не змінюється. Реальні ринкові фактори тепер вже
+        # всередині historical_data_merged.csv (IDM-спред, Solar_Gen/Wind_Gen з
+        # реальної погоди) і враховуються моделлю напряму, без ручних факторів.
+        prediction_results = mt.predict_next_day(tomorrow_str, weather_forecast, last_prices)
         predicted_prices = prediction_results['lightgbm']
-        
+
+        # P10/P90 conformal-калібрований інтервал невизначеності (Фаза 3)
+        try:
+            price_band = mt.predict_price_band(tomorrow_str, weather_forecast, last_prices)
+        except Exception as band_err:
+            print(f"Warning: could not compute price band in scheduler: {band_err}")
+            price_band = None
+
         # 5. Run battery optimization
         asset = db.query(Asset).first()
         if not asset:
@@ -88,7 +109,9 @@ def run_daily_forecast_and_optimization():
                 timestamp=forecast_time,
                 forecast_run_at=target_dt_start,
                 model_version='lightgbm',
-                predicted_price_uah=predicted_prices[t]
+                predicted_price_uah=predicted_prices[t],
+                lower_bound_uah=float(price_band['lower_uah'][t]) if price_band else None,
+                upper_bound_uah=float(price_band['upper_uah'][t]) if price_band else None,
             )
             db.add(pf)
             

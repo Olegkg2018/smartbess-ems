@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     # Keys
     OPENWEATHER_API_KEY: str = ""
     ENTSOE_API_KEY: str = ""
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_CHAT_ID: str = ""
     
     # Database
     DATABASE_URL: str = f"sqlite:///{os.path.join(DATA_DIR, 'smartbess.db')}"

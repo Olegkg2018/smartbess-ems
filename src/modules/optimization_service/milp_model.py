@@ -2,6 +2,10 @@ import pulp
 import numpy as np
 from typing import Dict, Any, List
 
+from src.modules.tariff_service.services import TariffService
+
+PRICE_FLOOR = TariffService.PRICE_FLOOR_UAH_MWH
+
 def optimize_battery_schedule(
     prices: List[float],
     battery_capacity: float = 1000.0,      # kWh
@@ -140,51 +144,75 @@ def optimize_with_scenarios_and_risks(
     volatility: float = 0.18,
     num_simulations: int = 30,
     confidence_level: float = 0.95,
+    price_lower: List[float] = None,
+    price_upper: List[float] = None,
     **bess_params
 ) -> Dict[str, Any]:
     """
     Solves BESS optimization for Base, Pessimistic, and Aggressive price schedules,
     and runs Monte Carlo simulations to estimate Value at Risk (VaR 95%).
+
+    Якщо передано price_lower/price_upper (P10/P90, conformal-калібрований
+    інтервал з ml_pipeline.predict_price_band — Фаза 3), Pessimistic/Aggressive
+    сценарії будуються на РЕАЛЬНИХ квантилях моделі, а не на вигаданому
+    припущенні про волатильність ±1.64σ. Ефективна волатильність для Monte
+    Carlo теж виводиться з реальної ширини інтервалу (погодинно, тобто
+    гетероскедастично), а не з фіксованої константи.
     """
     prices = np.array(prices)
-    
-    # 1. Generate scenarios
-    # Pessimistic: Base price minus 1.64 standard deviations (5% lower limit)
-    prices_pess = np.clip(prices * np.exp(-1.64 * volatility), 10.0, 16000.0).tolist()
-    # Aggressive: Base price plus 1.64 standard deviations (95% upper limit)
-    prices_aggr = np.clip(prices * np.exp(1.64 * volatility), 10.0, 16000.0).tolist()
+    band_source = 'assumed_volatility'
+    hourly_volatility = np.full(len(prices), volatility)
+    PRICE_CAP = 16000.0
+
+    if price_lower is not None and price_upper is not None and len(price_lower) == len(prices) and len(price_upper) == len(prices):
+        prices_pess = np.clip(np.array(price_lower, dtype=float), PRICE_FLOOR, PRICE_CAP).tolist()
+        prices_aggr = np.clip(np.array(price_upper, dtype=float), PRICE_FLOOR, PRICE_CAP).tolist()
+        band_source = 'quantile_model_p10_p90'
+
+        # z-score for the 90th percentile of a standard normal (~1.2816):
+        # backs out an implied per-hour volatility from the real P90/point ratio,
+        # so hours with a genuinely wider model interval get a wider Monte Carlo spread.
+        with np.errstate(divide='ignore', invalid='ignore'):
+            implied = np.abs(np.log(np.clip(np.array(price_upper, dtype=float), PRICE_FLOOR, PRICE_CAP) / np.maximum(prices, 1.0))) / 1.2816
+        hourly_volatility = np.nan_to_num(implied, nan=volatility, posinf=volatility, neginf=volatility)
+        hourly_volatility = np.clip(hourly_volatility, 0.03, 1.0)
+    else:
+        # Fallback: no real quantile band supplied — theoretical assumption, as before.
+        prices_pess = np.clip(prices * np.exp(-1.64 * volatility), PRICE_FLOOR, PRICE_CAP).tolist()
+        prices_aggr = np.clip(prices * np.exp(1.64 * volatility), PRICE_FLOOR, PRICE_CAP).tolist()
+
     prices_base = prices.tolist()
-    
+
     # 2. Run optimizations
     base_res = optimize_battery_schedule(prices_base, **bess_params)
     pess_res = optimize_battery_schedule(prices_pess, **bess_params)
     aggr_res = optimize_battery_schedule(prices_aggr, **bess_params)
-    
+
     # 3. Monte Carlo runs for Value at Risk
     np.random.seed(42)
     sim_profits = []
-    
+
     for _ in range(num_simulations):
-        # Generate stochastic prices
-        noise = np.random.normal(0, volatility, size=len(prices))
-        sim_p = np.clip(prices * np.exp(noise), 10.0, 16000.0).tolist()
+        # Generate stochastic prices (per-hour volatility, real or assumed)
+        noise = np.random.normal(0, 1.0, size=len(prices)) * hourly_volatility
+        sim_p = np.clip(prices * np.exp(noise), PRICE_FLOOR, PRICE_CAP).tolist()
         try:
             res = optimize_battery_schedule(sim_p, **bess_params)
             sim_profits.append(res['net_profit_uah'])
         except:
             pass
-            
+
     if not sim_profits:
         sim_profits = [base_res['net_profit_uah']]
-        
+
     sim_profits = sorted(sim_profits)
-    
+
     # Calculate VaR
     alpha = 1.0 - confidence_level
     pct_idx = int(len(sim_profits) * alpha)
     worst_case_profit = sim_profits[pct_idx]
     var_value = base_res['net_profit_uah'] - worst_case_profit
-    
+
     return {
         "summary": {
             "status": base_res['status'],
@@ -192,7 +220,8 @@ def optimize_with_scenarios_and_risks(
             "worst_case_profit_uah": worst_case_profit,
             "value_at_risk_uah": max(0.0, var_value),
             "confidence_level_pct": confidence_level * 100,
-            "mean_simulated_profit_uah": float(np.mean(sim_profits))
+            "mean_simulated_profit_uah": float(np.mean(sim_profits)),
+            "price_band_source": band_source
         },
         "scenarios": {
             "base": base_res,
