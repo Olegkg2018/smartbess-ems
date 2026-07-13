@@ -101,7 +101,10 @@ export async function runOptimizationJob(
   role: UserRole,
   assetId: string,
   targetDate: string,
-  initialSocPct: number,
+  // undefined -> бекенд бере реальний поточний SoC з SCADA-телеметрії
+  // (не вигадана константа 20%, яка "забувала" де реально закінчила
+  // попередня доба).
+  initialSocPct: number | undefined,
   mode: string,
   simulationsCount = 50
 ): Promise<any> {
@@ -111,7 +114,7 @@ export async function runOptimizationJob(
     body: JSON.stringify({
       asset_id: assetId,
       target_date: targetDate,
-      initial_soc_pct: initialSocPct,
+      initial_soc_pct: initialSocPct ?? null,
       mode,
       simulations_count: simulationsCount,
     }),
@@ -161,4 +164,56 @@ export async function fetchForecastAccuracy(role: UserRole, days = 30) {
 
 export async function fetchMarketConditions(role: UserRole) {
   return authJson<any>(role, '/api/v1/reports/market-conditions');
+}
+
+export interface GenerationAdjustment {
+  date: string;
+  nuclear_pct: number;
+  hydro_pct: number;
+  solar_pct: number;
+  wind_pct: number;
+  note: string | null;
+  is_default?: boolean;
+}
+
+/** Ручна корекція доступності генерації (АЕС/ГЕС/СЕС/ВЕС) на дату — 100% скрізь = без відхилень. */
+export async function fetchGenerationAdjustment(role: UserRole, date: string): Promise<GenerationAdjustment> {
+  return authJson<GenerationAdjustment>(role, `/api/v1/generation-adjustments?date=${date}`);
+}
+
+export async function saveGenerationAdjustment(role: UserRole, payload: GenerationAdjustment) {
+  return authJson(role, '/api/v1/generation-adjustments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface InitialSoc {
+  asset_id: string;
+  date: string;
+  capacity_kwh: number;
+  capacity_pct: number;
+  source: 'manual' | 'scada_telemetry' | 'fallback_default';
+  has_manual_override: boolean;
+  telemetry_available: boolean;
+}
+
+/** SoC на 00:00 target_date: ручне значення > SCADA-телеметрія > фолбек 20%. */
+export async function fetchInitialSoc(role: UserRole, assetId: string, date: string): Promise<InitialSoc> {
+  return authJson<InitialSoc>(role, `/api/v1/optimization/initial-soc?asset_id=${assetId}&date=${date}`);
+}
+
+export async function saveInitialSoc(role: UserRole, assetId: string, date: string, capacityKwh: number) {
+  return authJson(role, '/api/v1/optimization/initial-soc', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ asset_id: assetId, date, capacity_kwh: capacityKwh }),
+  });
+}
+
+export async function clearInitialSoc(role: UserRole, assetId: string, date: string) {
+  return authJson(role, `/api/v1/optimization/initial-soc?asset_id=${assetId}&date=${date}`, {
+    method: 'DELETE',
+  });
 }

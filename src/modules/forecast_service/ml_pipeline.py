@@ -12,8 +12,12 @@ from lightgbm import LGBMRegressor, LGBMClassifier
 from src.core.config import settings
 import src.modules.market_data_service.data_manager as dm
 from src.modules.tariff_service.services import TariffService
+from src.database.session import SessionLocal
+from src.database.models import GenerationAdjustment
 
 DATA_DIR = settings.DATA_DIR
+DEFAULT_NUCLEAR_REFERENCE_CAPACITY_MW = 7835.0
+DEFAULT_HYDRO_REFERENCE_CAPACITY_MW = 3800.0
 PRICE_FLOOR = TariffService.PRICE_FLOOR_UAH_MWH
 PRICE_CAP = 16000.0
 LGBM_MODEL_PATH = os.path.join(DATA_DIR, "model_lightgbm.pkl")
@@ -570,13 +574,66 @@ def walk_forward_backtest(test_days=90, retrain_every_days=7, model_type='lightg
 
     return report
 
+def _get_generation_adjustment(forecast_date):
+    """Ручна корекція диспетчера на цю дату (GenerationAdjustment), або
+    нейтральні 100%/без нотатки, якщо нічого не збережено."""
+    db = SessionLocal()
+    try:
+        target_dt = pd.to_datetime(forecast_date).to_pydatetime()
+        row = db.query(GenerationAdjustment).filter(GenerationAdjustment.date == target_dt).first()
+        if not row:
+            return {'nuclear_pct': 100.0, 'hydro_pct': 100.0, 'solar_pct': 100.0, 'wind_pct': 100.0, 'note': None}
+        return {
+            'nuclear_pct': row.nuclear_pct, 'hydro_pct': row.hydro_pct,
+            'solar_pct': row.solar_pct, 'wind_pct': row.wind_pct, 'note': row.note,
+        }
+    except Exception:
+        return {'nuclear_pct': 100.0, 'hydro_pct': 100.0, 'solar_pct': 100.0, 'wind_pct': 100.0, 'note': None}
+    finally:
+        db.close()
+
+def _get_reference_capacities_mw():
+    """Довідкові потужності АЕС/ГЕС (наближені, редаговані в Settings) для
+    переведення % у МВт-дельту — див. коментар при DEFAULT_* констант вище."""
+    path = os.path.join(DATA_DIR, "system_settings.json")
+    nuclear = DEFAULT_NUCLEAR_REFERENCE_CAPACITY_MW
+    hydro = DEFAULT_HYDRO_REFERENCE_CAPACITY_MW
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                saved = json.load(f)
+                nuclear = float(saved.get("nuclear_reference_capacity_mw", nuclear))
+                hydro = float(saved.get("hydro_reference_capacity_mw", hydro))
+        except Exception:
+            pass
+    return nuclear, hydro
+
 def build_forecast_feature_matrix(forecast_date, forecast_weather, last_prices):
     """
     Будує матрицю ознак (FEATURES) для прогнозу на 24 години наперед. Спільна
     для точкового прогнозу (predict_next_day) і квантильного інтервалу
     невизначеності (predict_price_band) — та сама логіка лагів/фічей, щоб
     обидва прогнози завжди узгоджувались між собою.
+
+    Якщо на forecast_date збережена ручна корекція генерації
+    (GenerationAdjustment — диспетчер відзначив ремонт/пошкодження/погану
+    погоду на АЕС/ГЕС/СЕС/ВЕС), вона застосовується тут:
+    - solar_pct/wind_pct масштабують Solar_Gen/Wind_Gen напряму (реальні
+      навчені ознаки — чесний вплив на прогноз через саму модель).
+    - nuclear_pct/hydro_pct не мають навченої ознаки (даних по типах немає з
+      2022 року) — переводяться в МВт-дельту через довідникові потужності і
+      додаються до Grid_Net_Export_Lag_24/Mean_24h (реальна навчена ознака
+      балансу генерація/споживання) — це приблизна, але НЕ вигадана оцінка:
+      дельта проходить крізь вже навчену моделлю залежність ціни від
+      нетто-експорту, а не через довільний множник.
     """
+    adjustment = _get_generation_adjustment(forecast_date)
+    nuclear_ref_mw, hydro_ref_mw = _get_reference_capacities_mw()
+    baseload_delta_mw = (
+        nuclear_ref_mw * (adjustment['nuclear_pct'] / 100.0 - 1.0)
+        + hydro_ref_mw * (adjustment['hydro_pct'] / 100.0 - 1.0)
+    )
+
     df_hist = pd.read_csv(dm.MERGED_DATA_PATH)
     df_hist['Datetime'] = pd.to_datetime(df_hist['Datetime'])
     df_hist = df_hist.sort_values('Datetime')
@@ -646,6 +703,12 @@ def build_forecast_feature_matrix(forecast_date, forecast_weather, last_prices):
         else:
             wind_gen = 1800.0 * ((ws - 8.0) / (45.0 - 8.0)) ** 3
 
+        # Ручна корекція диспетчера (див. докстрінг функції вище)
+        solar_gen = solar_gen * (adjustment['solar_pct'] / 100.0)
+        wind_gen = wind_gen * (adjustment['wind_pct'] / 100.0)
+        flow_lag_24 = flow_lag_24 + baseload_delta_mw
+        flow_mean_24h = flow_mean_24h + baseload_delta_mw
+
         hour_sin = np.sin(2 * np.pi * h / 24.0)
         hour_cos = np.cos(2 * np.pi * h / 24.0)
         month_sin = np.sin(2 * np.pi * dt.month / 12.0)
@@ -680,7 +743,7 @@ def build_forecast_feature_matrix(forecast_date, forecast_weather, last_prices):
         })
 
     X_forecast = pd.DataFrame(records)[FEATURES]
-    return X_forecast, records
+    return X_forecast, records, adjustment
 
 def predict_next_day(forecast_date, forecast_weather, last_prices, factors=None):
     """
@@ -703,7 +766,7 @@ def predict_next_day(forecast_date, forecast_weather, last_prices, factors=None)
     with open(SCALER_PATH, 'rb') as f:
         scaler = pickle.load(f)
 
-    X_forecast, records = build_forecast_feature_matrix(forecast_date, forecast_weather, last_prices)
+    X_forecast, records, adjustment = build_forecast_feature_matrix(forecast_date, forecast_weather, last_prices)
 
     pred_lgb = lgbm_model.predict(X_forecast)
     pred_xgb = xgb_model.predict(X_forecast)
@@ -719,7 +782,8 @@ def predict_next_day(forecast_date, forecast_weather, last_prices, factors=None)
         'lightgbm': final_lgb,
         'xgboost': final_xgb,
         'mlp': final_mlp,
-        'features': records
+        'features': records,
+        'generation_adjustment': adjustment,
     }
 
 def predict_price_band(forecast_date, forecast_weather, last_prices):
@@ -743,7 +807,7 @@ def predict_price_band(forecast_date, forecast_weather, last_prices):
             calibration = json.load(f)
         correction = calibration.get('conformal_correction_uah', 0.0)
 
-    X_forecast, _ = build_forecast_feature_matrix(forecast_date, forecast_weather, last_prices)
+    X_forecast, _, _ = build_forecast_feature_matrix(forecast_date, forecast_weather, last_prices)
 
     pred_lower = lower_model.predict(X_forecast) - correction
     pred_upper = upper_model.predict(X_forecast) + correction

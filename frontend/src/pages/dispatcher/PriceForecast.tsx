@@ -1,4 +1,4 @@
-import { BookOpen, CheckCircle2 } from 'lucide-react';
+import { BookOpen, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Line, Area, Bar, Cell, ResponsiveContainer } from 'recharts';
 import { useApp } from '../../state/AppContext';
 import GlobalFilterBar from '../../components/GlobalFilterBar';
@@ -9,26 +9,25 @@ const COLOR_DISCHARGE_PLANNED = 'rgba(5, 150, 105, 0.35)';
 const COLOR_DISCHARGE_MANUAL = '#059669';
 
 export default function PriceForecast() {
-  const { forecastPrices, priceBand, actualPrices, manualOverrides } = useApp();
+  const {
+    forecastPrices, priceBand, actualPrices, dispatchProfile,
+    generationAdjustment, setGenerationAdjustmentDraft, saveGenerationAdjustmentAndRecalculate,
+  } = useApp();
 
   const hasBand = !!priceBand && priceBand.lower_bound_uah.length === (forecastPrices || []).length
     && priceBand.lower_bound_uah.every((v) => v !== null);
   const hasActual = !!actualPrices?.available && actualPrices.actual_prices_uah.length === 24;
 
-  // manualOverrides вже містить ЕФЕКТИВНЕ рішення на кожну годину (ручний
-  // оверрайд або, якщо його немає, останній порахований MILP-план для цієї
-  // дати — так віддає бекенд) і коректно оновлюється при зміні дати, на
-  // відміну від optimizationResult (він існує лише одразу після натискання
-  // «Розрахувати» і для НОВОЇ дати ще порожній) — тому графік малюємо саме
-  // з manualOverrides, а не з optimizationResult.
-  const overridesReady = manualOverrides && manualOverrides.length === 24;
-  const hasDispatch = overridesReady;
+  // dispatchProfile (AppContext) — ЄДИНЕ джерело правди для заряду/розряду/
+  // SoC, спільне з Optimization Schedule: реально виконана потужність з
+  // урахуванням меж SoC батареї, а не сира введена команда (інакше на цій
+  // сторінці й на Optimization Schedule стовпчики могли відрізнятись, якщо
+  // ручний оверрайд перевищував реальну ємність — знайдений диспетчером баг).
+  const hasDispatch = dispatchProfile.length === 24;
 
   // Година 1..24 (як на oree.com.ua і в самому РДН), а не 0:00-23:00.
   const chartData = (forecastPrices || []).map((p, i) => {
-    const override = overridesReady ? manualOverrides[i] : null;
-    const isManual = !!override?.is_overridden;
-    const effectiveKW = override ? override.power_mw * 1000.0 : 0;
+    const d = hasDispatch ? dispatchProfile[i] : null;
 
     return {
       hour: i + 1,
@@ -36,9 +35,9 @@ export default function PriceForecast() {
       actual: hasActual ? actualPrices!.actual_prices_uah[i] : undefined,
       lower: hasBand ? (priceBand!.lower_bound_uah[i] as number) : undefined,
       bandWidth: hasBand ? (priceBand!.upper_bound_uah[i] as number) - (priceBand!.lower_bound_uah[i] as number) : undefined,
-      charge: effectiveKW < 0 ? -effectiveKW : 0,
-      discharge: effectiveKW > 0 ? effectiveKW : 0,
-      isManual,
+      charge: d ? d.charge : 0,
+      discharge: d ? d.discharge : 0,
+      isManual: d ? d.isManual : false,
     };
   });
 
@@ -85,6 +84,11 @@ export default function PriceForecast() {
   } else {
     insights.push('Натисніть «Розрахувати» вище, щоб отримати прогноз на обрану дату.');
   }
+
+  const hasAdjustment = !!generationAdjustment && (
+    generationAdjustment.nuclear_pct !== 100 || generationAdjustment.hydro_pct !== 100 ||
+    generationAdjustment.solar_pct !== 100 || generationAdjustment.wind_pct !== 100
+  );
 
   return (
     <div>
@@ -140,6 +144,16 @@ export default function PriceForecast() {
       <div className="glass-card">
         <h3 className="card-title" style={{ marginBottom: '12px' }}>Ключові спостереження</h3>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          {hasAdjustment && (
+            <div style={{ display: 'flex', gap: '10px', background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(217, 119, 6, 0.3)', padding: '12px', borderRadius: '6px', fontSize: '0.85rem' }}>
+              <AlertTriangle size={16} style={{ color: '#d97706', flexShrink: 0 }} />
+              <span>
+                Прогноз враховує ручну корекцію генерації: АЕС {generationAdjustment!.nuclear_pct}%, ГЕС {generationAdjustment!.hydro_pct}%,
+                {' '}СЕС {generationAdjustment!.solar_pct}%, ВЕС {generationAdjustment!.wind_pct}%.
+                {generationAdjustment!.note ? ` Нотатка: «${generationAdjustment!.note}».` : ''}
+              </span>
+            </div>
+          )}
           {insights.map((exp, idx) => (
             <div key={idx} style={{ display: 'flex', gap: '10px', background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '6px', fontSize: '0.85rem' }}>
               {hasActual && idx === insights.length - 1 ? <CheckCircle2 size={16} style={{ color: '#059669' }} /> : <BookOpen size={16} style={{ color: '#0891b2' }} />}
@@ -147,6 +161,50 @@ export default function PriceForecast() {
             </div>
           ))}
         </div>
+      </div>
+
+      <div className="glass-card">
+        <h3 className="card-title" style={{ marginBottom: '4px' }}>Ручна корекція генерації (АЕС/ГЕС/СЕС/ВЕС)</h3>
+        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 16px' }}>
+          Реальних даних про генерацію АЕС/ГЕС/СЕС/ВЕС по типах немає (Україна припинила публікацію в ENTSO-E з 2022 року).
+          СЕС/ВЕС коригують навчену фізичну ознаку моделі напряму — чесний вплив на прогноз.
+          АЕС/ГЕС не мають навченої ознаки — % переводиться в МВт-дельту (довідникові потужності) і додається до
+          нетто-експорту — приблизна, але не вигадана оцінка через уже навчену модель, а не довільний коефіцієнт.
+        </p>
+        {!generationAdjustment ? (
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Завантаження...</p>
+        ) : (
+          <>
+            <div className="grid-3" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: '16px' }}>
+              {([
+                ['nuclear_pct', 'АЕС, % робочих потужностей'],
+                ['hydro_pct', 'ГЕС, % робочих потужностей'],
+                ['solar_pct', 'СЕС, % очікуваної генерації'],
+                ['wind_pct', 'ВЕС, % очікуваної генерації'],
+              ] as const).map(([key, label]) => (
+                <div className="form-group" key={key} style={{ marginBottom: 0 }}>
+                  <label className="form-label">{label}</label>
+                  <input
+                    type="number" min={0} max={150} step={5} className="form-input"
+                    value={generationAdjustment[key]}
+                    onChange={(e) => setGenerationAdjustmentDraft({ ...generationAdjustment, [key]: Number(e.target.value) })}
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="form-group">
+              <label className="form-label">Нотатка (причина: ремонт, пошкодження, погода)</label>
+              <input
+                type="text" className="form-input" placeholder="напр.: плановий ремонт енергоблоку Хмельницької АЕС"
+                value={generationAdjustment.note || ''}
+                onChange={(e) => setGenerationAdjustmentDraft({ ...generationAdjustment, note: e.target.value })}
+              />
+            </div>
+            <button className="btn" onClick={saveGenerationAdjustmentAndRecalculate}>
+              Зберегти і перерахувати прогноз
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

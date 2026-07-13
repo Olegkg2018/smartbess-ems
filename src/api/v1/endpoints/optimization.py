@@ -6,8 +6,9 @@ from typing import Optional, List
 
 from src.core.config import settings
 from src.database.session import SessionLocal
-from src.database.models import Asset, ChargeDischargePlan, PriceForecast, ManualOverride
+from src.database.models import Asset, ChargeDischargePlan, PriceForecast, ManualOverride, InitialSocOverride, BessTelemetry
 import src.modules.optimization_service.milp_model as opt
+from src.modules.scada_service.soc_state import get_current_soc_fraction
 from src.core.redis import set_job_status, get_job_status
 from src.core.security import RoleChecker
 
@@ -16,7 +17,10 @@ router = APIRouter()
 class RunOptimizationRequest(BaseModel):
     asset_id: str
     target_date: str
-    initial_soc_pct: Optional[float] = 20.0
+    # None -> бекенд бере РЕАЛЬНИЙ поточний SoC з SCADA-телеметрії
+    # (get_current_soc_fraction), а не вигадану константу. Явне число
+    # лишається можливим для навмисного what-if сценарію.
+    initial_soc_pct: Optional[float] = None
     mode: Optional[str] = "arbitrage"
     simulations_count: Optional[int] = 50
 
@@ -24,7 +28,7 @@ def run_optimization_background_job(
     job_id: str,
     asset_id_str: str,
     target_date_str: str,
-    initial_soc_pct: float,
+    initial_soc_pct: Optional[float],
     mode_str: str,
     simulations_count: int
 ):
@@ -36,10 +40,16 @@ def run_optimization_background_job(
         asset = db.query(Asset).filter(Asset.id == asset_id_str).first()
         if not asset:
             asset = db.query(Asset).first() # Fallback to first asset
-            
+
         if not asset:
             raise ValueError("No asset found in database")
-            
+
+        resolved_initial_soc = (
+            initial_soc_pct / 100.0
+            if initial_soc_pct is not None
+            else get_current_soc_fraction(db, asset, target_date=target_date_str)
+        )
+
         target_dt_start = datetime.datetime.strptime(target_date_str, '%Y-%m-%d')
         
         # Load forecast prices from DB or generate mock if empty
@@ -71,7 +81,7 @@ def run_optimization_background_job(
             'max_discharge_power': asset.power_mw * 1000.0,
             'charge_efficiency': asset.efficiency_charge,
             'discharge_efficiency': asset.efficiency_discharge,
-            'initial_soc': initial_soc_pct / 100.0,
+            'initial_soc': resolved_initial_soc,
             'min_soc': asset.min_soc_pct / 100.0,
             'max_soc': asset.max_soc_pct / 100.0,
             'max_cycles_per_day': 1.5,
@@ -158,6 +168,89 @@ async def run_optimization(req: RunOptimizationRequest, background_tasks: Backgr
             "status_url": f"/api/v1/jobs/{job_id}"
         }
     }
+
+class InitialSocOverrideModel(BaseModel):
+    asset_id: str
+    date: str
+    capacity_kwh: float
+
+@router.get("/initial-soc", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
+async def get_initial_soc(asset_id: str, date: str):
+    """
+    Показує, що РЕАЛЬНО буде використано як SoC на 00:00 target_date — ручне
+    значення (якщо збережене), інакше останнє з SCADA-телеметрії, інакше
+    фолбек 20%. source дозволяє диспетчеру бачити, чи дані реальні (SCADA/
+    ручні), чи це умовний фолбек, якому не варто довіряти.
+    """
+    db = SessionLocal()
+    try:
+        asset = db.query(Asset).filter(Asset.id == asset_id).first()
+        if not asset:
+            raise HTTPException(status_code=404, detail="Asset not found")
+
+        override = db.query(InitialSocOverride).filter(
+            InitialSocOverride.asset_id == asset_id,
+            InitialSocOverride.date == datetime.datetime.strptime(date, '%Y-%m-%d')
+        ).first()
+
+        tel = db.query(BessTelemetry).filter(
+            BessTelemetry.asset_id == asset_id
+        ).order_by(BessTelemetry.timestamp.desc()).first()
+
+        if override is not None:
+            source = "manual"
+            capacity_kwh = override.capacity_kwh
+        elif tel is not None:
+            source = "scada_telemetry"
+            capacity_kwh = tel.current_soc_mwh * 1000.0
+        else:
+            source = "fallback_default"
+            capacity_kwh = asset.capacity_mwh * 1000.0 * 0.20
+
+        return {
+            "asset_id": asset_id,
+            "date": date,
+            "capacity_kwh": capacity_kwh,
+            "capacity_pct": (capacity_kwh / (asset.capacity_mwh * 1000.0) * 100.0) if asset.capacity_mwh > 0 else 0.0,
+            "source": source,
+            "has_manual_override": override is not None,
+            "telemetry_available": tel is not None,
+        }
+    finally:
+        db.close()
+
+@router.post("/initial-soc", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
+async def save_initial_soc(req: InitialSocOverrideModel):
+    db = SessionLocal()
+    try:
+        target_dt = datetime.datetime.strptime(req.date, '%Y-%m-%d')
+        row = db.query(InitialSocOverride).filter(
+            InitialSocOverride.asset_id == req.asset_id,
+            InitialSocOverride.date == target_dt
+        ).first()
+        if not row:
+            row = InitialSocOverride(asset_id=req.asset_id, date=target_dt)
+            db.add(row)
+        row.capacity_kwh = req.capacity_kwh
+        db.commit()
+        return {"status": "success", "message": f"Ручний SoC на 00:00 {req.date} збережено ({req.capacity_kwh:.0f} кВт·год)."}
+    finally:
+        db.close()
+
+@router.delete("/initial-soc", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
+async def clear_initial_soc(asset_id: str, date: str):
+    """Прибирає ручне значення — повертає розрахунок до автоматичного (SCADA-телеметрія / фолбек)."""
+    db = SessionLocal()
+    try:
+        target_dt = datetime.datetime.strptime(date, '%Y-%m-%d')
+        db.query(InitialSocOverride).filter(
+            InitialSocOverride.asset_id == asset_id,
+            InitialSocOverride.date == target_dt
+        ).delete()
+        db.commit()
+        return {"status": "success", "message": f"Ручне значення SoC на {date} прибрано, розрахунок знову автоматичний."}
+    finally:
+        db.close()
 
 @router.get("/plans", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
 async def get_plans(asset_id: str, date: str):
@@ -352,6 +445,22 @@ class SystemSettingsModel(BaseModel):
     capacity_kw: float
     power_kw: float
     efficiency_pct: float
+    nuclear_reference_capacity_mw: Optional[float] = None
+    hydro_reference_capacity_mw: Optional[float] = None
+
+# Довідкові потужності для перетворення "% робочих АЕС/ГЕС" у МВт-дельту
+# (generation_adjustments.py). Це НЕ вигадка — реальні опубліковані дані:
+# АЕС: 13835 МВт номінал 4 станцій (Рівненська/Хмельницька/Пд.-Українська/
+#   Запорізька) мінус Запорізька (6 блоків ВВЕР-1000, під окупацією й
+#   зупинена з 2022) ≈ 7835 МВт реально доступних. Джерела: World Nuclear
+#   Association, IAEA PRIS (станом на 2025).
+# ГЕС: сумарно ~6229 МВт номінал (включно з ГАЕС), але після руйнування
+#   Каховської ГЕС (335 МВт) і бойових пошкоджень значна частина каскаду
+#   недоступна — беремо ~3800 МВт як орієнтовну робочу оцінку.
+# ЦІ ЦИФРИ НАБЛИЗНІ й змінюються з часом (ремонти, відбудова, нові удари) —
+# тому редаговані в Settings, а не жорстко зашиті як факт.
+DEFAULT_NUCLEAR_REFERENCE_CAPACITY_MW = 7835.0
+DEFAULT_HYDRO_REFERENCE_CAPACITY_MW = 3800.0
 
 @router.get("/settings", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
 async def get_system_settings():
@@ -373,13 +482,15 @@ async def get_system_settings():
         "osr": "dtek_kiev",
         "voltage_class": 1,
         "margin": 100.0,
+        "nuclear_reference_capacity_mw": DEFAULT_NUCLEAR_REFERENCE_CAPACITY_MW,
+        "hydro_reference_capacity_mw": DEFAULT_HYDRO_REFERENCE_CAPACITY_MW,
     }
 
     if os.path.exists(path):
         try:
             with open(path, "r") as f:
                 saved = json.load(f)
-                for key in ("launch_date", "osr", "voltage_class", "margin"):
+                for key in ("launch_date", "osr", "voltage_class", "margin", "nuclear_reference_capacity_mw", "hydro_reference_capacity_mw"):
                     if key in saved:
                         data[key] = saved[key]
         except Exception:
@@ -414,6 +525,8 @@ async def save_system_settings(req: SystemSettingsModel):
             "osr": req.osr,
             "voltage_class": req.voltage_class,
             "margin": req.margin,
+            "nuclear_reference_capacity_mw": req.nuclear_reference_capacity_mw if req.nuclear_reference_capacity_mw is not None else DEFAULT_NUCLEAR_REFERENCE_CAPACITY_MW,
+            "hydro_reference_capacity_mw": req.hydro_reference_capacity_mw if req.hydro_reference_capacity_mw is not None else DEFAULT_HYDRO_REFERENCE_CAPACITY_MW,
         }
 
         os.makedirs(os.path.dirname(path), exist_ok=True)

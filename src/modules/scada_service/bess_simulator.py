@@ -7,22 +7,47 @@ from pymodbus.datastore import ModbusSequentialDataBlock, ModbusDeviceContext, M
 import asyncio
 
 from src.core.config import settings
+from src.database.session import SessionLocal
+from src.database.models import Asset
 
+# Фолбек-значення лише якщо в БД ще немає жодного Asset (холодний старт до
+# сідування в app.py lifespan) — у проді відразу перезаписується реальними
+# capacity_mwh/power_mw/min_soc_pct/max_soc_pct з Asset, щоб симулятор не
+# розходився з тим, що реально налаштовано в Settings і що використовує MILP
+# (раніше тут були захардкожені 1000 кВт·год/250 кВт — фізична симуляція
+# мовчки обрізала будь-яку команду понад 250 кВт навіть коли реальний Asset
+# налаштований на 1000 кВт, і SoC-траєкторія розходилась з планом MILP).
 CAPACITY_KWH = 1000.0
 MAX_POWER_KW = 250.0
+MIN_SOC_FRACTION = 0.10
+MAX_SOC_FRACTION = 0.90
 EFFICIENCY = 0.95
 AMBIENT_TEMP = 20.0 # °C
+
+def _load_asset_limits():
+    global CAPACITY_KWH, MAX_POWER_KW, MIN_SOC_FRACTION, MAX_SOC_FRACTION
+    db = SessionLocal()
+    try:
+        asset = db.query(Asset).first()
+        if asset:
+            CAPACITY_KWH = asset.capacity_mwh * 1000.0
+            MAX_POWER_KW = asset.power_mw * 1000.0
+            MIN_SOC_FRACTION = asset.min_soc_pct / 100.0
+            MAX_SOC_FRACTION = asset.max_soc_pct / 100.0
+    finally:
+        db.close()
 
 # Datastore block (holding registers, 6 registers starting at address 1)
 block = ModbusSequentialDataBlock(1, [0, 200, 0, 200, 1000, 0])
 
 def run_physical_simulation():
     print("SCADA: Starting battery physical simulation thread...")
-    soc_kwh = 200.0  # 20%
+    _load_asset_limits()
+    soc_kwh = CAPACITY_KWH * 0.20  # старт на 20% реальної ємності Asset
     soh = 100.0      # 100%
     temp = AMBIENT_TEMP
     dt = 1.0 / 3600.0
-    
+
     while True:
         try:
             values = block.simdata[0].values
@@ -31,14 +56,14 @@ def run_physical_simulation():
                 target_power = target_power_raw - 65536
             else:
                 target_power = target_power_raw
-                
+
             target_power = max(-MAX_POWER_KW, min(MAX_POWER_KW, target_power))
             current_power = 0.0
             state = 0
-            
+
             if target_power < 0:
-                if soc_kwh >= CAPACITY_KWH * 0.90:
-                    soc_kwh = CAPACITY_KWH * 0.90
+                if soc_kwh >= CAPACITY_KWH * MAX_SOC_FRACTION:
+                    soc_kwh = CAPACITY_KWH * MAX_SOC_FRACTION
                     current_power = 0.0
                     state = 0
                 else:
@@ -46,8 +71,8 @@ def run_physical_simulation():
                     soc_kwh += abs(current_power) * EFFICIENCY * dt
                     state = 1
             elif target_power > 0:
-                if soc_kwh <= CAPACITY_KWH * 0.10:
-                    soc_kwh = CAPACITY_KWH * 0.10
+                if soc_kwh <= CAPACITY_KWH * MIN_SOC_FRACTION:
+                    soc_kwh = CAPACITY_KWH * MIN_SOC_FRACTION
                     current_power = 0.0
                     state = 0
                 else:

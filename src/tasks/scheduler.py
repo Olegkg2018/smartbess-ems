@@ -9,6 +9,7 @@ import src.modules.forecast_service.ml_pipeline as mt
 import src.modules.optimization_service.milp_model as opt
 from src.modules.reporting_service.forecast_accuracy import sync_market_prices_to_db
 import src.modules.external_data_service.telegram_bot as telegram_bot
+from src.modules.scada_service.soc_state import get_current_soc_fraction
 from src.database.session import SessionLocal
 from src.database.models import Asset, PriceForecast, ChargeDischargePlan
 
@@ -81,7 +82,10 @@ def run_daily_forecast_and_optimization():
             'max_discharge_power': asset.power_mw * 1000.0,
             'charge_efficiency': asset.efficiency_charge,
             'discharge_efficiency': asset.efficiency_discharge,
-            'initial_soc': 0.20, # Start at 20% SoC
+            # Реальний поточний SoC з SCADA-телеметрії, а не захардкоджені
+            # 20% щодня — інакше план щодня "забуває", де реально закінчила
+            # попередня доба (soc_state.get_current_soc_fraction).
+            'initial_soc': get_current_soc_fraction(db, asset, target_date=tomorrow_str),
             'min_soc': asset.min_soc_pct / 100.0,
             'max_soc': asset.max_soc_pct / 100.0,
             'max_cycles_per_day': 1.5,

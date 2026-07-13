@@ -1,47 +1,97 @@
-import { ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Area, Bar, ResponsiveContainer } from 'recharts';
+import { useEffect, useState } from 'react';
+import { ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Area, Bar, ReferenceLine, ResponsiveContainer } from 'recharts';
+import { AlertTriangle, Radio, Pencil } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import GlobalFilterBar from '../../components/GlobalFilterBar';
 
-const TARIFF_UAH_PER_KWH = (528.57 + 1500.0 + 104.57 + 100.0) / 1000.0;
-const DEGRADATION_UAH_PER_KWH = 1.2;
-
 export default function OptimizationSchedule() {
-  const { optimizationResult, manualOverrides, setManualOverrides, targetDate, capacity, power, efficiency, saveOverrides, resetOverridesToOptimal } = useApp();
+  const {
+    optimizationResult, manualOverrides, setManualOverrides, dispatchProfile, targetDate, capacity, power, saveOverrides, resetOverridesToOptimal,
+    initialSoc, saveInitialSocAndRecalculate, clearInitialSocAndRecalculate,
+  } = useApp();
 
   const baseSchedule = optimizationResult?.scenarios?.base?.schedule || [];
 
+  // Фолбек лише одразу після "Розрахувати", поки manualOverrides (і похідний
+  // dispatchProfile) ще не підвантажились для нової дати.
   const chartProfile = baseSchedule.length === 24
     ? baseSchedule.map((s: any) => ({ hour: `${s.hour + 1}`, charge: s.power_kw < 0 ? -s.power_kw : 0, discharge: s.power_kw > 0 ? s.power_kw : 0, soc: s.soc_kwh, price: s.price_forecast_uah_mwh }))
     : [];
 
-  let dailyRevenue = 0, dailyCost = 0, dailyDegradation = 0;
-  let runningSoc = capacity * 0.2;
-  const overridesComplete = manualOverrides && manualOverrides.length === 24;
-
-  const currentDayProfile = overridesComplete
-    ? manualOverrides.map((o: any) => {
-        const powerKW = o.power_mw * 1000.0;
-        const priceKWh = o.price_uah / 1000.0;
-        let chargeKW = 0, dischargeKW = 0;
-        if (powerKW < 0) {
-          chargeKW = Math.abs(powerKW);
-          dailyCost += chargeKW * (priceKWh + TARIFF_UAH_PER_KWH);
-          runningSoc = Math.min(capacity * 0.9, runningSoc + chargeKW * (efficiency / 100.0));
-        } else if (powerKW > 0) {
-          dischargeKW = powerKW;
-          dailyRevenue += dischargeKW * priceKWh;
-          dailyDegradation += dischargeKW * DEGRADATION_UAH_PER_KWH;
-          runningSoc = Math.max(capacity * 0.1, runningSoc - dischargeKW / (efficiency / 100.0));
-        }
-        return { hour: `${o.hour + 1}`, charge: chargeKW, discharge: dischargeKW, soc: runningSoc, price: o.price_uah };
-      })
+  const hasProfile = dispatchProfile.length === 24;
+  // dispatchProfile (AppContext) — ЄДИНЕ джерело правди для заряду/розряду/
+  // SoC, спільне з Price Forecast: раніше кожна сторінка рахувала це окремо,
+  // і при ручному оверрайді, що перевищував реальну ємність батареї, графіки
+  // на двох сторінках показували різні стовпчики (реальний баг, знайдений
+  // диспетчером).
+  const currentDayProfile = hasProfile
+    ? dispatchProfile.map((d) => ({ hour: `${d.hour}`, charge: d.charge, discharge: d.discharge, soc: d.soc, price: d.price }))
     : [];
 
+  const dailyRevenue = dispatchProfile.reduce((s, d) => s + d.revenueUah, 0);
+  const dailyCost = dispatchProfile.reduce((s, d) => s + d.costUah, 0);
+  const dailyDegradation = dispatchProfile.reduce((s, d) => s + d.degradationUah, 0);
   const dailyNetProfit = dailyRevenue - dailyCost - dailyDegradation;
+
+  const [socDraft, setSocDraft] = useState<string>('');
+  useEffect(() => {
+    if (initialSoc) setSocDraft(String(Math.round(initialSoc.capacity_kwh)));
+  }, [initialSoc]);
+
+  const socSourceLabel: Record<string, { text: string; color: string; icon: any }> = {
+    manual: { text: 'Ручне значення диспетчера', color: '#3b82f6', icon: Pencil },
+    scada_telemetry: { text: 'Реальна SCADA-телеметрія', color: '#059669', icon: Radio },
+    fallback_default: { text: "Фолбек 20% — зв'язку зі SCADA немає, дані ненадійні", color: '#d97706', icon: AlertTriangle },
+  };
 
   return (
     <div>
       <GlobalFilterBar />
+
+      <div className="glass-card">
+        <h3 className="card-title" style={{ marginBottom: '4px' }}>SoC батареї на початок доби (00:00 {targetDate})</h3>
+        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 12px' }}>
+          Визначає, з якого реального рівня заряду MILP планує добу. Пріоритет: ручне значення → SCADA-телеметрія → фолбек 20% (лише якщо немає ні того, ні того).
+        </p>
+        {!initialSoc ? (
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Завантаження...</p>
+        ) : (
+          <>
+            {(() => {
+              const info = socSourceLabel[initialSoc.source];
+              const Icon = info.icon;
+              return (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px', fontSize: '0.85rem', color: info.color }}>
+                  <Icon size={16} />
+                  <span>Джерело: {info.text} — {Math.round(initialSoc.capacity_kwh).toLocaleString()} кВт·год ({initialSoc.capacity_pct.toFixed(1)}%)</span>
+                </div>
+              );
+            })()}
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Ємність на 00:00 (кВт·год)</label>
+                <input
+                  type="number" min={0} max={capacity} step={10} className="form-input" style={{ width: '180px' }}
+                  value={socDraft}
+                  onChange={(e) => setSocDraft(e.target.value)}
+                />
+              </div>
+              <button className="btn" onClick={() => saveInitialSocAndRecalculate(Number(socDraft))}>
+                Зберегти вручну і перерахувати
+              </button>
+              {initialSoc.has_manual_override && (
+                <button
+                  className="btn"
+                  style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', border: '1px solid #ef4444' }}
+                  onClick={clearInitialSocAndRecalculate}
+                >
+                  Скинути на автоматичне
+                </button>
+              )}
+            </div>
+          </>
+        )}
+      </div>
 
       <div className="kpi-container" style={{ marginBottom: '24px' }}>
         <div className="kpi-card" style={{ borderLeft: '4px solid #059669' }}>
@@ -64,32 +114,25 @@ export default function OptimizationSchedule() {
       </div>
 
       <div className="glass-card">
-        <h3 className="card-title" style={{ marginBottom: '4px' }}>Потужність заряду/розряду BESS (кВт)</h3>
-        <div style={{ width: '100%', height: 220 }}>
+        <h3 className="card-title" style={{ marginBottom: '4px' }}>Потужність заряду/розряду та рівень SoC BESS</h3>
+        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 12px' }}>
+          Пунктирні лінії — межі ємності батареї: {Math.round(capacity * 0.9).toLocaleString()} кВт·год (макс. SoC 90%) і {Math.round(capacity * 0.1).toLocaleString()} кВт·год (мін. SoC 10%) з {Math.round(capacity).toLocaleString()} кВт·год загальної ємності.
+          Стовпчики показують реально виконану потужність — якщо батарея вже на межі ємності, подальша команда заряду/розряду не виконується і стовпчик зменшується, навіть якщо введена потужність більша.
+        </p>
+        <div style={{ width: '100%', height: 380 }}>
           <ResponsiveContainer>
-            <ComposedChart data={overridesComplete ? currentDayProfile : chartProfile} margin={{ bottom: 0 }}>
+            <ComposedChart data={hasProfile ? currentDayProfile : chartProfile}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
               <XAxis dataKey="hour" stroke="#9ca3af" />
-              <YAxis stroke="#9ca3af" />
+              <YAxis yAxisId="power" stroke="#9ca3af" label={{ value: 'кВт', angle: -90, position: 'insideLeft', fill: '#9ca3af', fontSize: 11 }} />
+              <YAxis yAxisId="soc" orientation="right" domain={[0, capacity]} stroke="#9ca3af" label={{ value: 'кВт·год', angle: 90, position: 'insideRight', fill: '#9ca3af', fontSize: 11 }} />
               <Tooltip contentStyle={{ backgroundColor: '#111726', borderColor: '#1f293d' }} />
               <Legend />
-              <Bar dataKey="charge" name="Потужність заряду (кВт)" fill="#3b82f6" />
-              <Bar dataKey="discharge" name="Потужність розряду (кВт)" fill="#059669" />
-            </ComposedChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      <div className="glass-card">
-        <h3 className="card-title" style={{ marginBottom: '4px' }}>Рівень заряду SoC (кВт-год)</h3>
-        <div style={{ width: '100%', height: 180 }}>
-          <ResponsiveContainer>
-            <ComposedChart data={overridesComplete ? currentDayProfile : chartProfile} margin={{ top: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-              <XAxis dataKey="hour" stroke="#9ca3af" />
-              <YAxis stroke="#9ca3af" />
-              <Tooltip contentStyle={{ backgroundColor: '#111726', borderColor: '#1f293d' }} />
-              <Area type="monotone" dataKey="soc" name="Рівень заряду SoC (кВт-год)" stroke="#d97706" fill="rgba(217, 119, 6, 0.1)" />
+              <ReferenceLine yAxisId="soc" y={capacity * 0.9} stroke="#d97706" strokeDasharray="4 4" />
+              <ReferenceLine yAxisId="soc" y={capacity * 0.1} stroke="#d97706" strokeDasharray="4 4" />
+              <Bar yAxisId="power" dataKey="charge" name="Потужність заряду (кВт)" fill="#3b82f6" />
+              <Bar yAxisId="power" dataKey="discharge" name="Потужність розряду (кВт)" fill="#059669" />
+              <Area yAxisId="soc" type="monotone" dataKey="soc" name="Рівень заряду SoC (кВт-год)" stroke="#d97706" fill="rgba(217, 119, 6, 0.12)" strokeWidth={2} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
@@ -138,10 +181,15 @@ export default function OptimizationSchedule() {
                     </td>
                     <td>
                       <input
-                        type="number" step="0.05" className="form-input" style={{ width: '120px', padding: '4px 8px', fontSize: '13px' }}
+                        type="number" step="0.05" min={-power / 1000.0} max={power / 1000.0}
+                        className="form-input" style={{ width: '120px', padding: '4px 8px', fontSize: '13px' }}
                         value={o.power_mw}
                         onChange={(e) => {
-                          const val = Number(e.target.value);
+                          const raw = Number(e.target.value);
+                          // Клип до реальної макс. потужності БЕСС (Asset.power_mw) —
+                          // без цього можна було ввести значення, у рази більше за
+                          // фізичну потужність батареї (реальний баг, знайдений диспетчером).
+                          const val = Number.isFinite(raw) ? Math.max(-power / 1000.0, Math.min(power / 1000.0, raw)) : raw;
                           setManualOverrides(manualOverrides.map((it: any, i: number) => (i === idx ? { ...it, power_mw: val } : it)));
                         }}
                       />

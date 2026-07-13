@@ -1,10 +1,24 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import * as api from '../api/client';
-import type { UserRole, Asset, PriceBand, ActualPrices } from '../api/client';
+import type { UserRole, Asset, PriceBand, ActualPrices, GenerationAdjustment, InitialSoc } from '../api/client';
 
 export type LogEntry = { time: string; src: string; text: string; type: 'success' | 'info' | 'warn' | 'error' };
 export type AuditEntry = { time: string; user: string; action: string; ip: string; status: string };
+export type DispatchHour = {
+  hour: number; // 1-24
+  charge: number; // кВт, реально виконано (з урахуванням меж SoC)
+  discharge: number; // кВт, реально виконано
+  soc: number; // кВт-год після цієї години
+  price: number; // грн/МВт-год заявки
+  isManual: boolean;
+  revenueUah: number;
+  costUah: number;
+  degradationUah: number;
+};
+
+const TARIFF_UAH_PER_KWH = (528.57 + 1500.0 + 104.57 + 100.0) / 1000.0;
+const DEGRADATION_UAH_PER_KWH = 1.2;
 
 interface AppState {
   activeRole: UserRole;
@@ -27,6 +41,11 @@ interface AppState {
   optimizationResult: any;
   manualOverrides: any[];
   setManualOverrides: (o: any[]) => void;
+  // Єдине джерело правди для графіків заряду/розряду/SoC (Price Forecast та
+  // Optimization Schedule раніше рахували це кожен по-своєму — один брав
+  // сиру команду power_mw, інший клипав до реального SoC-headroom, і при
+  // ручному оверрайді, що перевищував ємність батареї, графіки розходились).
+  dispatchProfile: DispatchHour[];
   runForecastAndOptimization: () => Promise<void>;
   saveOverrides: () => Promise<void>;
   resetOverridesToOptimal: () => Promise<void>;
@@ -34,6 +53,16 @@ interface AppState {
   executiveReport: any;
   marketConditions: any;
   forecastAccuracy: any;
+
+  // Ручна корекція доступності генерації (АЕС/ГЕС/СЕС/ВЕС) на targetDate
+  generationAdjustment: GenerationAdjustment | null;
+  setGenerationAdjustmentDraft: (a: GenerationAdjustment) => void;
+  saveGenerationAdjustmentAndRecalculate: () => Promise<void>;
+
+  // SoC на 00:00 targetDate: ручне значення > SCADA-телеметрія > фолбек 20%
+  initialSoc: InitialSoc | null;
+  saveInitialSocAndRecalculate: (capacityKwh: number) => Promise<void>;
+  clearInitialSocAndRecalculate: () => Promise<void>;
 
   // BESS technical settings
   osr: string; setOsr: (v: string) => void;
@@ -92,6 +121,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [executiveReport, setExecutiveReport] = useState<any>(null);
   const [marketConditions, setMarketConditions] = useState<any>(null);
   const [forecastAccuracy, setForecastAccuracy] = useState<any>(null);
+  const [generationAdjustment, setGenerationAdjustment] = useState<GenerationAdjustment | null>(null);
+  const [initialSoc, setInitialSoc] = useState<InitialSoc | null>(null);
 
   const [osr, setOsr] = useState('dtek_kiev_regional');
   const [voltageClass, setVoltageClass] = useState(1);
@@ -157,7 +188,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setActualPrices(actual);
       } catch { setActualPrices(null); }
 
-      const optResult = await api.runOptimizationJob(activeRole, activeAssetId, targetDate, 20, operationalMode);
+      // undefined initialSocPct -> бекенд бере реальний SoC з SCADA-телеметрії
+      const optResult = await api.runOptimizationJob(activeRole, activeAssetId, targetDate, undefined, operationalMode);
       setOptimizationResult(optResult);
       addLog('OPTIMIZATION', `MILP-оптимізація графіка BESS на ${targetDate} завершена.`, 'success');
 
@@ -261,9 +293,109 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .then((actual) => { if (!cancelled) setActualPrices(actual); })
       .catch(() => { if (!cancelled) setActualPrices(null); });
 
+    api.fetchGenerationAdjustment(activeRole, targetDate)
+      .then((adj) => { if (!cancelled) setGenerationAdjustment(adj); })
+      .catch(() => { if (!cancelled) setGenerationAdjustment(null); });
+
+    if (activeAssetId) {
+      api.fetchInitialSoc(activeRole, activeAssetId, targetDate)
+        .then((soc) => { if (!cancelled) setInitialSoc(soc); })
+        .catch(() => { if (!cancelled) setInitialSoc(null); });
+    }
+
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeRole, targetDate]);
+  }, [activeRole, targetDate, activeAssetId]);
+
+  const dispatchProfile = useMemo<DispatchHour[]>(() => {
+    if (!manualOverrides || manualOverrides.length !== 24) return [];
+    const effRatio = efficiency / 100.0;
+    const maxSocKwh = capacity * 0.9;
+    const minSocKwh = capacity * 0.1;
+    let runningSoc = initialSoc?.capacity_kwh ?? capacity * 0.2;
+
+    return manualOverrides.map((o: any) => {
+      // Клип до реальної макс. потужності БЕСС — введена вручну команда може
+      // в рази перевищувати фізичну потужність батареї.
+      const commandedKW = Math.max(-power, Math.min(power, o.power_mw * 1000.0));
+      const priceKWh = o.price_uah / 1000.0;
+      let chargeKW = 0, dischargeKW = 0, revenueUah = 0, costUah = 0, degradationUah = 0;
+
+      if (commandedKW < 0) {
+        // Реально виконана потужність — якщо батарея вже на межі SoC (90%),
+        // подальший заряд фізично неможливий, навіть якщо команда більша.
+        const maxChargeKW = Math.max(0, (maxSocKwh - runningSoc) / effRatio);
+        chargeKW = Math.min(Math.abs(commandedKW), maxChargeKW);
+        costUah = chargeKW * (priceKWh + TARIFF_UAH_PER_KWH);
+        runningSoc = Math.min(maxSocKwh, runningSoc + chargeKW * effRatio);
+      } else if (commandedKW > 0) {
+        const maxDischargeKW = Math.max(0, (runningSoc - minSocKwh) * effRatio);
+        dischargeKW = Math.min(commandedKW, maxDischargeKW);
+        revenueUah = dischargeKW * priceKWh;
+        degradationUah = dischargeKW * DEGRADATION_UAH_PER_KWH;
+        runningSoc = Math.max(minSocKwh, runningSoc - dischargeKW / effRatio);
+      }
+
+      return {
+        hour: o.hour + 1,
+        charge: chargeKW,
+        discharge: dischargeKW,
+        soc: runningSoc,
+        price: o.price_uah,
+        isManual: !!o.is_overridden,
+        revenueUah, costUah, degradationUah,
+      };
+    });
+  }, [manualOverrides, capacity, power, efficiency, initialSoc]);
+
+  const refreshInitialSoc = useCallback(async () => {
+    if (!activeAssetId) return;
+    try {
+      const soc = await api.fetchInitialSoc(activeRole, activeAssetId, targetDate);
+      setInitialSoc(soc);
+    } catch {
+      setInitialSoc(null);
+    }
+  }, [activeRole, activeAssetId, targetDate]);
+
+  const saveInitialSocAndRecalculate = useCallback(async (capacityKwh: number) => {
+    if (!activeAssetId) return;
+    try {
+      await api.saveInitialSoc(activeRole, activeAssetId, targetDate, capacityKwh);
+      addLog('SETTINGS', `Ручне значення SoC на 00:00 ${targetDate} збережено: ${Math.round(capacityKwh)} кВт·год.`, 'success');
+      await refreshInitialSoc();
+      await runForecastAndOptimization();
+    } catch (e: any) {
+      addLog('API', `Помилка збереження SoC: ${e.message}`, 'error');
+    }
+  }, [activeRole, activeAssetId, targetDate, addLog, refreshInitialSoc, runForecastAndOptimization]);
+
+  const clearInitialSocAndRecalculate = useCallback(async () => {
+    if (!activeAssetId) return;
+    try {
+      await api.clearInitialSoc(activeRole, activeAssetId, targetDate);
+      addLog('SETTINGS', `Ручне значення SoC на ${targetDate} прибрано — розрахунок знову автоматичний.`, 'info');
+      await refreshInitialSoc();
+      await runForecastAndOptimization();
+    } catch (e: any) {
+      addLog('API', `Помилка скидання SoC: ${e.message}`, 'error');
+    }
+  }, [activeRole, activeAssetId, targetDate, addLog, refreshInitialSoc, runForecastAndOptimization]);
+
+  const setGenerationAdjustmentDraft = useCallback((a: GenerationAdjustment) => {
+    setGenerationAdjustment(a);
+  }, []);
+
+  const saveGenerationAdjustmentAndRecalculate = useCallback(async () => {
+    if (!generationAdjustment) return;
+    try {
+      await api.saveGenerationAdjustment(activeRole, { ...generationAdjustment, date: targetDate });
+      addLog('SETTINGS', `Корекцію генерації на ${targetDate} збережено (АЕС ${generationAdjustment.nuclear_pct}%, ГЕС ${generationAdjustment.hydro_pct}%, СЕС ${generationAdjustment.solar_pct}%, ВЕС ${generationAdjustment.wind_pct}%).`, 'success');
+      await runForecastAndOptimization();
+    } catch (e: any) {
+      addLog('API', `Помилка збереження корекції генерації: ${e.message}`, 'error');
+    }
+  }, [activeRole, targetDate, generationAdjustment, addLog, runForecastAndOptimization]);
 
   const triggerFourEyesApproval = useCallback((actionName: string) => {
     if (activeRole === 'Viewer') {
@@ -300,8 +432,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     assets, activeAssetId,
     targetDate, setTargetDate, selectedModel, setSelectedModel, operationalMode, setOperationalMode,
     loading, forecastPrices, priceBand, actualPrices, optimizationResult, manualOverrides, setManualOverrides,
+    dispatchProfile,
     runForecastAndOptimization, saveOverrides, resetOverridesToOptimal,
     executiveReport, marketConditions, forecastAccuracy,
+    generationAdjustment, setGenerationAdjustmentDraft, saveGenerationAdjustmentAndRecalculate,
+    initialSoc, saveInitialSocAndRecalculate, clearInitialSocAndRecalculate,
     osr, setOsr, voltageClass, setVoltageClass, margin, setMargin,
     capacity, setCapacity, power, setPower, efficiency, setEfficiency,
     launchDate, setLaunchDate, saveSettings,
@@ -311,8 +446,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }), [
     activeRole, assets, activeAssetId, targetDate, selectedModel, operationalMode,
     loading, forecastPrices, priceBand, actualPrices, optimizationResult, manualOverrides,
+    dispatchProfile,
     runForecastAndOptimization, saveOverrides, resetOverridesToOptimal,
     executiveReport, marketConditions, forecastAccuracy,
+    generationAdjustment, setGenerationAdjustmentDraft, saveGenerationAdjustmentAndRecalculate,
+    initialSoc, saveInitialSocAndRecalculate, clearInitialSocAndRecalculate,
     osr, voltageClass, margin, capacity, power, efficiency, launchDate, saveSettings,
     capex, discountRate, lifetime, systemLogs, addLog, auditLogs,
     showApprovalModal, pendingAction, approvalToken, triggerFourEyesApproval, executeApprovedAction, cancelApproval,
