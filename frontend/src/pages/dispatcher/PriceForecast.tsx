@@ -1,4 +1,4 @@
-import { BookOpen, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { BookOpen, CheckCircle2, AlertTriangle, CalendarClock } from 'lucide-react';
 import { ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Line, Area, Bar, Cell, ResponsiveContainer } from 'recharts';
 import { useApp } from '../../state/AppContext';
 import GlobalFilterBar from '../../components/GlobalFilterBar';
@@ -98,47 +98,59 @@ export default function PriceForecast() {
         <h3 className="card-title" style={{ marginBottom: '16px' }}>
           Прогноз ціни РДН та графік заряду/розряду (1–24){hasActual && <span style={{ color: '#0891b2', fontSize: '0.75rem', marginLeft: '10px' }}>● Факт з oree.com.ua доступний</span>}
         </h3>
-        {hasDispatch && (
-          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 12px' }}>
-            Бліді стовпчики — рекомендація MILP-оптимізатора; яскраві — година скоригована вручну диспетчером.
-          </p>
+        {!forecastPrices ? (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', padding: '60px 20px', color: 'var(--text-muted)' }}>
+            <CalendarClock size={32} />
+            <p style={{ margin: 0, fontSize: '0.9rem', textAlign: 'center' }}>
+              Прогноз ще не розраховувався на цю дату.<br />
+              Натисніть «Розрахувати» вище, щоб отримати його (не автоматично — щоб не запускати важкі ML/MILP розрахунки на кожну зміну дати).
+            </p>
+          </div>
+        ) : (
+          <>
+            {hasDispatch && (
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 12px' }}>
+                Бліді стовпчики — рекомендація MILP-оптимізатора; яскраві — година скоригована вручну диспетчером.
+              </p>
+            )}
+            <div style={{ width: '100%', height: 380 }}>
+              <ResponsiveContainer>
+                <ComposedChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                  <XAxis dataKey="hour" stroke="#9ca3af" type="category" ticks={[1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 24]} />
+                  <YAxis yAxisId="price" stroke="#9ca3af" />
+                  <YAxis yAxisId="power" orientation="right" stroke="#9ca3af" label={{ value: 'кВт', angle: 90, position: 'insideRight', fill: '#9ca3af', fontSize: 11 }} />
+                  <Tooltip contentStyle={{ backgroundColor: '#111726', borderColor: '#1f293d' }} labelFormatter={(h) => `Година ${h}`} />
+                  <Legend />
+                  {hasBand && (
+                    <Area yAxisId="price" dataKey="lower" stackId="band" stroke="none" fill="transparent" legendType="none" tooltipType="none" />
+                  )}
+                  {hasBand && (
+                    <Area yAxisId="price" dataKey="bandWidth" stackId="band" stroke="none" fill="rgba(59,130,246,0.15)" name="Довірчий інтервал P10–P90" />
+                  )}
+                  {hasDispatch && (
+                    <Bar yAxisId="power" dataKey="charge" name="Заряд (кВт)">
+                      {chartData.map((d, idx) => (
+                        <Cell key={`charge-${idx}`} fill={d.isManual ? COLOR_CHARGE_MANUAL : COLOR_CHARGE_PLANNED} />
+                      ))}
+                    </Bar>
+                  )}
+                  {hasDispatch && (
+                    <Bar yAxisId="power" dataKey="discharge" name="Розряд (кВт)">
+                      {chartData.map((d, idx) => (
+                        <Cell key={`discharge-${idx}`} fill={d.isManual ? COLOR_DISCHARGE_MANUAL : COLOR_DISCHARGE_PLANNED} />
+                      ))}
+                    </Bar>
+                  )}
+                  <Line yAxisId="price" type="monotone" dataKey="price" name="Прогноз РДН (грн/МВт-год)" stroke="#3b82f6" strokeWidth={3} dot={{ r: 3 }} activeDot={{ r: 8 }} />
+                  {hasActual && (
+                    <Line yAxisId="price" type="monotone" dataKey="actual" name="Факт РДН (oree.com.ua)" stroke="#0891b2" strokeWidth={2} strokeDasharray="5 5" dot={{ r: 3 }} connectNulls />
+                  )}
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </>
         )}
-        <div style={{ width: '100%', height: 380 }}>
-          <ResponsiveContainer>
-            <ComposedChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-              <XAxis dataKey="hour" stroke="#9ca3af" type="category" ticks={[1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 24]} />
-              <YAxis yAxisId="price" stroke="#9ca3af" />
-              <YAxis yAxisId="power" orientation="right" stroke="#9ca3af" label={{ value: 'кВт', angle: 90, position: 'insideRight', fill: '#9ca3af', fontSize: 11 }} />
-              <Tooltip contentStyle={{ backgroundColor: '#111726', borderColor: '#1f293d' }} labelFormatter={(h) => `Година ${h}`} />
-              <Legend />
-              {hasBand && (
-                <Area yAxisId="price" dataKey="lower" stackId="band" stroke="none" fill="transparent" legendType="none" tooltipType="none" />
-              )}
-              {hasBand && (
-                <Area yAxisId="price" dataKey="bandWidth" stackId="band" stroke="none" fill="rgba(59,130,246,0.15)" name="Довірчий інтервал P10–P90" />
-              )}
-              {hasDispatch && (
-                <Bar yAxisId="power" dataKey="charge" name="Заряд (кВт)">
-                  {chartData.map((d, idx) => (
-                    <Cell key={`charge-${idx}`} fill={d.isManual ? COLOR_CHARGE_MANUAL : COLOR_CHARGE_PLANNED} />
-                  ))}
-                </Bar>
-              )}
-              {hasDispatch && (
-                <Bar yAxisId="power" dataKey="discharge" name="Розряд (кВт)">
-                  {chartData.map((d, idx) => (
-                    <Cell key={`discharge-${idx}`} fill={d.isManual ? COLOR_DISCHARGE_MANUAL : COLOR_DISCHARGE_PLANNED} />
-                  ))}
-                </Bar>
-              )}
-              <Line yAxisId="price" type="monotone" dataKey="price" name="Прогноз РДН (грн/МВт-год)" stroke="#3b82f6" strokeWidth={3} dot={{ r: 3 }} activeDot={{ r: 8 }} />
-              {hasActual && (
-                <Line yAxisId="price" type="monotone" dataKey="actual" name="Факт РДН (oree.com.ua)" stroke="#0891b2" strokeWidth={2} strokeDasharray="5 5" dot={{ r: 3 }} connectNulls />
-              )}
-            </ComposedChart>
-          </ResponsiveContainer>
-        </div>
       </div>
 
       <div className="glass-card">

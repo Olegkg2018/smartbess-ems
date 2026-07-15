@@ -1,14 +1,20 @@
 import { useEffect, useState } from 'react';
 import { ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Area, Bar, ReferenceLine, ResponsiveContainer } from 'recharts';
-import { AlertTriangle, Radio, Pencil } from 'lucide-react';
+import { AlertTriangle, Radio, Pencil, CalendarClock } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import GlobalFilterBar from '../../components/GlobalFilterBar';
 
 export default function OptimizationSchedule() {
   const {
     optimizationResult, manualOverrides, setManualOverrides, dispatchProfile, targetDate, capacity, power, saveOverrides, resetOverridesToOptimal,
-    initialSoc, saveInitialSocAndRecalculate, clearInitialSocAndRecalculate,
+    initialSoc, saveInitialSocAndRecalculate, clearInitialSocAndRecalculate, forecastPrices,
   } = useApp();
+
+  // forecastPrices === null означає, що для targetDate ще ЖОДНОГО разу не
+  // рахували прогноз/MILP (а не що результат "порожній" — MILP може
+  // легітимно нічого не робити, якщо арбітраж невигідний). Диспетчер це
+  // сплутав із "не рахує" — тому явне повідомлення замість порожнього графіка.
+  const neverCalculated = forecastPrices === null;
 
   const baseSchedule = optimizationResult?.scenarios?.base?.schedule || [];
 
@@ -115,27 +121,39 @@ export default function OptimizationSchedule() {
 
       <div className="glass-card">
         <h3 className="card-title" style={{ marginBottom: '4px' }}>Потужність заряду/розряду та рівень SoC BESS</h3>
-        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 12px' }}>
-          Пунктирні лінії — межі ємності батареї: {Math.round(capacity * 0.9).toLocaleString()} кВт·год (макс. SoC 90%) і {Math.round(capacity * 0.1).toLocaleString()} кВт·год (мін. SoC 10%) з {Math.round(capacity).toLocaleString()} кВт·год загальної ємності.
-          Стовпчики показують реально виконану потужність — якщо батарея вже на межі ємності, подальша команда заряду/розряду не виконується і стовпчик зменшується, навіть якщо введена потужність більша.
-        </p>
-        <div style={{ width: '100%', height: 380 }}>
-          <ResponsiveContainer>
-            <ComposedChart data={hasProfile ? currentDayProfile : chartProfile}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-              <XAxis dataKey="hour" stroke="#9ca3af" />
-              <YAxis yAxisId="power" stroke="#9ca3af" label={{ value: 'кВт', angle: -90, position: 'insideLeft', fill: '#9ca3af', fontSize: 11 }} />
-              <YAxis yAxisId="soc" orientation="right" domain={[0, capacity]} stroke="#9ca3af" label={{ value: 'кВт·год', angle: 90, position: 'insideRight', fill: '#9ca3af', fontSize: 11 }} />
-              <Tooltip contentStyle={{ backgroundColor: '#111726', borderColor: '#1f293d' }} />
-              <Legend />
-              <ReferenceLine yAxisId="soc" y={capacity * 0.9} stroke="#d97706" strokeDasharray="4 4" />
-              <ReferenceLine yAxisId="soc" y={capacity * 0.1} stroke="#d97706" strokeDasharray="4 4" />
-              <Bar yAxisId="power" dataKey="charge" name="Потужність заряду (кВт)" fill="#3b82f6" />
-              <Bar yAxisId="power" dataKey="discharge" name="Потужність розряду (кВт)" fill="#059669" />
-              <Area yAxisId="soc" type="monotone" dataKey="soc" name="Рівень заряду SoC (кВт-год)" stroke="#d97706" fill="rgba(217, 119, 6, 0.12)" strokeWidth={2} />
-            </ComposedChart>
-          </ResponsiveContainer>
-        </div>
+        {neverCalculated ? (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', padding: '60px 20px', color: 'var(--text-muted)' }}>
+            <CalendarClock size={32} />
+            <p style={{ margin: 0, fontSize: '0.9rem', textAlign: 'center' }}>
+              Прогноз і графік заряду/розряду ще жодного разу не розраховувались на {targetDate}.<br />
+              Натисніть «Розрахувати» вище, щоб отримати їх (не автоматично — щоб не запускати важкі ML/MILP розрахунки на кожну зміну дати).
+            </p>
+          </div>
+        ) : (
+          <>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 12px' }}>
+              Пунктирні лінії — межі ємності батареї: {Math.round(capacity * 0.9).toLocaleString()} кВт·год (макс. SoC 90%) і {Math.round(capacity * 0.1).toLocaleString()} кВт·год (мін. SoC 10%) з {Math.round(capacity).toLocaleString()} кВт·год загальної ємності.
+              Стовпчики показують реально виконану потужність — якщо батарея вже на межі ємності, подальша команда заряду/розряду не виконується і стовпчик зменшується, навіть якщо введена потужність більша.
+            </p>
+            <div style={{ width: '100%', height: 380 }}>
+              <ResponsiveContainer>
+                <ComposedChart data={hasProfile ? currentDayProfile : chartProfile}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                  <XAxis dataKey="hour" stroke="#9ca3af" />
+                  <YAxis yAxisId="power" stroke="#9ca3af" label={{ value: 'кВт', angle: -90, position: 'insideLeft', fill: '#9ca3af', fontSize: 11 }} />
+                  <YAxis yAxisId="soc" orientation="right" domain={[0, capacity]} stroke="#9ca3af" label={{ value: 'кВт·год', angle: 90, position: 'insideRight', fill: '#9ca3af', fontSize: 11 }} />
+                  <Tooltip contentStyle={{ backgroundColor: '#111726', borderColor: '#1f293d' }} />
+                  <Legend />
+                  <ReferenceLine yAxisId="soc" y={capacity * 0.9} stroke="#d97706" strokeDasharray="4 4" />
+                  <ReferenceLine yAxisId="soc" y={capacity * 0.1} stroke="#d97706" strokeDasharray="4 4" />
+                  <Bar yAxisId="power" dataKey="charge" name="Потужність заряду (кВт)" fill="#3b82f6" />
+                  <Bar yAxisId="power" dataKey="discharge" name="Потужність розряду (кВт)" fill="#059669" />
+                  <Area yAxisId="soc" type="monotone" dataKey="soc" name="Рівень заряду SoC (кВт-год)" stroke="#d97706" fill="rgba(217, 119, 6, 0.12)" strokeWidth={2} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </>
+        )}
       </div>
 
       <div className="glass-card" style={{ marginTop: '24px' }}>
