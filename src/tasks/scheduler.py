@@ -88,7 +88,10 @@ def run_daily_forecast_and_optimization():
             'initial_soc': get_current_soc_fraction(db, asset, target_date=tomorrow_str),
             'min_soc': asset.min_soc_pct / 100.0,
             'max_soc': asset.max_soc_pct / 100.0,
-            'max_cycles_per_day': 1.5,
+            # Настроюється в Settings (Asset.max_cycles_per_day) — MILP сам
+            # використає другий цикл лише якщо денний спред цін це реально
+            # окупає (обмеження лише СТЕЛЯ можливостей, не примус).
+            'max_cycles_per_day': asset.max_cycles_per_day,
             'degradation_cost': asset.deg_cost_per_mwh / 1000.0,
             'transmission_tariff': 528.57,
             'distribution_tariff': 1500.0,

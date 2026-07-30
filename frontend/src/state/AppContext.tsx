@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import * as api from '../api/client';
-import type { UserRole, Asset, PriceBand, ActualPrices, GenerationAdjustment, InitialSoc } from '../api/client';
+import type { UserRole, Asset, PriceBand, ActualPrices, GenerationAdjustment, InitialSoc, GridStress } from '../api/client';
 
 export type LogEntry = { time: string; src: string; text: string; type: 'success' | 'info' | 'warn' | 'error' };
 export type AuditEntry = { time: string; user: string; action: string; ip: string; status: string };
@@ -64,6 +64,14 @@ interface AppState {
   saveInitialSocAndRecalculate: (capacityKwh: number) => Promise<void>;
   clearInitialSocAndRecalculate: () => Promise<void>;
 
+  // Обсяг ГПВ (у "чергах") на targetDate: автосигнал з Telegram-постів
+  // Укренерго > ручна оцінка диспетчера > відсутній. НЕ впливає на поточний
+  // прогноз ціни (ознака ще не в продових FEATURES моделі — короткий обсяг
+  // реальної історії), лише накопичує реальні дані для майбутнього бектесту.
+  gridStress: GridStress | null;
+  saveGridStressOverride: (queues: number | null, note: string | null) => Promise<void>;
+  clearGridStressOverride: () => Promise<void>;
+
   // BESS technical settings
   osr: string; setOsr: (v: string) => void;
   voltageClass: number; setVoltageClass: (v: number) => void;
@@ -71,6 +79,7 @@ interface AppState {
   capacity: number; setCapacity: (v: number) => void;
   power: number; setPower: (v: number) => void;
   efficiency: number; setEfficiency: (v: number) => void;
+  maxCyclesPerDay: number; setMaxCyclesPerDay: (v: number) => void;
   launchDate: string; setLaunchDate: (v: string) => void;
   saveSettings: () => Promise<void>;
 
@@ -123,6 +132,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [forecastAccuracy, setForecastAccuracy] = useState<any>(null);
   const [generationAdjustment, setGenerationAdjustment] = useState<GenerationAdjustment | null>(null);
   const [initialSoc, setInitialSoc] = useState<InitialSoc | null>(null);
+  const [gridStress, setGridStress] = useState<GridStress | null>(null);
 
   const [osr, setOsr] = useState('dtek_kiev_regional');
   const [voltageClass, setVoltageClass] = useState(1);
@@ -130,6 +140,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [capacity, setCapacity] = useState(1000);
   const [power, setPower] = useState(250);
   const [efficiency, setEfficiency] = useState(95);
+  const [maxCyclesPerDay, setMaxCyclesPerDay] = useState(1.5);
   const [launchDate, setLaunchDate] = useState('2026-01-01');
 
   const [capex, setCapex] = useState(15200000);
@@ -166,6 +177,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setCapacity(data.capacity_kw);
       setPower(data.power_kw);
       setEfficiency(data.efficiency_pct);
+      if (data.max_cycles_per_day != null) setMaxCyclesPerDay(data.max_cycles_per_day);
     }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeAssetId]);
@@ -239,12 +251,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await api.saveSystemSettings(activeRole, {
         launch_date: launchDate, osr, voltage_class: voltageClass, margin,
         capacity_kw: capacity, power_kw: power, efficiency_pct: efficiency,
+        max_cycles_per_day: maxCyclesPerDay,
       });
       addLog('SETTINGS', `Параметри системи збережено. Дата запуску: ${launchDate}.`, 'success');
     } catch (e: any) {
       addLog('API', `Помилка збереження налаштувань: ${e.message}`, 'error');
     }
-  }, [activeRole, launchDate, osr, voltageClass, margin, capacity, power, efficiency, addLog]);
+  }, [activeRole, launchDate, osr, voltageClass, margin, capacity, power, efficiency, maxCyclesPerDay, addLog]);
 
   useEffect(() => {
     if (!activeAssetId) return;
@@ -296,6 +309,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     api.fetchGenerationAdjustment(activeRole, targetDate)
       .then((adj) => { if (!cancelled) setGenerationAdjustment(adj); })
       .catch(() => { if (!cancelled) setGenerationAdjustment(null); });
+
+    api.fetchGridStress(activeRole, targetDate)
+      .then((gs) => { if (!cancelled) setGridStress(gs); })
+      .catch(() => { if (!cancelled) setGridStress(null); });
 
     if (activeAssetId) {
       api.fetchInitialSoc(activeRole, activeAssetId, targetDate)
@@ -397,6 +414,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [activeRole, targetDate, generationAdjustment, addLog, runForecastAndOptimization]);
 
+  const refreshGridStress = useCallback(async () => {
+    try {
+      const gs = await api.fetchGridStress(activeRole, targetDate);
+      setGridStress(gs);
+    } catch {
+      setGridStress(null);
+    }
+  }, [activeRole, targetDate]);
+
+  const saveGridStressOverride = useCallback(async (queues: number | null, note: string | null) => {
+    try {
+      await api.saveGridStress(activeRole, targetDate, queues, note);
+      addLog('SETTINGS', `Ручну оцінку обсягу ГПВ на ${targetDate} збережено (${queues ?? '—'} черги). Накопичується для майбутнього перенавчання моделі — на поточний прогноз ще не впливає.`, 'success');
+      await refreshGridStress();
+    } catch (e: any) {
+      addLog('API', `Помилка збереження оцінки ГПВ: ${e.message}`, 'error');
+    }
+  }, [activeRole, targetDate, addLog, refreshGridStress]);
+
+  const clearGridStressOverride = useCallback(async () => {
+    try {
+      await api.clearGridStress(activeRole, targetDate);
+      addLog('SETTINGS', `Ручну оцінку обсягу ГПВ на ${targetDate} прибрано.`, 'info');
+      await refreshGridStress();
+    } catch (e: any) {
+      addLog('API', `Помилка скидання оцінки ГПВ: ${e.message}`, 'error');
+    }
+  }, [activeRole, targetDate, addLog, refreshGridStress]);
+
   const triggerFourEyesApproval = useCallback((actionName: string) => {
     if (activeRole === 'Viewer') {
       alert('У вас немає прав для виконання цієї дії. Ваша роль: Viewer');
@@ -437,8 +483,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     executiveReport, marketConditions, forecastAccuracy,
     generationAdjustment, setGenerationAdjustmentDraft, saveGenerationAdjustmentAndRecalculate,
     initialSoc, saveInitialSocAndRecalculate, clearInitialSocAndRecalculate,
+    gridStress, saveGridStressOverride, clearGridStressOverride,
     osr, setOsr, voltageClass, setVoltageClass, margin, setMargin,
     capacity, setCapacity, power, setPower, efficiency, setEfficiency,
+    maxCyclesPerDay, setMaxCyclesPerDay,
     launchDate, setLaunchDate, saveSettings,
     capex, setCapex, discountRate, setDiscountRate, lifetime, setLifetime,
     systemLogs, addLog, auditLogs,
@@ -451,7 +499,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     executiveReport, marketConditions, forecastAccuracy,
     generationAdjustment, setGenerationAdjustmentDraft, saveGenerationAdjustmentAndRecalculate,
     initialSoc, saveInitialSocAndRecalculate, clearInitialSocAndRecalculate,
-    osr, voltageClass, margin, capacity, power, efficiency, launchDate, saveSettings,
+    gridStress, saveGridStressOverride, clearGridStressOverride,
+    osr, voltageClass, margin, capacity, power, efficiency, maxCyclesPerDay, launchDate, saveSettings,
     capex, discountRate, lifetime, systemLogs, addLog, auditLogs,
     showApprovalModal, pendingAction, approvalToken, triggerFourEyesApproval, executeApprovedAction, cancelApproval,
   ]);

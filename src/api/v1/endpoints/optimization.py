@@ -8,7 +8,7 @@ from src.core.config import settings
 from src.database.session import SessionLocal
 from src.database.models import Asset, ChargeDischargePlan, PriceForecast, ManualOverride, InitialSocOverride, BessTelemetry
 import src.modules.optimization_service.milp_model as opt
-from src.modules.scada_service.soc_state import get_current_soc_fraction
+from src.modules.scada_service.soc_state import get_current_soc_fraction, previous_day_calculated_fraction
 from src.core.redis import set_job_status, get_job_status
 from src.core.security import RoleChecker
 
@@ -84,7 +84,7 @@ def run_optimization_background_job(
             'initial_soc': resolved_initial_soc,
             'min_soc': asset.min_soc_pct / 100.0,
             'max_soc': asset.max_soc_pct / 100.0,
-            'max_cycles_per_day': 1.5,
+            'max_cycles_per_day': asset.max_cycles_per_day,
             'degradation_cost': asset.deg_cost_per_mwh / 1000.0,
             'transmission_tariff': 528.57,
             'distribution_tariff': 1500.0,
@@ -179,8 +179,9 @@ async def get_initial_soc(asset_id: str, date: str):
     """
     Показує, що РЕАЛЬНО буде використано як SoC на 00:00 target_date — ручне
     значення (якщо збережене), інакше останнє з SCADA-телеметрії, інакше
-    фолбек 20%. source дозволяє диспетчеру бачити, чи дані реальні (SCADA/
-    ручні), чи це умовний фолбек, якому не варто довіряти.
+    розрахункова ємність на кінець попередньої доби (з учорашнього MILP-
+    плану), інакше фолбек 20%. source дозволяє диспетчеру бачити, звідки
+    взялось число, і наскільки йому варто довіряти.
     """
     db = SessionLocal()
     try:
@@ -188,14 +189,20 @@ async def get_initial_soc(asset_id: str, date: str):
         if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
 
+        target_dt = datetime.datetime.strptime(date, '%Y-%m-%d')
+
         override = db.query(InitialSocOverride).filter(
             InitialSocOverride.asset_id == asset_id,
-            InitialSocOverride.date == datetime.datetime.strptime(date, '%Y-%m-%d')
+            InitialSocOverride.date == target_dt
         ).first()
 
         tel = db.query(BessTelemetry).filter(
             BessTelemetry.asset_id == asset_id
         ).order_by(BessTelemetry.timestamp.desc()).first()
+
+        prev_fraction = None
+        if asset.capacity_mwh > 0:
+            prev_fraction = previous_day_calculated_fraction(db, asset, target_dt)
 
         if override is not None:
             source = "manual"
@@ -203,6 +210,9 @@ async def get_initial_soc(asset_id: str, date: str):
         elif tel is not None:
             source = "scada_telemetry"
             capacity_kwh = tel.current_soc_mwh * 1000.0
+        elif prev_fraction is not None:
+            source = "calculated_previous_day"
+            capacity_kwh = prev_fraction * asset.capacity_mwh * 1000.0
         else:
             source = "fallback_default"
             capacity_kwh = asset.capacity_mwh * 1000.0 * 0.20
@@ -215,6 +225,7 @@ async def get_initial_soc(asset_id: str, date: str):
             "source": source,
             "has_manual_override": override is not None,
             "telemetry_available": tel is not None,
+            "previous_day_calculated_available": prev_fraction is not None,
         }
     finally:
         db.close()
@@ -239,7 +250,7 @@ async def save_initial_soc(req: InitialSocOverrideModel):
 
 @router.delete("/initial-soc", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
 async def clear_initial_soc(asset_id: str, date: str):
-    """Прибирає ручне значення — повертає розрахунок до автоматичного (SCADA-телеметрія / фолбек)."""
+    """Прибирає ручне значення — повертає розрахунок до автоматичного (SCADA-телеметрія / кінець попередньої доби / фолбек)."""
     db = SessionLocal()
     try:
         target_dt = datetime.datetime.strptime(date, '%Y-%m-%d')
@@ -447,6 +458,7 @@ class SystemSettingsModel(BaseModel):
     efficiency_pct: float
     nuclear_reference_capacity_mw: Optional[float] = None
     hydro_reference_capacity_mw: Optional[float] = None
+    max_cycles_per_day: Optional[float] = None
 
 # Довідкові потужності для перетворення "% робочих АЕС/ГЕС" у МВт-дельту
 # (generation_adjustments.py). Це НЕ вигадка — реальні опубліковані дані:
@@ -503,10 +515,12 @@ async def get_system_settings():
             data["capacity_kw"] = asset.capacity_mwh * 1000.0
             data["power_kw"] = asset.power_mw * 1000.0
             data["efficiency_pct"] = ((asset.efficiency_charge + asset.efficiency_discharge) / 2.0) * 100.0
+            data["max_cycles_per_day"] = asset.max_cycles_per_day
         else:
             data["capacity_kw"] = 2000.0
             data["power_kw"] = 1000.0
             data["efficiency_pct"] = 95.0
+            data["max_cycles_per_day"] = 1.5
     finally:
         db.close()
 
@@ -542,6 +556,11 @@ async def save_system_settings(req: SystemSettingsModel):
             eff = req.efficiency_pct / 100.0
             asset.efficiency_charge = eff
             asset.efficiency_discharge = eff
+            if req.max_cycles_per_day is not None:
+                # Клип 0.5-5.0 — фізична стеля (більше 5 повних циклів/добу
+                # для мережевого BESS нереалістично навіть як ліміт-можливість,
+                # нижче 0.5 практично забороняє арбітраж).
+                asset.max_cycles_per_day = max(0.5, min(5.0, req.max_cycles_per_day))
             db.commit()
 
         # Invalidate executive cache file

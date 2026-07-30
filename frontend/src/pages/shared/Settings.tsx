@@ -4,6 +4,7 @@ export default function Settings() {
   const {
     osr, setOsr, voltageClass, setVoltageClass, margin, setMargin,
     capacity, setCapacity, power, setPower, efficiency, setEfficiency,
+    maxCyclesPerDay, setMaxCyclesPerDay,
     launchDate, setLaunchDate, saveSettings,
   } = useApp();
 
@@ -52,6 +53,21 @@ export default function Settings() {
         <div className="form-group">
           <label className="form-label">КПД циклу (%)</label>
           <input type="number" className="form-input" value={efficiency} onChange={(e) => setEfficiency(Number(e.target.value))} />
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Макс. циклів заряд/розряд на добу</label>
+          <input
+            type="number" min={0.5} max={5} step={0.1} className="form-input"
+            value={maxCyclesPerDay}
+            onChange={(e) => setMaxCyclesPerDay(Number(e.target.value))}
+          />
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '6px 0 0' }}>
+            Це стеля можливостей для MILP, а не примус — другий цикл на добу модель використає, лише якщо денний
+            спред цін реально його окупить (з урахуванням тарифів, зносу і подвійних втрат КПД). Орієнтир: за
+            типового заряду в районі 2000–5000 ₴/МВт·год потрібен спред приблизно у 2–5 разів — чим дешевший
+            заряд, тим більший спред потрібен (тарифи й знос — фіксована сума, а не відсоток).
+          </p>
         </div>
 
         <div className="form-group">

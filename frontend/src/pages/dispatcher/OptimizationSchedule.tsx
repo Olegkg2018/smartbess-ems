@@ -1,14 +1,30 @@
 import { useEffect, useState } from 'react';
-import { ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Area, Bar, ReferenceLine, ResponsiveContainer } from 'recharts';
-import { AlertTriangle, Radio, Pencil, CalendarClock } from 'lucide-react';
+import { ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Area, Bar, Line, ReferenceLine, ResponsiveContainer } from 'recharts';
+import { AlertTriangle, Radio, Pencil, CalendarClock, History, FileDown } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import GlobalFilterBar from '../../components/GlobalFilterBar';
+import * as api from '../../api/client';
 
 export default function OptimizationSchedule() {
   const {
     optimizationResult, manualOverrides, setManualOverrides, dispatchProfile, targetDate, capacity, power, saveOverrides, resetOverridesToOptimal,
     initialSoc, saveInitialSocAndRecalculate, clearInitialSocAndRecalculate, forecastPrices,
+    activeRole, activeAssetId, addLog,
   } = useApp();
+
+  const [exporting, setExporting] = useState(false);
+  const handleExport = async () => {
+    if (!activeAssetId) return;
+    setExporting(true);
+    try {
+      await api.exportDayExcel(activeRole, activeAssetId, targetDate);
+      addLog('EXPORT', `Excel-звіт за ${targetDate} завантажено.`, 'success');
+    } catch (e: any) {
+      addLog('API', `Помилка експорту в Excel: ${e.message}`, 'error');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   // forecastPrices === null означає, що для targetDate ще ЖОДНОГО разу не
   // рахували прогноз/MILP (а не що результат "порожній" — MILP може
@@ -25,6 +41,12 @@ export default function OptimizationSchedule() {
     : [];
 
   const hasProfile = dispatchProfile.length === 24;
+  // ManualOverride "заморожує" ціну/потужність на момент збереження
+  // (saveOverrides шле весь масив, навіть непроторкані години) і сам не
+  // оновлюється, якщо прогноз/оптимізацію перерахували пізніше — реальний
+  // кейс плутанини, знайдений диспетчером (графік показував застарілу ціну
+  // після виправлення прогнозу, поки хтось не натиснув "Скинути").
+  const hasOverrides = manualOverrides.some((o: any) => o.is_overridden);
   // dispatchProfile (AppContext) — ЄДИНЕ джерело правди для заряду/розряду/
   // SoC, спільне з Price Forecast: раніше кожна сторінка рахувала це окремо,
   // і при ручному оверрайді, що перевищував реальну ємність батареї, графіки
@@ -47,7 +69,8 @@ export default function OptimizationSchedule() {
   const socSourceLabel: Record<string, { text: string; color: string; icon: any }> = {
     manual: { text: 'Ручне значення диспетчера', color: '#3b82f6', icon: Pencil },
     scada_telemetry: { text: 'Реальна SCADA-телеметрія', color: '#059669', icon: Radio },
-    fallback_default: { text: "Фолбек 20% — зв'язку зі SCADA немає, дані ненадійні", color: '#d97706', icon: AlertTriangle },
+    calculated_previous_day: { text: 'Розрахунок з кінця попередньої доби (учорашній MILP-план)', color: '#8b5cf6', icon: History },
+    fallback_default: { text: "Фолбек 20% — немає ні телеметрії, ні розрахунку за попередню добу", color: '#d97706', icon: AlertTriangle },
   };
 
   return (
@@ -57,7 +80,7 @@ export default function OptimizationSchedule() {
       <div className="glass-card">
         <h3 className="card-title" style={{ marginBottom: '4px' }}>SoC батареї на початок доби (00:00 {targetDate})</h3>
         <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 12px' }}>
-          Визначає, з якого реального рівня заряду MILP планує добу. Пріоритет: ручне значення → SCADA-телеметрія → фолбек 20% (лише якщо немає ні того, ні того).
+          Визначає, з якого реального рівня заряду MILP планує добу. Пріоритет: ручне значення → SCADA-телеметрія → розрахунок з кінця попередньої доби → фолбек 20% (лише якщо немає нічого з вищого).
         </p>
         {!initialSoc ? (
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Завантаження...</p>
@@ -134,6 +157,7 @@ export default function OptimizationSchedule() {
             <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 12px' }}>
               Пунктирні лінії — межі ємності батареї: {Math.round(capacity * 0.9).toLocaleString()} кВт·год (макс. SoC 90%) і {Math.round(capacity * 0.1).toLocaleString()} кВт·год (мін. SoC 10%) з {Math.round(capacity).toLocaleString()} кВт·год загальної ємності.
               Стовпчики показують реально виконану потужність — якщо батарея вже на межі ємності, подальша команда заряду/розряду не виконується і стовпчик зменшується, навіть якщо введена потужність більша.
+              Фіолетова лінія — ціна прогнозу (або ручна заявка, якщо годину скориговано вручну), для якої й порахований цей графік.
             </p>
             <div style={{ width: '100%', height: 380 }}>
               <ResponsiveContainer>
@@ -142,6 +166,7 @@ export default function OptimizationSchedule() {
                   <XAxis dataKey="hour" stroke="#9ca3af" />
                   <YAxis yAxisId="power" stroke="#9ca3af" label={{ value: 'кВт', angle: -90, position: 'insideLeft', fill: '#9ca3af', fontSize: 11 }} />
                   <YAxis yAxisId="soc" orientation="right" domain={[0, capacity]} stroke="#9ca3af" label={{ value: 'кВт·год', angle: 90, position: 'insideRight', fill: '#9ca3af', fontSize: 11 }} />
+                  <YAxis yAxisId="price" hide domain={['auto', 'auto']} />
                   <Tooltip contentStyle={{ backgroundColor: '#111726', borderColor: '#1f293d' }} />
                   <Legend />
                   <ReferenceLine yAxisId="soc" y={capacity * 0.9} stroke="#d97706" strokeDasharray="4 4" />
@@ -149,6 +174,7 @@ export default function OptimizationSchedule() {
                   <Bar yAxisId="power" dataKey="charge" name="Потужність заряду (кВт)" fill="#3b82f6" />
                   <Bar yAxisId="power" dataKey="discharge" name="Потужність розряду (кВт)" fill="#059669" />
                   <Area yAxisId="soc" type="monotone" dataKey="soc" name="Рівень заряду SoC (кВт-год)" stroke="#d97706" fill="rgba(217, 119, 6, 0.12)" strokeWidth={2} />
+                  <Line yAxisId="price" type="monotone" dataKey="price" name="Ціна прогнозу / заявки (грн/МВт-год)" stroke="#a78bfa" strokeWidth={2} dot={{ r: 2 }} connectNulls />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
@@ -165,6 +191,9 @@ export default function OptimizationSchedule() {
             </p>
           </div>
           <div style={{ display: 'flex', gap: '10px' }}>
+            <button className="btn btn-secondary" onClick={handleExport} disabled={exporting} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <FileDown size={14} /> {exporting ? 'Експорт...' : 'Експорт в Excel'}
+            </button>
             <button className="btn" onClick={saveOverrides}>Зберегти ручний графік</button>
             <button
               className="btn"
@@ -175,6 +204,21 @@ export default function OptimizationSchedule() {
             </button>
           </div>
         </div>
+
+        {hasOverrides && (
+          <div style={{
+            display: 'flex', gap: '10px', marginBottom: '16px', padding: '12px', borderRadius: '6px',
+            background: 'rgba(217, 119, 6, 0.08)', border: '1px solid rgba(217, 119, 6, 0.3)', fontSize: '13px',
+          }}>
+            <AlertTriangle size={16} style={{ color: '#d97706', flexShrink: 0, marginTop: '1px' }} />
+            <span>
+              На цю дату вже збережено ручний графік — він «заморожує» ціну/потужність на момент збереження і НЕ
+              оновлюється сам, навіть якщо прогноз чи оптимізацію перерахували пізніше. Якщо після збереження
+              графіка ви ще раз натискали «Розрахувати» — натисніть «Скинути до оптимального», щоб побачити
+              свіжий розрахунок, інакше графік і чистий прибуток показують застарілі числа.
+            </span>
+          </div>
+        )}
 
         <div style={{ maxHeight: '450px', overflowY: 'auto' }}>
           <table className="audit-table" style={{ width: '100%' }}>

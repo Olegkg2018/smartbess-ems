@@ -194,12 +194,13 @@ export interface InitialSoc {
   date: string;
   capacity_kwh: number;
   capacity_pct: number;
-  source: 'manual' | 'scada_telemetry' | 'fallback_default';
+  source: 'manual' | 'scada_telemetry' | 'calculated_previous_day' | 'fallback_default';
   has_manual_override: boolean;
   telemetry_available: boolean;
+  previous_day_calculated_available: boolean;
 }
 
-/** SoC на 00:00 target_date: ручне значення > SCADA-телеметрія > фолбек 20%. */
+/** SoC на 00:00 target_date: ручне значення > SCADA-телеметрія > розрахунок з кінця попередньої доби > фолбек 20%. */
 export async function fetchInitialSoc(role: UserRole, assetId: string, date: string): Promise<InitialSoc> {
   return authJson<InitialSoc>(role, `/api/v1/optimization/initial-soc?asset_id=${assetId}&date=${date}`);
 }
@@ -216,4 +217,114 @@ export async function clearInitialSoc(role: UserRole, assetId: string, date: str
   return authJson(role, `/api/v1/optimization/initial-soc?asset_id=${assetId}&date=${date}`, {
     method: 'DELETE',
   });
+}
+
+export interface GridStress {
+  date: string;
+  forced_restriction_queues: number | null;
+  source: 'auto_telegram' | 'manual' | 'none';
+  auto_available: boolean;
+  has_manual_override: boolean;
+  manual_forced_restriction_queues: number | null;
+  manual_note: string | null;
+  auto_consumption_trend: number | null;
+  auto_settlements_affected: number | null;
+  auto_oblasts_affected: number | null;
+}
+
+/**
+ * Обсяг ГПВ (у "чергах") на дату: автоматичний сигнал з постів Укренерго в
+ * Telegram, якщо опублікований, інакше ручна оцінка диспетчера, інакше
+ * відсутній. Єдиного структурованого національного API по ГПВ немає.
+ */
+export async function fetchGridStress(role: UserRole, date: string): Promise<GridStress> {
+  return authJson<GridStress>(role, `/api/v1/grid-stress?date=${date}`);
+}
+
+export async function saveGridStress(role: UserRole, date: string, forcedRestrictionQueues: number | null, note: string | null) {
+  return authJson(role, '/api/v1/grid-stress', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date, forced_restriction_queues: forcedRestrictionQueues, note }),
+  });
+}
+
+export async function clearGridStress(role: UserRole, date: string) {
+  return authJson(role, `/api/v1/grid-stress?date=${date}`, {
+    method: 'DELETE',
+  });
+}
+
+export interface DataAuditColumn {
+  used_in_forecast: boolean;
+  hours_with_data: number;
+  hours_total: number;
+  min: number | null;
+  max: number | null;
+  mean: number | null;
+  hourly: { hour: string; value: number | null }[];
+}
+
+export interface DataAuditTelegramPost {
+  id: number;
+  channel: string;
+  datetime: string;
+  text: string;
+  severity: 'high' | 'medium' | 'none';
+  parsed: {
+    consumption_trend: number | null;
+    same_time_deviation_pct: number | null;
+    peak_deviation_pct: number | null;
+    forced_restriction_queues: number | null;
+    settlements_affected: number | null;
+    oblasts_affected: number | null;
+  };
+}
+
+export interface DataAudit {
+  date: string;
+  csv_covers_date: boolean;
+  hours_found?: number;
+  error?: string;
+  groups: Record<string, Record<string, DataAuditColumn>>;
+  telegram: {
+    posts: DataAuditTelegramPost[];
+    daily_aggregate: Record<string, number | null> | null;
+  };
+  manual_overrides: {
+    grid_stress: { forced_restriction_queues: number | null; note: string | null } | null;
+    generation_adjustment: { nuclear_pct: number; hydro_pct: number; solar_pct: number; wind_pct: number; note: string | null } | null;
+    initial_soc: { asset_id: string; capacity_kwh: number }[] | null;
+  };
+}
+
+/**
+ * Довідка "що реально було використано в розрахунку за цю дату" — для
+ * тестування/діагностики, коли є підозра, що якісь дані не приходять або
+ * неправильно розпізнаються (напр. Telegram).
+ */
+export async function fetchDataAudit(role: UserRole, date: string): Promise<DataAudit> {
+  return authJson<DataAudit>(role, `/api/v1/data-audit?date=${date}`);
+}
+
+/**
+ * Погодинний Excel-звіт за добу (прогноз/факт ціни, заряд/розряд, ціна
+ * виконання) — завантажує .xlsx і одразу ініціює скачування у браузері.
+ * Саме .xlsx, а не .csv, щоб Excel не "вгадував" типи комірок при відкритті.
+ */
+export async function exportDayExcel(role: UserRole, assetId: string, date: string): Promise<void> {
+  const res = await authFetch(role, `/api/v1/reports/export-day?asset_id=${assetId}&date=${date}`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`${res.status} ${res.statusText}: ${body.slice(0, 200)}`);
+  }
+  const blob = await res.blob();
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `smartbess_${date}.xlsx`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
 }

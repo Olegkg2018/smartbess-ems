@@ -12,6 +12,7 @@ from src.core.config import settings
 import src.modules.external_data_service.gas_price as ext_gas
 import src.modules.external_data_service.telegram_public as ext_tg
 import src.modules.external_data_service.entsoe as ext_entsoe
+import src.modules.external_data_service.neighbor_weather as ext_neighbor_weather
 
 # Load parameters from settings
 LAT = settings.LAT
@@ -265,6 +266,19 @@ def add_real_market_factors(df):
     else:
         df['EU_DAM_Price_EUR_MWh'] = np.nan
 
+    # Експериментальна ознака (поки НЕ в продових FEATURES): реальна погода
+    # сусідніх зон (PL/RO, Open-Meteo) — leading-сигнал власної відновлюваної
+    # генерації сусіда, потенційно точніший за агрегований EU_DAM_Price_Lag_24
+    # вище. Перевіряється walk_forward_backtest(extra_features=...), як і
+    # EU_DAM_Price — див. neighbor_weather.py.
+    neighbor_weather = ext_neighbor_weather.fetch_all_neighbor_weather(start_year=2021)
+    if not neighbor_weather.empty:
+        df = df.merge(neighbor_weather, on='Datetime', how='left')
+    else:
+        for zone in ext_neighbor_weather.NEIGHBOR_POINTS:
+            for col in ['Temperature', 'Cloud_Cover', 'Wind_Speed', 'Shortwave_Radiation']:
+                df[f'{zone}_{col}'] = np.nan
+
     df['Solar_Gen'] = np.clip(6500.0 * (df['Shortwave_Radiation'] / 1000.0) * (1.0 - 0.003 * (df['Temperature'] - 25.0)), 0.0, 5500.0)
 
     def wind_curve(ws):
@@ -295,13 +309,67 @@ def add_real_market_factors(df):
         if col not in df.columns:
             df[col] = 0
         df[col] = df[col].fillna(0)
+    # Числові поля з parse_energy_status (СТАН ЕНЕРГОСИСТЕМИ/СПОЖИВАННЯ) —
+    # реальні, але ЧЕСНО NaN, де немає джерела (до дня, з якого почали
+    # кешувати телеграм-пости) або конкретний пост не містив цього поля.
+    # Історія коротка (кешування почалось нещодавно) — намеренно НЕ
+    # додаються в prepare_features/FEATURES моделі, як і Gas_Price_EUR_MWh
+    # (див. коментар на початку ml_pipeline.py). Перевіряти обсяг реальної
+    # історії через verify_data_completeness(), додавати в FEATURES лише
+    # після walk_forward_backtest(extra_features=...), коли даних достатньо.
+    numeric_cols = [
+        'consumption_trend', 'same_time_deviation_pct', 'peak_deviation_pct',
+        'forced_restriction_queues', 'settlements_affected', 'oblasts_affected',
+    ]
+    for col in numeric_cols:
+        if col not in df.columns:
+            df[col] = np.nan
     df = df.rename(columns={
         'grid_stress_high': 'Grid_Stress_High',
         'grid_stress_medium': 'Grid_Stress_Medium',
         'mentions': 'Telegram_Mentions',
+        'consumption_trend': 'Grid_Consumption_Trend',
+        'same_time_deviation_pct': 'Grid_Consumption_Deviation_Pct',
+        'peak_deviation_pct': 'Grid_Peak_Deviation_Pct',
+        'forced_restriction_queues': 'Grid_Forced_Restriction_Queues',
+        'settlements_affected': 'Grid_Settlements_Affected',
+        'oblasts_affected': 'Grid_Oblasts_Affected',
     })
 
+    # Ручна оцінка диспетчера (GridStressOverride) заповнює ЛИШЕ прогалини
+    # автоматичного Telegram-сигналу (де за день не було поста з обсягом
+    # ГПВ) — combine_first, реальний автоматичний сигнал ніколи не
+    # перекривається вручну введеним. Диспетчер часто знає обсяг ГПВ зі
+    # свого регіону раніше й точніше за загальний пост Укренерго.
+    manual = _load_grid_stress_overrides()
+    if not manual.empty:
+        df = df.merge(manual, on='Date', how='left', suffixes=('', '_manual'))
+        df['Grid_Forced_Restriction_Queues'] = df['Grid_Forced_Restriction_Queues'].combine_first(df['Grid_Forced_Restriction_Queues_manual'])
+        df = df.drop(columns=['Grid_Forced_Restriction_Queues_manual'])
+
     return df.drop(columns=['Date'])
+
+def _load_grid_stress_overrides() -> pd.DataFrame:
+    """Ручні оцінки диспетчера обсягу ГПВ (grid_stress_overrides) як
+    DataFrame Date/Grid_Forced_Restriction_Queues, для заповнення прогалин
+    автоматичного сигналу в add_real_market_factors."""
+    from src.database.session import SessionLocal
+    from src.database.models import GridStressOverride
+
+    db = SessionLocal()
+    try:
+        rows = db.query(GridStressOverride).filter(GridStressOverride.forced_restriction_queues.isnot(None)).all()
+        if not rows:
+            return pd.DataFrame(columns=['Date', 'Grid_Forced_Restriction_Queues'])
+        return pd.DataFrame([
+            {'Date': pd.to_datetime(r.date).normalize(), 'Grid_Forced_Restriction_Queues': r.forced_restriction_queues}
+            for r in rows
+        ])
+    except Exception as e:
+        print(f"Error loading grid stress overrides: {e}")
+        return pd.DataFrame(columns=['Date', 'Grid_Forced_Restriction_Queues'])
+    finally:
+        db.close()
 
 def sync_realtime_data(force=False):
     if not force and os.path.exists(MERGED_DATA_PATH):
@@ -382,7 +450,31 @@ def sync_realtime_data(force=False):
             df_hist['Datetime'] = pd.to_datetime(df_hist['Datetime'])
             start_of_month = pd.to_datetime(f"{current_year}-{current_month:02d}-01")
             df_hist = df_hist[df_hist['Datetime'] < start_of_month]
-            
+
+            # add_real_market_factors вище перерахував PL_/RO_-погоду ЛИШЕ
+            # для new_month_data (поточний місяць) — старі місяці в df_hist
+            # так і лишаються з прогалиною назавжди, якщо не дозаповнити тут
+            # окремо (реальний факт: 456/48667 годин заповнено — рівно
+            # поточний місяць, решта історії 2021-... порожня). Дозаповнюємо
+            # лише реальні прогалини (combine_first, ніколи не перекриває
+            # вже заповнене) — той самий fetch_all_neighbor_weather, що вже
+            # викликався вище всередині add_real_market_factors, тож тут це
+            # дешевий merge по кешу, без нового мережевого запиту. З часом
+            # (та в міру появи архівних даних Open-Meteo із затримкою ~2
+            # доби) прогалина по всій історії закривається сама щодня.
+            neighbor_weather = ext_neighbor_weather.fetch_all_neighbor_weather(start_year=2021)
+            if not neighbor_weather.empty:
+                neighbor_cols = [c for c in neighbor_weather.columns if c != 'Datetime']
+                for c in neighbor_cols:
+                    if c not in df_hist.columns:
+                        df_hist[c] = np.nan
+                df_hist = df_hist.merge(neighbor_weather, on='Datetime', how='left', suffixes=('', '_fresh'))
+                for c in neighbor_cols:
+                    fresh_col = f'{c}_fresh'
+                    if fresh_col in df_hist.columns:
+                        df_hist[c] = df_hist[c].combine_first(df_hist[fresh_col])
+                        df_hist = df_hist.drop(columns=[fresh_col])
+
             df_updated = pd.concat([df_hist, new_month_data]).sort_values('Datetime').reset_index(drop=True)
             df_updated.to_csv(MERGED_DATA_PATH, index=False)
             return True
@@ -534,7 +626,11 @@ def verify_data_completeness():
         required_cols = [
             'Price', 'Temperature', 'Cloud_Cover', 'Wind_Speed', 'Shortwave_Radiation',
             'Solar_Gen', 'Wind_Gen', 'IDM_Price', 'DAM_IDM_Spread', 'Grid_Net_Export_MW',
-            'Gas_Price_EUR_MWh', 'Grid_Stress_High', 'Grid_Stress_Medium', 'Telegram_Mentions'
+            'Gas_Price_EUR_MWh', 'Grid_Stress_High', 'Grid_Stress_Medium', 'Telegram_Mentions',
+            'Grid_Consumption_Trend', 'Grid_Consumption_Deviation_Pct', 'Grid_Peak_Deviation_Pct',
+            'Grid_Forced_Restriction_Queues', 'Grid_Settlements_Affected', 'Grid_Oblasts_Affected',
+            'PL_Temperature', 'PL_Cloud_Cover', 'PL_Wind_Speed', 'PL_Shortwave_Radiation',
+            'RO_Temperature', 'RO_Cloud_Cover', 'RO_Wind_Speed', 'RO_Shortwave_Radiation',
         ]
         
         missing_cols = [c for c in required_cols if c not in df.columns]

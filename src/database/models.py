@@ -26,6 +26,13 @@ class Asset(Base):
     min_soc_pct = Column(Float, default=10.0)
     max_soc_pct = Column(Float, default=90.0)
     deg_cost_per_mwh = Column(Float, nullable=False) # Стоимость деградации
+    # Скільки повних еквівалентних циклів заряд/розряд MILP дозволено
+    # виконати за добу (cycle_limit у milp_model.py). 1.5 — типовий орієнтир
+    # для одного пікового вечірнього розряду з невеликим запасом. Реальний
+    # сенс піднімати вище — лише коли денний спред цін дозволяє окупити
+    # додатковий цикл (тарифи + деградація + КПД в обидва боки) — див.
+    # коментар над battery_params у scheduler.py.
+    max_cycles_per_day = Column(Float, default=1.5, nullable=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 class MarketPrice(Base):
@@ -99,6 +106,27 @@ class GenerationAdjustment(Base):
     hydro_pct = Column(Float, nullable=False, default=100.0)
     solar_pct = Column(Float, nullable=False, default=100.0)
     wind_pct = Column(Float, nullable=False, default=100.0)
+    note = Column(String(500), nullable=True)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+class GridStressOverride(Base):
+    """
+    Ручна оцінка диспетчера обсягу примусових погодинних відключень (ГПВ,
+    у "чергах") на дату — на випадок, коли автоматичний сигнал
+    (parse_energy_status у telegram_public.py, витягує обсяг з постів
+    Укренерго "СТАН ЕНЕРГОСИСТЕМИ") ще не опублікований або відсутній.
+    Єдиного структурованого національного API по ГПВ немає (перевірено:
+    офіційний сайт, alerts.energy, 20+ різних сайтів обленерго без спільного
+    формату) — Telegram-сигнал точніший за keyword-скан, але покриває не
+    кожен день, а диспетчер часто знає реальний обсяг раніше й точніше
+    (зі свого регіону/оператора). Ручне значення заповнює лише прогалину
+    (де автоматичного немає), не перекриває реальний автоматичний сигнал —
+    див. merge-логіку в data_manager.add_real_market_factors.
+    """
+    __tablename__ = "grid_stress_overrides"
+
+    date = Column(DateTime, primary_key=True, nullable=False)
+    forced_restriction_queues = Column(Float, nullable=True)
     note = Column(String(500), nullable=True)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 

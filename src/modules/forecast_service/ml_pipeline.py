@@ -57,6 +57,33 @@ FEATURES = [
     # тож спред за той самий час, що прогнозується, використовувати не можна
     # (витік даних з майбутнього). Лаг на 24г — це вже відомий на момент
     # прогнозу реальний ринковий сигнал про волатильність/розбіжність ринків.
+    #
+    # ДІАГНОСТИКА (реальна, підтверджена на живих даних 21-22.07.2026): ВДР на
+    # oree.com.ua публікується із затримкою ~1 доба, тож у live-інференсі
+    # (build_forecast_feature_matrix) свіжі 24г IDM_Price майже завжди NaN і
+    # limit_direction='both' на хвості БЕЗ якоря вперед вироджується у пласку
+    # константу — IDM_Price_Lag_24 (найвпливовіша ознака моделі, ~55% gain)
+    # системно приходить на inference "зіпсованим" (плоским), хоча під час
+    # НАВЧАННЯ (prepare_features рахує на всій історії одразу, якір є з обох
+    # боків) той самий стовпець зазвичай МАВ реальну форму — справжній
+    # train/serve skew.
+    #
+    # СПРОБА ВИПРАВЛЕННЯ (Lag_48 замість Lag_24, щоб надійно потрапляти в
+    # останню добу з реальними даними) — ПЕРЕВІРЕНА walk_forward_backtest
+    # (test_days=60, retrain_every_days=7, ті самі дані 2021-2026,
+    # baseline vs Lag_48 на ідентичному знімку): mean_wape практично не
+    # змінився (25.24%→25.16%, шум), АЛЕ last_7d_mean_mape (237.7→250.1) і
+    # last_30d_mean_mape (399.0→456.2) — САМЕ ті метрики, які мали
+    # покращитись — стали ГІРШЕ. Причина: walk_forward_backtest симулює
+    # кожен тестовий день через prepare_features на всій історії одразу
+    # (якір є завжди), тобто НЕ відтворює живий "хвіст без якоря" — Lag_24 у
+    # бектесті майже завжди "здоровий" і залишається кращим сигналом, ніж
+    # застарілий на добу Lag_48. Тобто діагноз реальний, а глобальна заміна
+    # лагу — НЕ те виправлення (жертвуємо загалом кращим сигналом заради
+    # рідкісного edge-case на inference). Lag_24 ЗАЛИШЕНО. Правильний
+    # наступний крок — не міняти лаг, а розумніше заповнювати саме
+    # inference-хвіст (напр. формою РДН-ціни через нещодавнє реальне
+    # співвідношення ВДР/РДН, а не пласкою константою) — НЕ зроблено.
     'IDM_Price_Lag_24', 'DAM_IDM_Spread_Lag_24', 'Spread_Mean_24h',
     # Реальний транскордонний нетто-експорт (ENTSO-E, звітується сусідами
     # PL/RO/SK/HU/MD — не залежить від воєнних обмежень публікації України).
@@ -127,6 +154,33 @@ def prepare_features(df):
     if 'EU_DAM_Price_EUR_MWh' not in df.columns:
         df['EU_DAM_Price_EUR_MWh'] = np.nan
     df['EU_DAM_Price_EUR_MWh'] = df['EU_DAM_Price_EUR_MWh'].interpolate(method='linear').bfill().ffill()
+
+    # Експериментальна ознака: реальна погода сусідніх зон PL/RO (Open-Meteo,
+    # neighbor_weather.py), гіпотеза — leading-сигнал власної відновлюваної
+    # генерації сусіда, точніший за EU_DAM_Price вище. Поки НЕ в продових
+    # FEATURES.
+    #
+    # РЕЗУЛЬТАТ ПЕРЕВІРКИ (walk_forward_backtest, test_days=60,
+    # retrain_every_days=7, дані 2021-2026): baseline mean_wape=23.54%,
+    # last_7d_mean_mape=579.96, last_30d_mean_mape=341.65. З PL+RO погодою
+    # (Temperature/Cloud_Cover/Wind_Speed/Shortwave_Radiation обох зон):
+    # mean_wape=23.80% (гірше), last_7d_mean_mape=701.0 (+21%, гірше),
+    # last_30d_mean_mape=320.0 (краще). Перевірено й окремо: PL-only,
+    # RO-only, тільки Shortwave_Radiation обох зон — у ВСІХ варіантах
+    # last_7d_mean_mape гірше за baseline (615-704 проти 579.96), той самий
+    # патерн, що й з EU_DAM_Price (див. вище) і recency weighting (див.
+    # walk_forward_backtest докстрінг): саме останні/волатильні дні, які
+    # треба покращити, стають гіршими. Ознака НЕ додана в FEATURES. Дані
+    # лишаються зібраними (реальні, шкоди немає) — можливо, варте спробувати
+    # з більшим лагом (сьогоднішня погода сусіда ще не встигає вплинути на
+    # український перетік) або комбінацію з EU_DAM_Price, а не повторювати
+    # цей самий варіант.
+    for zone in ('PL', 'RO'):
+        for col in ('Temperature', 'Cloud_Cover', 'Wind_Speed', 'Shortwave_Radiation'):
+            full_col = f'{zone}_{col}'
+            if full_col not in df.columns:
+                df[full_col] = np.nan
+            df[full_col] = df[full_col].interpolate(method='linear').bfill().ffill()
 
     df = df.reset_index()
 
@@ -654,12 +708,41 @@ def build_forecast_feature_matrix(forecast_date, forecast_weather, last_prices):
         mean_p = np.mean(last_prices) if len(last_prices) > 0 else 4000.0
         last_prices = [mean_p] * (168 - len(last_prices)) + list(last_prices)
 
-    # IDM за найсвіжіші години (сьогодні) часто ще не опублікований, поки триває
-    # внутрішньодобова торгівля — інтерполюємо/переносимо останнє відоме
-    # значення, як і при підготовці навчальних ознак (prepare_features), а не
-    # залишаємо NaN, що впаде в модель.
-    last_idm = pd.Series(_last_n('IDM_Price', 168, np.nan)).interpolate(limit_direction='both').fillna(np.mean(last_prices)).tolist()
-    last_spreads = pd.Series(_last_n('DAM_IDM_Spread', 168, np.nan)).interpolate(limit_direction='both').fillna(0.0).tolist()
+    # ВДР (IDM) публікується із затримкою ~1 доба — свіжий хвіст (типово
+    # останні ~24г) на момент прогнозу завжди NaN. РАНІШЕ тут просто
+    # "протягувався" останній відомий IDM_Price пласкою константою
+    # (interpolate(limit_direction='both') на хвості без якоря вперед) — це
+    # знищувало денну форму IDM_Price_Lag_24, найвпливовішої ознаки моделі
+    # (~55% gain), саме в момент прогнозу (train/serve skew, підтверджено на
+    # 21-22.07.2026: прогноз на 22.07 майже не показав денний провал ціни,
+    # хоча реальний РДН 21.07 провалився вдесятеро). Проста заміна лагу на
+    # Lag_48 НЕ допомогла (ПЕРЕВІРЕНО backtest — last_7d/30d MAPE стали
+    # ГІРШЕ, див. коментар над FEATURES) — Lag_24 лишено як є.
+    #
+    # Замість цього відновлюємо ФОРМУ пропущеного хвоста через уже відому
+    # реальну форму РДН-ціни (last_prices) + медіанну РЕАЛЬНУ різницю
+    # ВДР-РДН за останній тиждень перекриття. Адитивна різниця, а не
+    # співвідношення — на низьких цінах (~10-100 ₴, сонячний профіцит)
+    # IDM/DAM "вибухає" до 0.45-4.6x (перевірено на реальних даних
+    # 18-20.07.2026), тоді як різниця лишається обмеженою й стабільною.
+    last_prices_168 = last_prices[-168:]
+    last_idm_raw = _last_n('IDM_Price', 168, np.nan)
+    overlap_diffs = [i - p for p, i in zip(last_prices_168, last_idm_raw) if pd.notna(i)]
+
+    if len(overlap_diffs) >= 24:
+        median_diff = float(np.median(overlap_diffs))
+        last_idm = [float(i) if pd.notna(i) else p + median_diff for p, i in zip(last_prices_168, last_idm_raw)]
+    else:
+        # Замало реального перекриття (холодний старт/довга прогалина
+        # джерела) — той самий плаский фолбек, що й раніше: чесніше за
+        # медіану з майже нуля реальних точок.
+        last_idm = pd.Series(last_idm_raw).interpolate(limit_direction='both').fillna(np.mean(last_prices)).tolist()
+
+    # DAM_IDM_Spread визначається як IDM_Price - Price (intraday_market.py) —
+    # рахуємо з тих самих last_idm/last_prices, щоб ознаки лишались
+    # внутрішньо узгодженими (а не два незалежно заповнені ряди, які можуть
+    # розійтись).
+    last_spreads = [i - p for p, i in zip(last_prices_168, last_idm)]
     # ENTSO-E теж публікується із затримкою (за 5 кордонами PL/RO/SK/HU/MD) —
     # той самий інтерполяційний підхід, що і для IDM вище.
     last_flows = pd.Series(_last_n('Grid_Net_Export_MW', 168, np.nan)).interpolate(limit_direction='both').fillna(0.0).tolist()

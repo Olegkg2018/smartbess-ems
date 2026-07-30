@@ -15,6 +15,7 @@ import RiskScenarios from './pages/director/RiskScenarios';
 
 import Settings from './pages/shared/Settings';
 import Audit from './pages/shared/Audit';
+import DataAudit from './pages/shared/DataAudit';
 
 function DefaultRedirect() {
   const { activeRole } = useApp();
@@ -44,6 +45,7 @@ function AppRoutes() {
       <Route element={<AppShell workspace="dispatcher" />}>
         <Route path="/settings" element={<Settings />} />
         <Route path="/audit" element={<Audit />} />
+        <Route path="/data-audit" element={<DataAudit />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -1,4 +1,5 @@
-import { BookOpen, CheckCircle2, AlertTriangle, CalendarClock } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { BookOpen, CheckCircle2, AlertTriangle, CalendarClock, RadioTower } from 'lucide-react';
 import { ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Line, Area, Bar, Cell, ResponsiveContainer } from 'recharts';
 import { useApp } from '../../state/AppContext';
 import GlobalFilterBar from '../../components/GlobalFilterBar';
@@ -12,7 +13,15 @@ export default function PriceForecast() {
   const {
     forecastPrices, priceBand, actualPrices, dispatchProfile,
     generationAdjustment, setGenerationAdjustmentDraft, saveGenerationAdjustmentAndRecalculate,
+    gridStress, saveGridStressOverride, clearGridStressOverride,
   } = useApp();
+
+  const [queuesDraft, setQueuesDraft] = useState('');
+  const [noteDraft, setNoteDraft] = useState('');
+  useEffect(() => {
+    setQueuesDraft(gridStress?.manual_forced_restriction_queues != null ? String(gridStress.manual_forced_restriction_queues) : '');
+    setNoteDraft(gridStress?.manual_note || '');
+  }, [gridStress]);
 
   const hasBand = !!priceBand && priceBand.lower_bound_uah.length === (forecastPrices || []).length
     && priceBand.lower_bound_uah.every((v) => v !== null);
@@ -215,6 +224,79 @@ export default function PriceForecast() {
             <button className="btn" onClick={saveGenerationAdjustmentAndRecalculate}>
               Зберегти і перерахувати прогноз
             </button>
+          </>
+        )}
+      </div>
+
+      <div className="glass-card">
+        <h3 className="card-title" style={{ marginBottom: '4px' }}>Обсяг ГПВ (погодинних відключень)</h3>
+        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 16px' }}>
+          Єдиного структурованого державного API по графіках погодинних відключень немає. Автоматично беремо обсяг
+          (у "чергах") з постів Укренерго в Telegram, коли він там опублікований. Якщо на цю дату посту немає —
+          можна ввести значення вручну зі свого обленерго. Ця ознака поки НЕ впливає на сьогоднішній прогноз ціни
+          (в моделі замало реальної історії для навчання) — введене значення лише накопичується для майбутнього
+          перенавчання.
+        </p>
+        {!gridStress ? (
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Завантаження...</p>
+        ) : (
+          <>
+            {gridStress.source === 'auto_telegram' ? (
+              <div style={{ display: 'flex', gap: '10px', background: 'rgba(8, 145, 178, 0.08)', border: '1px solid rgba(8, 145, 178, 0.3)', padding: '12px', borderRadius: '6px', fontSize: '0.85rem', marginBottom: '16px' }}>
+                <RadioTower size={16} style={{ color: '#0891b2', flexShrink: 0 }} />
+                <span>
+                  Автоматично з Telegram-каналу Укренерго: обсяг {gridStress.forced_restriction_queues} черги.
+                  {gridStress.auto_consumption_trend != null && (
+                    gridStress.auto_consumption_trend > 0 ? ' Споживання зростає.' : gridStress.auto_consumption_trend < 0 ? ' Споживання знижується.' : ' Споживання на рівні норми.'
+                  )}
+                  {gridStress.auto_settlements_affected != null && ` Знеструмлено населених пунктів: ${gridStress.auto_settlements_affected}${gridStress.auto_oblasts_affected ? ` (у ${gridStress.auto_oblasts_affected} областях)` : ''}.`}
+                </span>
+              </div>
+            ) : (
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0 0 12px' }}>
+                {gridStress.source === 'manual'
+                  ? 'Автоматичного посту на цю дату немає — використовується ваша ручна оцінка нижче.'
+                  : 'Даних на цю дату немає — ні автоматичних, ні ручних.'}
+              </p>
+            )}
+
+            {gridStress.source !== 'auto_telegram' && (
+              <>
+                <div className="grid-3" style={{ gridTemplateColumns: '1fr 2fr', marginBottom: '16px' }}>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Обсяг ГПВ, черги (напр. 0.5, 1, 2)</label>
+                    <input
+                      type="number" min={0} max={6} step={0.5} className="form-input"
+                      value={queuesDraft}
+                      onChange={(e) => setQueuesDraft(e.target.value)}
+                      placeholder="невідомо"
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Джерело (напр.: за даними обленерго)</label>
+                    <input
+                      type="text" className="form-input"
+                      value={noteDraft}
+                      onChange={(e) => setNoteDraft(e.target.value)}
+                      placeholder="напр.: за даними ДТЕК Київські РЕМ"
+                    />
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button
+                    className="btn"
+                    onClick={() => saveGridStressOverride(queuesDraft === '' ? null : Number(queuesDraft), noteDraft || null)}
+                  >
+                    Зберегти ручну оцінку
+                  </button>
+                  {gridStress.has_manual_override && (
+                    <button className="btn btn-secondary" onClick={clearGridStressOverride}>
+                      Прибрати
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
           </>
         )}
       </div>
