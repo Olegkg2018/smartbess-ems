@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from src.api.v1.endpoints import forecast, optimization, scenarios, reports, jobs, assets, notifications, generation_adjustments, grid_stress, data_audit
+from src.api.v1.endpoints import forecast, optimization, scenarios, reports, jobs, assets, notifications, generation_adjustments, grid_stress, data_audit, bids
 
 api_router = APIRouter()
 
@@ -14,3 +14,4 @@ api_router.include_router(notifications.router, prefix="/notifications", tags=["
 api_router.include_router(generation_adjustments.router, prefix="/generation-adjustments", tags=["generation-adjustments"])
 api_router.include_router(grid_stress.router, prefix="/grid-stress", tags=["grid-stress"])
 api_router.include_router(data_audit.router, prefix="/data-audit", tags=["data-audit"])
+api_router.include_router(bids.router, prefix="/bids", tags=["bids"])

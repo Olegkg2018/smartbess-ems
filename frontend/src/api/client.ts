@@ -219,6 +219,66 @@ export async function clearInitialSoc(role: UserRole, assetId: string, date: str
   });
 }
 
+export interface BidMargin {
+  date: string;
+  margin_pct: number;
+  source: 'manual' | 'default';
+}
+
+/** Маржа заявки РДН на добу: sell = прогноз*(1-маржа), buy = прогноз*(1+маржа) — керує ймовірністю виконання. */
+export async function fetchBidMargin(role: UserRole, assetId: string, date: string): Promise<BidMargin> {
+  return authJson<BidMargin>(role, `/api/v1/bids/margin?asset_id=${assetId}&date=${date}`);
+}
+
+export async function saveBidMargin(role: UserRole, assetId: string, date: string, marginPct: number) {
+  return authJson(role, '/api/v1/bids/margin', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ asset_id: assetId, date, margin_pct: marginPct }),
+  });
+}
+
+export async function clearBidMargin(role: UserRole, assetId: string, date: string) {
+  return authJson(role, `/api/v1/bids/margin?asset_id=${assetId}&date=${date}`, {
+    method: 'DELETE',
+  });
+}
+
+export interface MarketBid {
+  hour: number;
+  bid_type: 'sell' | 'buy' | 'standby';
+  volume_kw: number;
+  forecast_price_uah: number;
+  margin_pct: number;
+  bid_price_uah: number;
+  actual_price_uah: number | null;
+  executed: boolean | null;
+  realized_profit_uah: number | null;
+  idm_fallback_suggested: boolean;
+  idm_fallback_price_uah: number | null;
+  idm_fallback_profit_uah: number | null;
+}
+
+export async function fetchBids(role: UserRole, assetId: string, date: string): Promise<{ date: string; asset_id: string; bids: MarketBid[] }> {
+  return authJson(role, `/api/v1/bids?asset_id=${assetId}&date=${date}`);
+}
+
+export async function generateBids(role: UserRole, assetId: string, date: string, marginPct?: number) {
+  return authJson(role, '/api/v1/bids/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ asset_id: assetId, date, margin_pct: marginPct }),
+  });
+}
+
+export async function settleBids(role: UserRole, assetId: string, date: string) {
+  return authJson(role, '/api/v1/bids/settle', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ asset_id: assetId, date }),
+  });
+}
+
 export interface GridStress {
   date: string;
   forced_restriction_queues: number | null;

@@ -903,3 +903,30 @@ def predict_price_band(forecast_date, forecast_weather, last_prices):
     upper_final = [max(lo, up) for lo, up in zip(lower_clipped, upper_clipped)]
 
     return {'hours': list(range(24)), 'lower_uah': lower_final, 'upper_uah': upper_final}
+
+def estimate_idm_price_for_hour(actual_dam_price_uah, as_of_date=None):
+    """
+    Оцінка ціни ВДР на КОНКРЕТНУ годину, для якої вже відома РЕАЛЬНА ціна РДН
+    (напр. заявка РДН щойно не зіграла, і диспетчеру пропонується альтернатива
+    на ВДР — bidding_service.py). ВДР на цю саму годину ще НЕ відбувся (він
+    ближче до реального часу постачання, ніж момент, коли ми дізнались
+    результат РДН-аукціону) — тому реальної ціни ВДР для неї ще нема, лише
+    оцінка через той самий метод, що вже підтверджений у
+    build_forecast_feature_matrix для заповнення хвоста IDM_Price_Lag_24:
+    реальна медіанна різниця (ВДР-РДН) за останній тиждень перекриття,
+    додана до ВЖЕ ВІДОМОЇ реальної ціни РДН (а не до прогнозу — тут прогноз
+    вже не потрібен, бо РДН факт відомий).
+    """
+    df_hist = pd.read_csv(dm.MERGED_DATA_PATH)
+    df_hist['Datetime'] = pd.to_datetime(df_hist['Datetime'])
+    df_hist = df_hist.sort_values('Datetime')
+    if as_of_date is not None:
+        df_hist = df_hist[df_hist['Datetime'] < pd.to_datetime(as_of_date)]
+
+    recent = df_hist.dropna(subset=['Price', 'IDM_Price']).tail(168)
+    if len(recent) < 24:
+        return float(np.clip(actual_dam_price_uah, PRICE_FLOOR, PRICE_CAP))
+
+    median_diff = float((recent['IDM_Price'] - recent['Price']).median())
+    estimate = actual_dam_price_uah + median_diff
+    return float(np.clip(estimate, PRICE_FLOOR, PRICE_CAP))

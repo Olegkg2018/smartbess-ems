@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import * as api from '../api/client';
-import type { UserRole, Asset, PriceBand, ActualPrices, GenerationAdjustment, InitialSoc, GridStress } from '../api/client';
+import type { UserRole, Asset, PriceBand, ActualPrices, GenerationAdjustment, InitialSoc, GridStress, BidMargin, MarketBid } from '../api/client';
 
 export type LogEntry = { time: string; src: string; text: string; type: 'success' | 'info' | 'warn' | 'error' };
 export type AuditEntry = { time: string; user: string; action: string; ip: string; status: string };
@@ -72,6 +72,19 @@ interface AppState {
   saveGridStressOverride: (queues: number | null, note: string | null) => Promise<void>;
   clearGridStressOverride: () => Promise<void>;
 
+  // Маржа заявки РДН на targetDate: sell=прогноз*(1-маржа), buy=прогноз*(1+маржа) —
+  // ручний буфер, наскільки жертвувати очікуваним прибутком заради вищої
+  // ймовірності виконання заявки (реальний механізм аукціону, не гарантоване
+  // виконання за прогнозом). Заявки (bids) — окремо, з реальним статусом
+  // виконання/фактичною ціною OREE після звірки.
+  bidMargin: BidMargin | null;
+  saveBidMarginAndRegenerate: (marginPct: number) => Promise<void>;
+  clearBidMarginAndRegenerate: () => Promise<void>;
+  bids: MarketBid[] | null;
+  refreshBids: () => Promise<void>;
+  generateBidsNow: () => Promise<void>;
+  settleBidsNow: () => Promise<void>;
+
   // BESS technical settings
   osr: string; setOsr: (v: string) => void;
   voltageClass: number; setVoltageClass: (v: number) => void;
@@ -133,6 +146,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [generationAdjustment, setGenerationAdjustment] = useState<GenerationAdjustment | null>(null);
   const [initialSoc, setInitialSoc] = useState<InitialSoc | null>(null);
   const [gridStress, setGridStress] = useState<GridStress | null>(null);
+  const [bidMargin, setBidMargin] = useState<BidMargin | null>(null);
+  const [bids, setBids] = useState<MarketBid[] | null>(null);
 
   const [osr, setOsr] = useState('dtek_kiev_regional');
   const [voltageClass, setVoltageClass] = useState(1);
@@ -318,6 +333,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       api.fetchInitialSoc(activeRole, activeAssetId, targetDate)
         .then((soc) => { if (!cancelled) setInitialSoc(soc); })
         .catch(() => { if (!cancelled) setInitialSoc(null); });
+
+      api.fetchBidMargin(activeRole, activeAssetId, targetDate)
+        .then((m) => { if (!cancelled) setBidMargin(m); })
+        .catch(() => { if (!cancelled) setBidMargin(null); });
+
+      api.fetchBids(activeRole, activeAssetId, targetDate)
+        .then((r) => { if (!cancelled) setBids(r.bids); })
+        .catch(() => { if (!cancelled) setBids(null); });
     }
 
     return () => { cancelled = true; };
@@ -398,6 +421,72 @@ export function AppProvider({ children }: { children: ReactNode }) {
       addLog('API', `Помилка скидання SoC: ${e.message}`, 'error');
     }
   }, [activeRole, activeAssetId, targetDate, addLog, refreshInitialSoc, runForecastAndOptimization]);
+
+  const refreshBids = useCallback(async () => {
+    if (!activeAssetId) return;
+    try {
+      const r = await api.fetchBids(activeRole, activeAssetId, targetDate);
+      setBids(r.bids);
+    } catch {
+      setBids(null);
+    }
+  }, [activeRole, activeAssetId, targetDate]);
+
+  const generateBidsNow = useCallback(async () => {
+    if (!activeAssetId) return;
+    try {
+      const r = await api.generateBids(activeRole, activeAssetId, targetDate);
+      addLog('BIDS', `Заявки РДН на ${targetDate} сформовано (маржа ${r.margin_pct}%, ${r.n_bids} годин).`, 'success');
+      await refreshBids();
+    } catch (e: any) {
+      addLog('API', `Помилка формування заявок: ${e.message}`, 'error');
+    }
+  }, [activeRole, activeAssetId, targetDate, addLog, refreshBids]);
+
+  const settleBidsNow = useCallback(async () => {
+    if (!activeAssetId) return;
+    try {
+      const r = await api.settleBids(activeRole, activeAssetId, targetDate);
+      addLog('BIDS', `Заявки на ${targetDate} звірено з фактом OREE: виконано ${r.n_executed}, не виконано ${r.n_failed_needs_idm} (пропозиція ВДР).`, r.n_failed_needs_idm > 0 ? 'warn' : 'success');
+      await refreshBids();
+    } catch (e: any) {
+      addLog('API', `Помилка звірки заявок: ${e.message}`, 'error');
+    }
+  }, [activeRole, activeAssetId, targetDate, addLog, refreshBids]);
+
+  const refreshBidMargin = useCallback(async () => {
+    if (!activeAssetId) return;
+    try {
+      const m = await api.fetchBidMargin(activeRole, activeAssetId, targetDate);
+      setBidMargin(m);
+    } catch {
+      setBidMargin(null);
+    }
+  }, [activeRole, activeAssetId, targetDate]);
+
+  const saveBidMarginAndRegenerate = useCallback(async (marginPct: number) => {
+    if (!activeAssetId) return;
+    try {
+      await api.saveBidMargin(activeRole, activeAssetId, targetDate, marginPct);
+      addLog('SETTINGS', `Маржу заявки на ${targetDate} збережено: ${marginPct}%.`, 'success');
+      await refreshBidMargin();
+      await generateBidsNow();
+    } catch (e: any) {
+      addLog('API', `Помилка збереження маржі: ${e.message}`, 'error');
+    }
+  }, [activeRole, activeAssetId, targetDate, addLog, refreshBidMargin, generateBidsNow]);
+
+  const clearBidMarginAndRegenerate = useCallback(async () => {
+    if (!activeAssetId) return;
+    try {
+      await api.clearBidMargin(activeRole, activeAssetId, targetDate);
+      addLog('SETTINGS', `Ручну маржу заявки на ${targetDate} прибрано — знову дефолт.`, 'info');
+      await refreshBidMargin();
+      await generateBidsNow();
+    } catch (e: any) {
+      addLog('API', `Помилка скидання маржі: ${e.message}`, 'error');
+    }
+  }, [activeRole, activeAssetId, targetDate, addLog, refreshBidMargin, generateBidsNow]);
 
   const setGenerationAdjustmentDraft = useCallback((a: GenerationAdjustment) => {
     setGenerationAdjustment(a);
@@ -484,6 +573,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     generationAdjustment, setGenerationAdjustmentDraft, saveGenerationAdjustmentAndRecalculate,
     initialSoc, saveInitialSocAndRecalculate, clearInitialSocAndRecalculate,
     gridStress, saveGridStressOverride, clearGridStressOverride,
+    bidMargin, saveBidMarginAndRegenerate, clearBidMarginAndRegenerate,
+    bids, refreshBids, generateBidsNow, settleBidsNow,
     osr, setOsr, voltageClass, setVoltageClass, margin, setMargin,
     capacity, setCapacity, power, setPower, efficiency, setEfficiency,
     maxCyclesPerDay, setMaxCyclesPerDay,
@@ -500,6 +591,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     generationAdjustment, setGenerationAdjustmentDraft, saveGenerationAdjustmentAndRecalculate,
     initialSoc, saveInitialSocAndRecalculate, clearInitialSocAndRecalculate,
     gridStress, saveGridStressOverride, clearGridStressOverride,
+    bidMargin, saveBidMarginAndRegenerate, clearBidMarginAndRegenerate,
+    bids, refreshBids, generateBidsNow, settleBidsNow,
     osr, voltageClass, margin, capacity, power, efficiency, maxCyclesPerDay, launchDate, saveSettings,
     capex, discountRate, lifetime, systemLogs, addLog, auditLogs,
     showApprovalModal, pendingAction, approvalToken, triggerFourEyesApproval, executeApprovedAction, cancelApproval,

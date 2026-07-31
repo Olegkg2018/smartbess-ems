@@ -9,6 +9,7 @@ export default function OptimizationSchedule() {
   const {
     optimizationResult, manualOverrides, setManualOverrides, dispatchProfile, targetDate, capacity, power, saveOverrides, resetOverridesToOptimal,
     initialSoc, saveInitialSocAndRecalculate, clearInitialSocAndRecalculate, forecastPrices,
+    bidMargin, saveBidMarginAndRegenerate, clearBidMarginAndRegenerate, bids, generateBidsNow, settleBidsNow,
     activeRole, activeAssetId, addLog,
   } = useApp();
 
@@ -66,6 +67,11 @@ export default function OptimizationSchedule() {
     if (initialSoc) setSocDraft(String(Math.round(initialSoc.capacity_kwh)));
   }, [initialSoc]);
 
+  const [marginDraft, setMarginDraft] = useState<string>('');
+  useEffect(() => {
+    if (bidMargin) setMarginDraft(String(bidMargin.margin_pct));
+  }, [bidMargin]);
+
   const socSourceLabel: Record<string, { text: string; color: string; icon: any }> = {
     manual: { text: 'Ручне значення диспетчера', color: '#3b82f6', icon: Pencil },
     scada_telemetry: { text: 'Реальна SCADA-телеметрія', color: '#059669', icon: Radio },
@@ -119,6 +125,91 @@ export default function OptimizationSchedule() {
               )}
             </div>
           </>
+        )}
+      </div>
+
+      <div className="glass-card">
+        <h3 className="card-title" style={{ marginBottom: '4px' }}>Заявка РДН на {targetDate}</h3>
+        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 12px' }}>
+          Ціна прогнозу — не те, що подається в заявку. Заявка на аукціоні єдиної ціни виконується за реальною ціною OREE,
+          якщо наша ціна "прохідна": продаж виконається, якщо наша ціна ≤ факт; купівля — якщо наша ціна ≥ факт. Маржа зсуває
+          нашу ціну від прогнозу в бік більшої ймовірності виконання (продаж дешевше, купівля дорожче) — це РУЧНЕ налаштування
+          ризику, а не сам прогноз.
+        </p>
+        {!bidMargin ? (
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Завантаження...</p>
+        ) : (
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: '14px' }}>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label">Маржа заявки (%)</label>
+              <input
+                type="number" min={0} max={50} step={0.5} className="form-input" style={{ width: '140px' }}
+                value={marginDraft}
+                onChange={(e) => setMarginDraft(e.target.value)}
+              />
+            </div>
+            <button className="btn" onClick={() => saveBidMarginAndRegenerate(Number(marginDraft))}>
+              Зберегти маржу і сформувати заявки
+            </button>
+            {bidMargin.source === 'manual' && (
+              <button
+                className="btn"
+                style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', border: '1px solid #ef4444' }}
+                onClick={clearBidMarginAndRegenerate}
+              >
+                Скинути на дефолт
+              </button>
+            )}
+            <button className="btn" style={{ backgroundColor: 'rgba(59, 130, 246, 0.15)', border: '1px solid #3b82f6' }} onClick={generateBidsNow}>
+              Сформувати заявки зараз
+            </button>
+            <button className="btn" style={{ backgroundColor: 'rgba(217, 119, 6, 0.15)', border: '1px solid #d97706' }} onClick={settleBidsNow}>
+              Звірити з фактом OREE
+            </button>
+          </div>
+        )}
+
+        {bids && bids.length > 0 && (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+              <thead>
+                <tr style={{ textAlign: 'left', color: 'var(--text-muted)' }}>
+                  <th style={{ padding: '4px 8px' }}>Год</th>
+                  <th style={{ padding: '4px 8px' }}>Тип</th>
+                  <th style={{ padding: '4px 8px' }}>Обсяг (кВт)</th>
+                  <th style={{ padding: '4px 8px' }}>Прогноз (грн/МВт·год)</th>
+                  <th style={{ padding: '4px 8px' }}>Ціна заявки (ручна, з маржею)</th>
+                  <th style={{ padding: '4px 8px' }}>Факт OREE</th>
+                  <th style={{ padding: '4px 8px' }}>Статус</th>
+                  <th style={{ padding: '4px 8px' }}>P&L / ВДР-пропозиція</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bids.filter((b) => b.bid_type !== 'standby').map((b) => (
+                  <tr key={b.hour} style={{ borderTop: '1px solid var(--border-color, #333)' }}>
+                    <td style={{ padding: '4px 8px' }}>{b.hour}</td>
+                    <td style={{ padding: '4px 8px' }}>{b.bid_type === 'sell' ? 'Продаж' : 'Купівля'}</td>
+                    <td style={{ padding: '4px 8px' }}>{Math.round(b.volume_kw)}</td>
+                    <td style={{ padding: '4px 8px' }}>{Math.round(b.forecast_price_uah).toLocaleString()}</td>
+                    <td style={{ padding: '4px 8px', color: '#3b82f6' }}>{Math.round(b.bid_price_uah).toLocaleString()} (ручна, маржа {b.margin_pct}%)</td>
+                    <td style={{ padding: '4px 8px' }}>{b.actual_price_uah != null ? Math.round(b.actual_price_uah).toLocaleString() : '—'}</td>
+                    <td style={{ padding: '4px 8px' }}>
+                      {b.executed === null ? '⏳ очікує факту' : b.executed ? '✅ виконано' : '❌ не виконано'}
+                    </td>
+                    <td style={{ padding: '4px 8px' }}>
+                      {b.executed ? (
+                        <span style={{ color: '#059669' }}>{Math.round(b.realized_profit_uah ?? 0).toLocaleString()} грн</span>
+                      ) : b.idm_fallback_suggested ? (
+                        <span style={{ color: '#d97706' }}>
+                          ВДР ~{Math.round(b.idm_fallback_price_uah ?? 0).toLocaleString()} грн/МВт·год → {Math.round(b.idm_fallback_profit_uah ?? 0).toLocaleString()} грн
+                        </span>
+                      ) : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 

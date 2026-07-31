@@ -2,6 +2,7 @@ import { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Responsi
 import { useApp } from '../../state/AppContext';
 
 const SOURCE_LABELS: Record<string, string> = {
+  real_dispatch_vs_perfect_foresight: 'Реальний P&L диспетчеризації vs ідеальний прогноз',
   live_forecast_vs_actual: 'Жива точність (прогноз vs факт РДН)',
   walk_forward_backtest: 'Walk-forward бектест (історичні дані)',
   default_fallback_no_data: 'Тимчасовий дефолт — даних ще немає',
@@ -36,6 +37,11 @@ export default function ForecastAccuracy() {
           <span className="kpi-title">Коефіцієнт захопленого прибутку</span>
           <span className="kpi-value" style={{ color: '#059669' }}>{(ratio.ratio * 100).toFixed(1)}%</span>
           <span className="kpi-change neutral">Джерело: {SOURCE_LABELS[ratio.source] || ratio.source}</span>
+          {ratio.source === 'real_dispatch_vs_perfect_foresight' && (
+            <span className="kpi-change neutral" style={{ display: 'block', marginTop: '4px' }}>
+              {ratio.n_days} повних діб · факт {Math.round(ratio.total_actual_profit_uah).toLocaleString()} грн з {Math.round(ratio.total_perfect_foresight_profit_uah).toLocaleString()} грн ідеального прогнозу
+            </span>
+          )}
         </div>
         <div className="kpi-card">
           <span className="kpi-title">WAPE (останні {live.days ?? 30} днів)</span>

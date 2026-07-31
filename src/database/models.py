@@ -130,6 +130,64 @@ class GridStressOverride(Base):
     note = Column(String(500), nullable=True)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
+class BidMarginOverride(Base):
+    """
+    Ручна маржа диспетчера на конкретну добу — наскільки зсунути ціну заявки
+    РДН від прогнозної, щоб керувати ймовірністю виконання (див. MarketBid
+    нижче). Той самий патерн "одне значення на добу", що InitialSocOverride —
+    навмисно поруч у Settings/UI, за прямою вимогою користувача.
+    margin_pct=0 означає "подавати заявку рівно за прогнозом" (найбільший
+    ризик невиконання при помилці прогнозу, але і найбільший потенційний
+    прибуток, якщо прогноз точний).
+    """
+    __tablename__ = "bid_margin_overrides"
+
+    date = Column(DateTime, primary_key=True, nullable=False)
+    asset_id = Column(String(36), ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True, nullable=False)
+    margin_pct = Column(Float, nullable=False, default=2.0)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+class MarketBid(Base):
+    """
+    Реальна механіка заявки РДН (аукціон єдиної ціни), а не спрощене
+    припущення "виконується завжди за прогнозною ціною", яке малось на
+    увазі скрізь раніше в проєкті (walk_forward_backtest, MILP-графік тощо).
+
+    - Заявка на ПРОДАЖ (bid_type='sell', диспетчер хоче розрядити батарею):
+      виконується, якщо bid_price_uah <= actual_price_uah (реальна ціна
+      достатньо висока, щоб покрити нашу мінімальну прийнятну) — і тоді ми
+      продаємо/розряджаємо САМЕ за actual_price_uah (аукціон єдиної ціни, не
+      за своєю заявленою ціною).
+    - Заявка на ПОКУПКУ (bid_type='buy', диспетчер хоче зарядити батарею):
+      виконується, якщо bid_price_uah >= actual_price_uah — і тоді купуємо/
+      заряджаємо за actual_price_uah.
+    - Якщо НЕ виконалась — фізично зарядити/розрядити батарею в цю годину
+      через РДН неможливо (realized_profit_uah=0 для РДН-частини); диспетчеру
+      пропонується альтернатива на ВДР (idm_fallback_*).
+
+    bid_price_uah = forecast_price_uah, зсунута на margin_pct у бік більшої
+    ймовірності виконання: sell → forecast*(1-margin/100), buy →
+    forecast*(1+margin/100) — саме той механізм, який просив користувач
+    ("автоматично коригувати на необхідну маржу").
+    """
+    __tablename__ = "market_bids"
+
+    timestamp = Column(DateTime, primary_key=True, nullable=False)
+    asset_id = Column(String(36), ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True, nullable=False)
+    bid_type = Column(String(10), nullable=False)  # 'sell' | 'buy' | 'standby'
+    volume_kw = Column(Float, nullable=False)
+    forecast_price_uah = Column(Float, nullable=False)
+    margin_pct = Column(Float, nullable=False)
+    bid_price_uah = Column(Float, nullable=False)
+    actual_price_uah = Column(Float, nullable=True)
+    executed = Column(Boolean, nullable=True)
+    realized_profit_uah = Column(Float, nullable=True)
+    idm_fallback_suggested = Column(Boolean, default=False)
+    idm_fallback_price_uah = Column(Float, nullable=True)
+    idm_fallback_profit_uah = Column(Float, nullable=True)
+    bid_generated_at = Column(DateTime, default=datetime.datetime.utcnow)
+    settled_at = Column(DateTime, nullable=True)
+
 class InitialSocOverride(Base):
     """
     Ручне значення ємності батареї на 00:00 конкретної доби — на випадок,
