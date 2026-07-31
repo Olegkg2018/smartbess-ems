@@ -114,10 +114,18 @@ def compute_real_profit_capture_ratio(db, days: int = 30) -> dict:
     Чесний "% захопленого прибутку від ідеального прогнозу" (perfect
     foresight capture ratio) — РЕАЛЬНЕ фінансове порівняння, а не проксі
     через WAPE (як нижче в get_profit_capture_ratio):
-      - "actual": P&L РЕАЛЬНО виконаного диспетчерського плану
-        (ChargeDischargePlan — графік, порахований на основі прогнозу і
-        такий, що пішов у диспетчеризацію), перерахований за РЕАЛЬНОЮ ціною
-        доби (MarketPrice), а не за прогнозною ціною, на якій план будувався.
+      - "actual": для доби, де заявки РДН реально подавались і звірялись
+        (MarketBid.executed заповнено на всі 24 години) — сума
+        MarketBid.realized_profit_uah, тобто РЕАЛЬНО реалізований P&L з
+        урахуванням годин, де заявка НЕ зіграла (realized_profit_uah=0 для
+        них — фізично не змогли зарядити/розрядити через РДН у цю годину,
+        ВДР-фолбек не враховується тут, бо це лише пропозиція диспетчеру,
+        а не гарантовано виконана дія). Для діб СТАРІШИХ за появу механізму
+        заявок (до 2026-07-31, MarketBid ще не існував) — фолбек на
+        попереднє спрощення: P&L ChargeDischargePlan, перерахований за
+        РЕАЛЬНОЮ ціною доби (MarketPrice), що НЕЯВНО припускає 100%-не
+        виконання плану (менш чесно, але єдине, що можна порахувати заднім
+        числом без історії заявок).
       - "perfect_foresight": що дав би той самий MILP (`optimize_battery_schedule`),
         якби на вхід дали РЕАЛЬНУ ціну наперед — теоретичний максимум для тих
         самих фізичних обмежень активу.
@@ -133,7 +141,7 @@ def compute_real_profit_capture_ratio(db, days: int = 30) -> dict:
     планувальника) — на новому/малому інстансі повних діб може бути замало,
     тоді status='insufficient_data' (як і в compute_rolling_accuracy).
     """
-    from src.database.models import ChargeDischargePlan, Asset
+    from src.database.models import ChargeDischargePlan, Asset, MarketBid
     from src.modules.optimization_service.milp_model import optimize_battery_schedule, evaluate_schedule_profit
 
     cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=days)
@@ -158,8 +166,16 @@ def compute_real_profit_capture_ratio(db, days: int = 30) -> dict:
         d = pr.timestamp.date().isoformat()
         price_by_day.setdefault(d, {})[pr.timestamp.hour] = pr.price_uah
 
+    bid_rows = db.query(MarketBid).filter(
+        MarketBid.asset_id == asset.id, MarketBid.timestamp >= cutoff,
+    ).order_by(MarketBid.timestamp).all()
+    bids_by_day = {}
+    for b in bid_rows:
+        d = b.timestamp.date().isoformat()
+        bids_by_day.setdefault(d, {})[b.timestamp.hour] = b
+
     # Тарифи — ті самі константи, що scheduler.py реально використовує щодня
-    # для боевого плану (Settings поки не підключені до battery_params там) —
+    # для боєвого плану (Settings поки не підключені до battery_params там) —
     # порівнюємо actual/perfect_foresight на однакових вхідних умовах.
     tariff_kwargs = dict(
         transmission_tariff=528.57, distribution_tariff=1500.0,
@@ -173,7 +189,7 @@ def compute_real_profit_capture_ratio(db, days: int = 30) -> dict:
     # інший розмір активу). Порівнювати actual/perfect_foresight коректно
     # ЛИШЕ якщо історичний графік фізично вкладається в ПОТОЧНІ ліміти —
     # інакше вони не на однакових фізичних обмеженнях, і ratio втрачає сенс
-    # (спостережено: без цієї перевірки виходив ratio > 1, що математично
+    # (спостеріжено: без цієї перевірки виходив ratio > 1, що математично
     # неможливо для однакових обмежень — ознака саме цього неспівпадіння).
     power_tol = 1e-3
     max_power_mw = asset.power_mw + power_tol
@@ -190,12 +206,17 @@ def compute_real_profit_capture_ratio(db, days: int = 30) -> dict:
             skipped_infeasible += 1
             continue
 
-        charge_kw = [max(0.0, -p * 1000.0) for p in target_power_mw]
-        discharge_kw = [max(0.0, p * 1000.0) for p in target_power_mw]
-
-        actual_profit = evaluate_schedule_profit(
-            charge_kw, discharge_kw, real_prices, degradation_cost=deg_cost_kwh, **tariff_kwargs,
-        )
+        day_bids = bids_by_day.get(d)
+        if day_bids and len(day_bids) == 24 and all(day_bids[h].executed is not None for h in range(24)):
+            actual_profit = sum(day_bids[h].realized_profit_uah or 0.0 for h in range(24))
+            actual_source = 'market_bid_settled'
+        else:
+            charge_kw = [max(0.0, -p * 1000.0) for p in target_power_mw]
+            discharge_kw = [max(0.0, p * 1000.0) for p in target_power_mw]
+            actual_profit = evaluate_schedule_profit(
+                charge_kw, discharge_kw, real_prices, degradation_cost=deg_cost_kwh, **tariff_kwargs,
+            )
+            actual_source = 'chargedischargeplan_full_execution_assumed'
 
         perfect_res = optimize_battery_schedule(
             real_prices,
@@ -217,6 +238,7 @@ def compute_real_profit_capture_ratio(db, days: int = 30) -> dict:
             'date': d,
             'actual_profit_uah': actual_profit,
             'perfect_foresight_profit_uah': perfect_res['net_profit_uah'],
+            'actual_source': actual_source,
         })
 
     if len(daily_results) < 3:
@@ -232,11 +254,14 @@ def compute_real_profit_capture_ratio(db, days: int = 30) -> dict:
         return {'status': 'insufficient_data', 'message': 'Ідеальний прогноз дає ~0 прибутку на цьому вікні — коефіцієнт невизначений.', 'n_days': len(daily_results)}
 
     ratio = total_actual / total_perfect
+    n_days_market_bid_settled = sum(1 for r in daily_results if r['actual_source'] == 'market_bid_settled')
     return {
         'status': 'ok',
         'ratio': float(max(0.0, min(1.0, ratio))),
         'raw_ratio': float(ratio),
         'n_days': len(daily_results),
+        'n_days_market_bid_settled': n_days_market_bid_settled,
+        'n_days_plan_full_execution_assumed': len(daily_results) - n_days_market_bid_settled,
         'skipped_infeasible_days': skipped_infeasible,
         'total_actual_profit_uah': float(total_actual),
         'total_perfect_foresight_profit_uah': float(total_perfect),
@@ -256,7 +281,7 @@ def get_profit_capture_ratio(db) -> dict:
          історії ChargeDischargePlan.
       2. Жива точність прогноз/факт з БД (compute_rolling_accuracy) —
          проксі через WAPE, якщо накопичилось достатньо діб точності, але
-         ще не діб повної диспетчеризації для варіанту 1.
+         ще не діб повної диспетчеризації для варіанта 1.
       3. Офлайн walk-forward бектест (data/backtest_report.json) — чесно
          виміряний на реальних даних, але не на живих продових прогнозах.
       4. Явно позначений дефолт 0.80 лише як останній fallback, якщо взагалі
@@ -269,6 +294,8 @@ def get_profit_capture_ratio(db) -> dict:
         return {
             'ratio': real['ratio'], 'source': 'real_dispatch_vs_perfect_foresight',
             'n_days': real['n_days'],
+            'n_days_market_bid_settled': real['n_days_market_bid_settled'],
+            'n_days_plan_full_execution_assumed': real['n_days_plan_full_execution_assumed'],
             'total_actual_profit_uah': real['total_actual_profit_uah'],
             'total_perfect_foresight_profit_uah': real['total_perfect_foresight_profit_uah'],
         }

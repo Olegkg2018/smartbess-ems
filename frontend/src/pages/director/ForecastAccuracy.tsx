@@ -38,9 +38,14 @@ export default function ForecastAccuracy() {
           <span className="kpi-value" style={{ color: '#059669' }}>{(ratio.ratio * 100).toFixed(1)}%</span>
           <span className="kpi-change neutral">Джерело: {SOURCE_LABELS[ratio.source] || ratio.source}</span>
           {ratio.source === 'real_dispatch_vs_perfect_foresight' && (
-            <span className="kpi-change neutral" style={{ display: 'block', marginTop: '4px' }}>
-              {ratio.n_days} повних діб · факт {Math.round(ratio.total_actual_profit_uah).toLocaleString()} грн з {Math.round(ratio.total_perfect_foresight_profit_uah).toLocaleString()} грн ідеального прогнозу
-            </span>
+            <>
+              <span className="kpi-change neutral" style={{ display: 'block', marginTop: '4px' }}>
+                {ratio.n_days} повних діб · факт {Math.round(ratio.total_actual_profit_uah).toLocaleString()} грн з {Math.round(ratio.total_perfect_foresight_profit_uah).toLocaleString()} грн ідеального прогнозу
+              </span>
+              <span className="kpi-change neutral" style={{ display: 'block', marginTop: '2px' }}>
+                з них {ratio.n_days_market_bid_settled} діб — за реальними звіреними заявками РДН, {ratio.n_days_plan_full_execution_assumed} — старіші, з припущенням 100% виконання плану
+              </span>
+            </>
           )}
         </div>
         <div className="kpi-card">
