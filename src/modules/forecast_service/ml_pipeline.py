@@ -519,6 +519,49 @@ def _blend_with_surplus_proba(point_pred, surplus_proba, floor_estimate=SURPLUS_
     """
     return surplus_proba * floor_estimate + (1.0 - surplus_proba) * point_pred
 
+ENSEMBLE_MODEL_TYPES = ('ensemble_average', 'ensemble_weighted')
+
+def _train_ensemble_members(df_train, features):
+    lgbm = _make_lgbm()
+    lgbm.fit(df_train[features], df_train['Price'])
+    xgb = _make_xgb()
+    xgb.fit(df_train[features], df_train['Price'])
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(df_train[features])
+    mlp = _make_mlp()
+    mlp.fit(X_scaled, df_train['Price'])
+    return lgbm, xgb, mlp, scaler
+
+def _predict_ensemble_members(members, df_slice, features):
+    lgbm, xgb, mlp, scaler = members
+    return {
+        'lightgbm': lgbm.predict(df_slice[features]),
+        'xgboost': xgb.predict(df_slice[features]),
+        'mlp': mlp.predict(scaler.transform(df_slice[features])),
+    }
+
+def _compute_inverse_error_weights(df_train, features, val_days=14):
+    """
+    Ваги ансамблю = обернена помилка (1/MAE) кожної моделі, порахована на
+    ЧЕСНОМУ held-out хвості df_train (останні val_days) — а НЕ на тестовому
+    вікні бектеста, інакше вибір ваг був би підглядуванням у майбутнє. Якщо
+    даних замало (початок бектеста) — фолбек на рівні ваги (просте середнє).
+    """
+    cutoff = df_train['Datetime'].max() - pd.Timedelta(days=val_days)
+    fit_part = df_train[df_train['Datetime'] < cutoff]
+    val_part = df_train[df_train['Datetime'] >= cutoff]
+    equal = {'lightgbm': 1 / 3, 'xgboost': 1 / 3, 'mlp': 1 / 3}
+    if len(fit_part) < 24 * 30 or val_part.empty:
+        return equal
+
+    members = _train_ensemble_members(fit_part, features)
+    preds = _predict_ensemble_members(members, val_part, features)
+    y_val = val_part['Price'].values
+    maes = {k: mean_absolute_error(y_val, v) for k, v in preds.items()}
+    inv = {k: 1.0 / max(m, 1e-6) for k, m in maes.items()}
+    total = sum(inv.values())
+    return {k: v / total for k, v in inv.items()}
+
 def walk_forward_backtest(test_days=90, retrain_every_days=7, model_type='lightgbm', use_surplus_classifier=False, extra_features=None):
     """
     Чесна оцінка точності день-наперед прогнозу: розширюване вікно навчання,
@@ -533,6 +576,32 @@ def walk_forward_backtest(test_days=90, retrain_every_days=7, model_type='lightg
     ДО того як потрапити у прод (як і з recency weighting — не віримо
     гіпотезі на слово).
 
+    model_type='ensemble_average'/'ensemble_weighted' — блендинг LightGBM+
+    XGBoost+MLP (усі три вже навчаються паралельно в train_models(), але у
+    проді scheduler.py бере лише LightGBM). 'ensemble_average' — просте
+    середнє трьох прогнозів; 'ensemble_weighted' — обернена помилка (MAE) на
+    чесному held-out хвості кожного тренувального вікна (_compute_inverse_error_weights),
+    без підглядування в тестові дні. use_surplus_classifier ігнорується для
+    ансамблю (комбінація не реалізована — окремий експеримент).
+
+    РЕЗУЛЬТАТ ПЕРЕВІРКИ (walk_forward_backtest, test_days=60,
+    retrain_every_days=7, дані 2021-2026-07, scratch/backtest_ensemble.py):
+    baseline (солo LightGBM) mean_wape=26.224%, last_7d_mean_mape=1009.72,
+    last_30d_mean_mape=566.38. ensemble_average: mean_wape=25.935% (краще),
+    last_7d_mean_mape=985.59 (краще), last_30d_mean_mape=591.61 (ГІРШЕ).
+    ensemble_weighted: mean_wape=25.765% (краще), last_7d_mean_mape=1043.09
+    (ГІРШЕ), last_30d_mean_mape=533.83 (краще). Обидва варіанти покращують
+    mean_wape, але РІЗНОНАПРАВЛЕНО псують одну з двох recency-метрик (та й у
+    протилежні боки одна відносно одної) — той самий патерн "загальне
+    покращення / останні дні гірше", що й з EU_DAM_Price і погодою PL/RO
+    (prepare_features вище), тільки тут ще й сам напрямок псування нестійкий
+    між двома схемами зважування. На 60 тестових днях last_7d — це лише 7
+    точок, замало для довіри. Ансамбль НЕ підключено до проду (scheduler.py
+    лишається на солo LightGBM). Код лишається доступним
+    (ENSEMBLE_MODEL_TYPES/_train_ensemble_members/_compute_inverse_error_weights)
+    для повторної перевірки — напр. на test_days=90+ (менше шуму в last_7d)
+    або з іншою схемою зважування, а не для повторення цього самого прогону.
+
     extra_features — список додаткових колонок (напр. EU_DAM_Price_Lag_24),
     які додаються поверх продових FEATURES ЛИШЕ для цього прогону A/B-тесту,
     без зміни глобального FEATURES.
@@ -545,6 +614,7 @@ def walk_forward_backtest(test_days=90, retrain_every_days=7, model_type='lightg
     df = df.sort_values('Datetime').reset_index(drop=True)
 
     features = FEATURES + list(extra_features) if extra_features else FEATURES
+    is_ensemble = model_type in ENSEMBLE_MODEL_TYPES
 
     if len(df) < 24 * (test_days + 30):
         test_days = max(7, len(df) // 24 - 30)
@@ -558,6 +628,8 @@ def walk_forward_backtest(test_days=90, retrain_every_days=7, model_type='lightg
     daily_results = []
     model = None
     surplus_clf = None
+    ensemble_members = None
+    ensemble_weights = None
     day = first_test_day
     days_since_retrain = 0
 
@@ -572,22 +644,35 @@ def walk_forward_backtest(test_days=90, retrain_every_days=7, model_type='lightg
             day += pd.Timedelta(days=1)
             continue
 
-        if model is None or days_since_retrain >= retrain_every_days:
-            model = build_model()
-            model.fit(df_train[features], df_train['Price'])
-            if use_surplus_classifier:
-                y_surplus = (df_train['Price'] <= SURPLUS_PRICE_THRESHOLD).astype(int)
-                if y_surplus.nunique() > 1:
-                    surplus_clf = _make_surplus_classifier()
-                    surplus_clf.fit(df_train[features], y_surplus)
-                else:
-                    surplus_clf = None
-            days_since_retrain = 0
+        if is_ensemble:
+            if ensemble_members is None or days_since_retrain >= retrain_every_days:
+                ensemble_members = _train_ensemble_members(df_train, features)
+                ensemble_weights = (
+                    _compute_inverse_error_weights(df_train, features)
+                    if model_type == 'ensemble_weighted'
+                    else {'lightgbm': 1 / 3, 'xgboost': 1 / 3, 'mlp': 1 / 3}
+                )
+                days_since_retrain = 0
 
-        y_pred = model.predict(df_test[features])
-        if use_surplus_classifier and surplus_clf is not None:
-            surplus_proba = surplus_clf.predict_proba(df_test[features])[:, 1]
-            y_pred = _blend_with_surplus_proba(y_pred, surplus_proba)
+            member_preds = _predict_ensemble_members(ensemble_members, df_test, features)
+            y_pred = sum(ensemble_weights[k] * member_preds[k] for k in member_preds)
+        else:
+            if model is None or days_since_retrain >= retrain_every_days:
+                model = build_model()
+                model.fit(df_train[features], df_train['Price'])
+                if use_surplus_classifier:
+                    y_surplus = (df_train['Price'] <= SURPLUS_PRICE_THRESHOLD).astype(int)
+                    if y_surplus.nunique() > 1:
+                        surplus_clf = _make_surplus_classifier()
+                        surplus_clf.fit(df_train[features], y_surplus)
+                    else:
+                        surplus_clf = None
+                days_since_retrain = 0
+
+            y_pred = model.predict(df_test[features])
+            if use_surplus_classifier and surplus_clf is not None:
+                surplus_proba = surplus_clf.predict_proba(df_test[features])[:, 1]
+                y_pred = _blend_with_surplus_proba(y_pred, surplus_proba)
 
         y_true = df_test['Price'].values
         mape, wape = calculate_mape_wape(y_true, y_pred)
