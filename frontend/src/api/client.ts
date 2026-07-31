@@ -263,16 +263,34 @@ export async function fetchBids(role: UserRole, assetId: string, date: string): 
   return authJson(role, `/api/v1/bids?asset_id=${assetId}&date=${date}`);
 }
 
-export async function generateBids(role: UserRole, assetId: string, date: string, marginPct?: number) {
-  return authJson(role, '/api/v1/bids/generate', {
+export interface GenerateBidsResult {
+  status: string;
+  date: string;
+  margin_pct: number;
+  n_bids: number;
+  bids: MarketBid[];
+}
+
+export async function generateBids(role: UserRole, assetId: string, date: string, marginPct?: number): Promise<GenerateBidsResult> {
+  return authJson<GenerateBidsResult>(role, '/api/v1/bids/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ asset_id: assetId, date, margin_pct: marginPct }),
   });
 }
 
-export async function settleBids(role: UserRole, assetId: string, date: string) {
-  return authJson(role, '/api/v1/bids/settle', {
+export interface SettleBidsResult {
+  status: string;
+  date: string;
+  n_settled: number;
+  n_executed: number;
+  n_failed_needs_idm: number;
+  total_realized_profit_uah: number;
+  bids: MarketBid[];
+}
+
+export async function settleBids(role: UserRole, assetId: string, date: string): Promise<SettleBidsResult> {
+  return authJson<SettleBidsResult>(role, '/api/v1/bids/settle', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ asset_id: assetId, date }),
