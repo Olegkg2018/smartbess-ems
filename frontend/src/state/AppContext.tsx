@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import * as api from '../api/client';
-import type { UserRole, Asset, PriceBand, ActualPrices, GenerationAdjustment, InitialSoc, GridStress, BidMargin, MarketBid } from '../api/client';
+import type { UserRole, Asset, PriceBand, ActualPrices, GenerationAdjustment, PriceShift, InitialSoc, GridStress, BidMargin, MarketBid } from '../api/client';
 
 export type LogEntry = { time: string; src: string; text: string; type: 'success' | 'info' | 'warn' | 'error' };
 export type AuditEntry = { time: string; user: string; action: string; ip: string; status: string };
@@ -59,6 +59,13 @@ interface AppState {
   setGenerationAdjustmentDraft: (a: GenerationAdjustment) => void;
   saveGenerationAdjustmentAndRecalculate: () => Promise<void>;
 
+  // Ручний відсотковий зсув прогнозу ціни на targetDate — post-inference
+  // корекція на разову ринкову аномалію (не переучує модель, не входить у
+  // ФІЧІ — див. PriceShiftOverride докстрінг у models.py)
+  priceShift: PriceShift | null;
+  setPriceShiftDraft: (p: PriceShift) => void;
+  savePriceShiftAndRecalculate: () => Promise<void>;
+
   // SoC на 00:00 targetDate: ручне значення > SCADA-телеметрія > фолбек 20%
   initialSoc: InitialSoc | null;
   saveInitialSocAndRecalculate: (capacityKwh: number) => Promise<void>;
@@ -66,7 +73,7 @@ interface AppState {
 
   // Обсяг ГПВ (у "чергах") на targetDate: автосигнал з Telegram-постів
   // Укренерго > ручна оцінка диспетчера > відсутній. НЕ впливає на поточний
-  // прогноз ціни (ознака ще не в продових FEATURES моделі — короткий обсяг
+  // прогноз ціни (ознака ще не в продових FEATURES моделі, короткий обсяг
   // реальної історії), лише накопичує реальні дані для майбутнього бектесту.
   gridStress: GridStress | null;
   saveGridStressOverride: (queues: number | null, note: string | null) => Promise<void>;
@@ -144,6 +151,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [marketConditions, setMarketConditions] = useState<any>(null);
   const [forecastAccuracy, setForecastAccuracy] = useState<any>(null);
   const [generationAdjustment, setGenerationAdjustment] = useState<GenerationAdjustment | null>(null);
+  const [priceShift, setPriceShift] = useState<PriceShift | null>(null);
   const [initialSoc, setInitialSoc] = useState<InitialSoc | null>(null);
   const [gridStress, setGridStress] = useState<GridStress | null>(null);
   const [bidMargin, setBidMargin] = useState<BidMargin | null>(null);
@@ -293,10 +301,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // Зміна дати раніше лишала forecastPrices/priceBand/actualPrices/
   // optimizationResult від ПОПЕРЕДНЬОЇ дати на екрані (тільки manualOverrides
-  // оновлювались вище) — диспетчер бачив прогноз/графік заряду для одної
+  // оновлювались вище) — диспетчер бачив прогноз/графік заряду для однієї
   // дати поверх графіку ручних заявок для іншої. Тепер при зміні дати:
-  // 1) optimizationResult одразу скидається (для нової дати він ще не
-  //    порахований — сценарний VaR-аналіз завжди вимагає явного «Розрахувати»);
+  // 1) optimizationResult одразу скидається (для нової дати він ще не порахований —
+  //    сценарний VaR-аналіз завжди вимагає явного «Rozraxuvaty»);
   // 2) forecastPrices/priceBand/actualPrices підтягуються заново — якщо
   //    прогноз на цю дату вже колись рахували, він підвантажиться одразу
   //    (дешевий GET, без повторного MILP), інакше — теж очищаються.
@@ -324,6 +332,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     api.fetchGenerationAdjustment(activeRole, targetDate)
       .then((adj) => { if (!cancelled) setGenerationAdjustment(adj); })
       .catch(() => { if (!cancelled) setGenerationAdjustment(null); });
+
+    api.fetchPriceShift(activeRole, targetDate)
+      .then((ps) => { if (!cancelled) setPriceShift(ps); })
+      .catch(() => { if (!cancelled) setPriceShift(null); });
 
     api.fetchGridStress(activeRole, targetDate)
       .then((gs) => { if (!cancelled) setGridStress(gs); })
@@ -503,6 +515,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [activeRole, targetDate, generationAdjustment, addLog, runForecastAndOptimization]);
 
+  const setPriceShiftDraft = useCallback((p: PriceShift) => {
+    setPriceShift(p);
+  }, []);
+
+  const savePriceShiftAndRecalculate = useCallback(async () => {
+    if (!priceShift) return;
+    try {
+      await api.savePriceShift(activeRole, { ...priceShift, date: targetDate });
+      addLog('SETTINGS', `Ручний зсув прогнозу на ${targetDate} збережено (${priceShift.shift_pct > 0 ? '+' : ''}${priceShift.shift_pct}%).`, 'success');
+      await runForecastAndOptimization();
+    } catch (e: any) {
+      addLog('API', `Помилка збереження зсуву прогнозу: ${e.message}`, 'error');
+    }
+  }, [activeRole, targetDate, priceShift, addLog, runForecastAndOptimization]);
+
   const refreshGridStress = useCallback(async () => {
     try {
       const gs = await api.fetchGridStress(activeRole, targetDate);
@@ -571,6 +598,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     runForecastAndOptimization, saveOverrides, resetOverridesToOptimal,
     executiveReport, marketConditions, forecastAccuracy,
     generationAdjustment, setGenerationAdjustmentDraft, saveGenerationAdjustmentAndRecalculate,
+    priceShift, setPriceShiftDraft, savePriceShiftAndRecalculate,
     initialSoc, saveInitialSocAndRecalculate, clearInitialSocAndRecalculate,
     gridStress, saveGridStressOverride, clearGridStressOverride,
     bidMargin, saveBidMarginAndRegenerate, clearBidMarginAndRegenerate,
@@ -589,6 +617,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     runForecastAndOptimization, saveOverrides, resetOverridesToOptimal,
     executiveReport, marketConditions, forecastAccuracy,
     generationAdjustment, setGenerationAdjustmentDraft, saveGenerationAdjustmentAndRecalculate,
+    priceShift, setPriceShiftDraft, savePriceShiftAndRecalculate,
     initialSoc, saveInitialSocAndRecalculate, clearInitialSocAndRecalculate,
     gridStress, saveGridStressOverride, clearGridStressOverride,
     bidMargin, saveBidMarginAndRegenerate, clearBidMarginAndRegenerate,
