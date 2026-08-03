@@ -204,7 +204,7 @@ export default function DataAudit() {
               <AlertTriangle size={16} style={{ color: '#d97706', flexShrink: 0 }} />
               <span style={{ fontSize: '13.5px' }}>
                 За цю дату в кеші немає жодного поста з жодного з двох каналів. Це або означає, що канали цього дня
-                нічого не публікували, або що фонова синхронізація (щоденний job о 17:30) того дня не відпрацювала —
+                нічого не публікували, або що фонова синхронізація (щоденний job о 17:30) того дня не відпрацював —
                 варто порівняти з офіційним каналом вручну, якщо це підозріло.
               </span>
             </div>
@@ -240,7 +240,7 @@ export default function DataAudit() {
       {audit && (
         <div className="glass-card">
           <h3 className="card-title" style={{ marginBottom: '16px' }}>Ручні поправки диспетчера на цю дату</h3>
-          <div className="grid-3">
+          <div className="grid-3" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
             <div>
               <span className="kpi-title">Обсяг ГПВ вручну</span>
               <p style={{ margin: '6px 0 0', fontSize: '0.9rem' }}>
@@ -262,6 +262,14 @@ export default function DataAudit() {
               <p style={{ margin: '6px 0 0', fontSize: '0.9rem' }}>
                 {audit.manual_overrides.initial_soc && audit.manual_overrides.initial_soc.length > 0
                   ? audit.manual_overrides.initial_soc.map((s) => `${s.capacity_kwh} кВт·год`).join(', ')
+                  : 'не вводився'}
+              </p>
+            </div>
+            <div>
+              <span className="kpi-title">Зсув прогнозу ціни</span>
+              <p style={{ margin: '6px 0 0', fontSize: '0.9rem' }}>
+                {audit.manual_overrides.price_shift
+                  ? `${audit.manual_overrides.price_shift.shift_pct > 0 ? '+' : ''}${audit.manual_overrides.price_shift.shift_pct}%${audit.manual_overrides.price_shift.note ? ` (${audit.manual_overrides.price_shift.note})` : ''}`
                   : 'не вводився'}
               </p>
             </div>

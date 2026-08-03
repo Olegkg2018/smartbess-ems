@@ -189,6 +189,26 @@ export async function saveGenerationAdjustment(role: UserRole, payload: Generati
   });
 }
 
+export interface PriceShift {
+  date: string;
+  shift_pct: number;
+  note: string | null;
+  is_default?: boolean;
+}
+
+/** Ручний відсотковий зсув прогнозу ціни на дату (post-inference, застосовується одноразово до всіх 24 годин) — 0% = без відхилень. */
+export async function fetchPriceShift(role: UserRole, date: string): Promise<PriceShift> {
+  return authJson<PriceShift>(role, `/api/v1/price-shift?date=${date}`);
+}
+
+export async function savePriceShift(role: UserRole, payload: PriceShift) {
+  return authJson(role, '/api/v1/price-shift', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
 export interface InitialSoc {
   asset_id: string;
   date: string;
@@ -373,6 +393,7 @@ export interface DataAudit {
     grid_stress: { forced_restriction_queues: number | null; note: string | null } | null;
     generation_adjustment: { nuclear_pct: number; hydro_pct: number; solar_pct: number; wind_pct: number; note: string | null } | null;
     initial_soc: { asset_id: string; capacity_kwh: number }[] | null;
+    price_shift: { shift_pct: number; note: string | null } | null;
   };
 }
 
