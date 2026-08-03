@@ -13,7 +13,7 @@ from src.core.config import settings
 import src.modules.market_data_service.data_manager as dm
 from src.modules.tariff_service.services import TariffService
 from src.database.session import SessionLocal
-from src.database.models import GenerationAdjustment
+from src.database.models import GenerationAdjustment, PriceShiftOverride
 
 DATA_DIR = settings.DATA_DIR
 DEFAULT_NUCLEAR_REFERENCE_CAPACITY_MW = 7835.0
@@ -777,6 +777,19 @@ def _get_baseload_passthrough_ratio():
             pass
     return max(0.0, min(1.0, ratio))
 
+def _get_price_shift_pct(forecast_date):
+    """Ручний відсотковий зсув прогнозу (PriceShiftOverride) на цю дату, або
+    0.0 (нейтрально), якщо нічого не збережено."""
+    db = SessionLocal()
+    try:
+        target_dt = pd.to_datetime(forecast_date).to_pydatetime()
+        row = db.query(PriceShiftOverride).filter(PriceShiftOverride.date == target_dt).first()
+        return row.shift_pct if row else 0.0
+    except Exception:
+        return 0.0
+    finally:
+        db.close()
+
 def build_forecast_feature_matrix(forecast_date, forecast_weather, last_prices):
     """
     Будує матрицю ознак (FEATURES) для прогнозу на 24 години наперед. Спільна
@@ -967,6 +980,11 @@ def predict_next_day(forecast_date, forecast_weather, last_prices, factors=None)
     як було раніше: ці "фактори" були фейковими вхідними даними, яких
     диспетчер мав вручну вгадувати щодня. Реальний вплив ринкових умов тепер
     навчається моделлю напряму з реальних Solar_Gen/Wind_Gen/IDM-спреду.
+
+    Ручний зсув прогнозу (PriceShiftOverride) застосовується тут, ПІСЛЯ
+    передбачення моделі, а не як ознака — на випадок реальної тимчасової
+    ринкової аномалії, яку модель не могла передбачити і не варто вчити з
+    одного епізоду (див. докстрінг PriceShiftOverride у models.py).
     """
     if not os.path.exists(LGBM_MODEL_PATH):
         train_models()
@@ -987,9 +1005,15 @@ def predict_next_day(forecast_date, forecast_weather, last_prices, factors=None)
     X_forecast_scaled = scaler.transform(X_forecast)
     pred_mlp = mlp_model.predict(X_forecast_scaled)
 
-    final_lgb = [float(np.clip(p, PRICE_FLOOR, PRICE_CAP)) for p in pred_lgb]
-    final_xgb = [float(np.clip(p, PRICE_FLOOR, PRICE_CAP)) for p in pred_xgb]
-    final_mlp = [float(np.clip(p, PRICE_FLOOR, PRICE_CAP)) for p in pred_mlp]
+    shift_pct = _get_price_shift_pct(forecast_date)
+    shift_mult = 1.0 + shift_pct / 100.0
+
+    def _clip_and_shift(preds):
+        return [float(np.clip(np.clip(p, PRICE_FLOOR, PRICE_CAP) * shift_mult, PRICE_FLOOR, PRICE_CAP)) for p in preds]
+
+    final_lgb = _clip_and_shift(pred_lgb)
+    final_xgb = _clip_and_shift(pred_xgb)
+    final_mlp = _clip_and_shift(pred_mlp)
 
     return {
         'hours': list(range(24)),
@@ -998,6 +1022,7 @@ def predict_next_day(forecast_date, forecast_weather, last_prices, factors=None)
         'mlp': final_mlp,
         'features': records,
         'generation_adjustment': adjustment,
+        'price_shift_pct': shift_pct,
     }
 
 def predict_price_band(forecast_date, forecast_weather, last_prices):
@@ -1006,6 +1031,10 @@ def predict_price_band(forecast_date, forecast_weather, last_prices):
     годин прогнозу (побудований на тій же матриці ознак, що й точковий
     прогноз). Використовується MILP-оптимізатором для Pessimistic/Aggressive
     сценаріїв замість вигаданого ±1.64σ log-normal припущення про волатильність.
+
+    Ручний зсув прогнозу (PriceShiftOverride), якщо збережений, зсуває обидві
+    межі на той самий відсоток, що й точковий прогноз (predict_next_day) —
+    щоб інтервал лишався узгодженим з точкою після ручної поправки.
     """
     if not os.path.exists(Q_LOWER_MODEL_PATH) or not os.path.exists(Q_UPPER_MODEL_PATH):
         train_quantile_models()
@@ -1026,8 +1055,11 @@ def predict_price_band(forecast_date, forecast_weather, last_prices):
     pred_lower = lower_model.predict(X_forecast) - correction
     pred_upper = upper_model.predict(X_forecast) + correction
 
-    lower_clipped = [float(np.clip(p, PRICE_FLOOR, PRICE_CAP)) for p in pred_lower]
-    upper_clipped = [float(np.clip(p, PRICE_FLOOR, PRICE_CAP)) for p in pred_upper]
+    shift_pct = _get_price_shift_pct(forecast_date)
+    shift_mult = 1.0 + shift_pct / 100.0
+
+    lower_clipped = [float(np.clip(np.clip(p, PRICE_FLOOR, PRICE_CAP) * shift_mult, PRICE_FLOOR, PRICE_CAP)) for p in pred_lower]
+    upper_clipped = [float(np.clip(np.clip(p, PRICE_FLOOR, PRICE_CAP) * shift_mult, PRICE_FLOOR, PRICE_CAP)) for p in pred_upper]
     # Після clip/conformal-поправки полоса теоретично може "перевернутись" —
     # підстраховуємось, щоб lower завжди <= upper.
     lower_final = [min(lo, up) for lo, up in zip(lower_clipped, upper_clipped)]
