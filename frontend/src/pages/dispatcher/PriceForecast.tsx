@@ -13,6 +13,7 @@ export default function PriceForecast() {
   const {
     forecastPrices, priceBand, actualPrices, dispatchProfile,
     generationAdjustment, setGenerationAdjustmentDraft, saveGenerationAdjustmentAndRecalculate,
+    priceShift, setPriceShiftDraft, savePriceShiftAndRecalculate,
     gridStress, saveGridStressOverride, clearGridStressOverride,
   } = useApp();
 
@@ -98,6 +99,7 @@ export default function PriceForecast() {
     generationAdjustment.nuclear_pct !== 100 || generationAdjustment.hydro_pct !== 100 ||
     generationAdjustment.solar_pct !== 100 || generationAdjustment.wind_pct !== 100
   );
+  const hasPriceShift = !!priceShift && priceShift.shift_pct !== 0;
 
   return (
     <div>
@@ -175,6 +177,15 @@ export default function PriceForecast() {
               </span>
             </div>
           )}
+          {hasPriceShift && (
+            <div style={{ display: 'flex', gap: '10px', background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(217, 119, 6, 0.3)', padding: '12px', borderRadius: '6px', fontSize: '0.85rem' }}>
+              <AlertTriangle size={16} style={{ color: '#d97706', flexShrink: 0 }} />
+              <span>
+                Прогноз враховує ручний зсув ціни: {priceShift!.shift_pct > 0 ? '+' : ''}{priceShift!.shift_pct}% на всі 24 години.
+                {priceShift!.note ? ` Нотатка: «${priceShift!.note}».` : ''}
+              </span>
+            </div>
+          )}
           {insights.map((exp, idx) => (
             <div key={idx} style={{ display: 'flex', gap: '10px', background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '6px', fontSize: '0.85rem' }}>
               {hasActual && idx === insights.length - 1 ? <CheckCircle2 size={16} style={{ color: '#059669' }} /> : <BookOpen size={16} style={{ color: '#0891b2' }} />}
@@ -224,6 +235,43 @@ export default function PriceForecast() {
               />
             </div>
             <button className="btn" onClick={saveGenerationAdjustmentAndRecalculate}>
+              Зберегти і перерахувати прогноз
+            </button>
+          </>
+        )}
+      </div>
+
+      <div className="glass-card">
+        <h3 className="card-title" style={{ marginBottom: '4px' }}>Ручний зсув прогнозу ціни</h3>
+        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 16px' }}>
+          Використовуйте, коли відомо про реальну тимчасову аномалію ринку (напр. учасник ринку коротко
+          маніпулював/занижував ціну, вже відкочено), яку модель не могла передбачити — і не варто перенавчати на
+          одному епізоді. Зсув застосовується у відсотках рівномірно до всіх 24 годин ПІСЛЯ прогнозу моделі (не
+          змінює жодної ознаки), тож не спотворює точність моделі на минулих добах.
+        </p>
+        {!priceShift ? (
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Завантаження...</p>
+        ) : (
+          <>
+            <div className="grid-3" style={{ gridTemplateColumns: '1fr 2fr', marginBottom: '16px' }}>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Зсув, % (напр. -15 — ціна була вища за прогноз)</label>
+                <input
+                  type="number" min={-90} max={200} step={5} className="form-input"
+                  value={priceShift.shift_pct}
+                  onChange={(e) => setPriceShiftDraft({ ...priceShift, shift_pct: Number(e.target.value) })}
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Нотатка (причина)</label>
+                <input
+                  type="text" className="form-input" placeholder="напр.: гравець штучно занизив ціну 3-4.08"
+                  value={priceShift.note || ''}
+                  onChange={(e) => setPriceShiftDraft({ ...priceShift, note: e.target.value })}
+                />
+              </div>
+            </div>
+            <button className="btn" onClick={savePriceShiftAndRecalculate}>
               Зберегти і перерахувати прогноз
             </button>
           </>
