@@ -1,13 +1,11 @@
 import datetime
-import uuid
 from fastapi import APIRouter, Depends, BackgroundTasks
 from pydantic import BaseModel
 from typing import Optional
 
 from src.database.session import SessionLocal
-from src.database.models import GenerationAdjustment, PriceForecast
+from src.database.models import GenerationAdjustment
 from src.core.security import RoleChecker
-from src.core.redis import set_job_status
 
 router = APIRouter()
 
@@ -62,25 +60,11 @@ async def save_generation_adjustment(req: GenerationAdjustmentModel, background_
         # Якщо на цю дату вже є збережений PriceForecast (щоденна 17:30 джоба
         # або попередній ручний /forecast/run) — він порахований на СТАРІЙ
         # корекції (або без неї) і без явного перерахунку лишиться мовчки
-        # застарілим, незалежно від того, яким шляхом збережено цей запис
-        # (реальний баг, знайдений 2026-08-03 — диспетчер зберіг корекцію,
-        # прогноз не змінився). Бекенд сам ставить той самий job у чергу, що
-        # й ручна кнопка "Перерахувати" (run_forecast_background_job) — не
-        # дублює логіку. Якщо диспетчер після цього ще раз явно натисне
-        # "Зберегти і перерахувати прогноз" — запуститься другий, надлишковий,
-        # але безпечний перерахунок з тими самими вхідними даними.
-        existing = db.query(PriceForecast).filter(PriceForecast.forecast_run_at == target_dt).first()
-        recompute_job_id = None
-        if existing:
-            from src.api.v1.endpoints.forecast import run_forecast_background_job
-            recompute_job_id = f"job_fc_{uuid.uuid4().hex[:8]}"
-            set_job_status(recompute_job_id, {
-                "job_id": recompute_job_id, "status": "pending", "progress": 0,
-                "created_at": datetime.datetime.utcnow().isoformat() + "Z",
-            })
-            background_tasks.add_task(
-                run_forecast_background_job, recompute_job_id, req.date, existing.model_version,
-            )
+        # застарілим (реальний баг, знайдений 2026-08-03). Спільний хелпер з
+        # forecast.py сам ставить той самий job у чергу, що й ручна кнопка
+        # "Перерахувати" — не дублює логіку.
+        from src.api.v1.endpoints.forecast import trigger_forecast_recompute_if_exists
+        recompute_job_id = trigger_forecast_recompute_if_exists(db, background_tasks, req.date, target_dt)
 
         return {
             "status": "success",

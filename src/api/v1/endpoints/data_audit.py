@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from src.core.config import settings
 from src.core.security import RoleChecker
 from src.database.session import SessionLocal
-from src.database.models import GridStressOverride, GenerationAdjustment, InitialSocOverride
+from src.database.models import GridStressOverride, GenerationAdjustment, InitialSocOverride, PriceShiftOverride
 import src.modules.external_data_service.telegram_public as ext_tg
 
 router = APIRouter()
@@ -152,6 +152,11 @@ async def get_data_audit(date: str):
         soc_rows = db.query(InitialSocOverride).filter(InitialSocOverride.date == target_dt).all()
         result["manual_overrides"]["initial_soc"] = (
             [{"asset_id": r.asset_id, "capacity_kwh": r.capacity_kwh} for r in soc_rows] if soc_rows else None
+        )
+
+        ps = db.query(PriceShiftOverride).filter(PriceShiftOverride.date == target_dt).first()
+        result["manual_overrides"]["price_shift"] = (
+            {"shift_pct": ps.shift_pct, "note": ps.note} if ps else None
         )
     finally:
         db.close()

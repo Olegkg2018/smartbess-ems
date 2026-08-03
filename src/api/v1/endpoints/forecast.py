@@ -89,6 +89,29 @@ def run_forecast_background_job(job_id: str, target_date_str: str, selected_mode
         job["error"] = str(e)
         set_job_status(job_id, job)
 
+def trigger_forecast_recompute_if_exists(db, background_tasks, date_str, target_dt):
+    """
+    Якщо на цю дату вже є збережений PriceForecast — він порахований на
+    СТАРІЙ версії відповідного оверрайду (або без нього) і без явного
+    перерахунку лишиться мовчки застарілим, незалежно від того, яким шляхом
+    збережено оверрайд (реальний баг, знайдений 2026-08-03 при
+    GenerationAdjustment — див. CLAUDE.md). Спільний хелпер для ендпоінтів
+    ручних оверрайдів, що впливають на прогноз ціни
+    (generation_adjustments.py, price_shift.py) — ставить той самий job у
+    чергу, що й ручна кнопка "Перерахувати", не дублює логіку розрахунку.
+    """
+    from src.database.models import PriceForecast
+    existing = db.query(PriceForecast).filter(PriceForecast.forecast_run_at == target_dt).first()
+    if not existing:
+        return None
+    job_id = f"job_fc_{uuid.uuid4().hex[:8]}"
+    set_job_status(job_id, {
+        "job_id": job_id, "status": "pending", "progress": 0,
+        "created_at": datetime.datetime.utcnow().isoformat() + "Z",
+    })
+    background_tasks.add_task(run_forecast_background_job, job_id, date_str, existing.model_version)
+    return job_id
+
 @router.post("/run", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
 async def run_forecast(req: RunForecastRequest, background_tasks: BackgroundTasks):
     job_id = f"job_fc_{uuid.uuid4().hex[:8]}"
