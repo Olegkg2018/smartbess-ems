@@ -304,7 +304,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // оновлювались вище) — диспетчер бачив прогноз/графік заряду для однієї
   // дати поверх графіку ручних заявок для іншої. Тепер при зміні дати:
   // 1) optimizationResult одразу скидається (для нової дати він ще не порахований —
-  //    сценарний VaR-аналіз завжди вимагає явного «Rozraxuvaty»);
+  //    сценарний VaR-аналіз завжди вимагає явного «Розрахувати»);
   // 2) forecastPrices/priceBand/actualPrices підтягуються заново — якщо
   //    прогноз на цю дату вже колись рахували, він підвантажиться одразу
   //    (дешевий GET, без повторного MILP), інакше — теж очищаються.
@@ -368,7 +368,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     return manualOverrides.map((o: any) => {
       // Клип до реальної макс. потужності БЕСС — введена вручну команда може
-      // в рази перевищувати фізичну потужність батареї.
+      // в разі перевищувати фізичну потужність батареї.
       const commandedKW = Math.max(-power, Math.min(power, o.power_mw * 1000.0));
       const priceKWh = o.price_uah / 1000.0;
       let chargeKW = 0, dischargeKW = 0, revenueUah = 0, costUah = 0, degradationUah = 0;
