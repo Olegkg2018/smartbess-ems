@@ -458,6 +458,7 @@ class SystemSettingsModel(BaseModel):
     efficiency_pct: float
     nuclear_reference_capacity_mw: Optional[float] = None
     hydro_reference_capacity_mw: Optional[float] = None
+    baseload_passthrough_ratio: Optional[float] = None
     max_cycles_per_day: Optional[float] = None
 
 # Довідкові потужності для перетворення "% робочих АЕС/ГЕС" у МВт-дельту
@@ -473,6 +474,11 @@ class SystemSettingsModel(BaseModel):
 # тому редаговані в Settings, а не жорстко зашиті як факт.
 DEFAULT_NUCLEAR_REFERENCE_CAPACITY_MW = 7835.0
 DEFAULT_HYDRO_REFERENCE_CAPACITY_MW = 3800.0
+# Частка дефіциту АЕС/ГЕС, що реально проявляється в транскордонному
+# нетто-експорті (решта поглинається всередині країни) — редагований
+# коефіцієнт, дублює DEFAULT_BASELOAD_PASSTHROUGH_RATIO з ml_pipeline.py
+# (той самий патерн дублювання, що вже є для nuclear/hydro-констант вище).
+DEFAULT_BASELOAD_PASSTHROUGH_RATIO = 0.3
 
 @router.get("/settings", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
 async def get_system_settings():
@@ -496,13 +502,14 @@ async def get_system_settings():
         "margin": 100.0,
         "nuclear_reference_capacity_mw": DEFAULT_NUCLEAR_REFERENCE_CAPACITY_MW,
         "hydro_reference_capacity_mw": DEFAULT_HYDRO_REFERENCE_CAPACITY_MW,
+        "baseload_passthrough_ratio": DEFAULT_BASELOAD_PASSTHROUGH_RATIO,
     }
 
     if os.path.exists(path):
         try:
             with open(path, "r") as f:
                 saved = json.load(f)
-                for key in ("launch_date", "osr", "voltage_class", "margin", "nuclear_reference_capacity_mw", "hydro_reference_capacity_mw"):
+                for key in ("launch_date", "osr", "voltage_class", "margin", "nuclear_reference_capacity_mw", "hydro_reference_capacity_mw", "baseload_passthrough_ratio"):
                     if key in saved:
                         data[key] = saved[key]
         except Exception:
@@ -541,6 +548,7 @@ async def save_system_settings(req: SystemSettingsModel):
             "margin": req.margin,
             "nuclear_reference_capacity_mw": req.nuclear_reference_capacity_mw if req.nuclear_reference_capacity_mw is not None else DEFAULT_NUCLEAR_REFERENCE_CAPACITY_MW,
             "hydro_reference_capacity_mw": req.hydro_reference_capacity_mw if req.hydro_reference_capacity_mw is not None else DEFAULT_HYDRO_REFERENCE_CAPACITY_MW,
+            "baseload_passthrough_ratio": req.baseload_passthrough_ratio if req.baseload_passthrough_ratio is not None else DEFAULT_BASELOAD_PASSTHROUGH_RATIO,
         }
 
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -548,7 +556,7 @@ async def save_system_settings(req: SystemSettingsModel):
             json.dump(data, f)
 
         # Технічні параметри батареї — пишемо в Asset, а не тільки в JSON:
-        # саме звідси їх бере MILP-оптимізатор (optimization/run, scheduler).
+        # саме звідти їх бере MILP-оптимізатор (optimization/run, scheduler).
         asset = db.query(Asset).first()
         if asset:
             asset.capacity_mwh = req.capacity_kw / 1000.0
