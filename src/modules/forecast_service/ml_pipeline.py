@@ -18,6 +18,22 @@ from src.database.models import GenerationAdjustment
 DATA_DIR = settings.DATA_DIR
 DEFAULT_NUCLEAR_REFERENCE_CAPACITY_MW = 7835.0
 DEFAULT_HYDRO_REFERENCE_CAPACITY_MW = 3800.0
+# Не весь дефіцит АЕС/ГЕС конвертується 1:1 у транскордонний нетто-експорт —
+# більшість поглинається всередині країни (теплова/резервна генерація, ГПВ),
+# тож пряма МВт-дельта від номінальної потужності системно переоцінює
+# вплив на Grid_Net_Export. baseload_passthrough_ratio — явний редагований
+# коефіцієнт (як BidMarginOverride.margin_pct), а не вигадані дані: масштабує
+# вже реальну навчену залежність, не додає нову.
+DEFAULT_BASELOAD_PASSTHROUGH_RATIO = 0.3
+# Дельта додатково жорстко обмежується реальним 99-перцентилем
+# Grid_Net_Export_MW за останні BASELOAD_DELTA_CLIP_LOOKBACK_DAYS днів — без
+# цього довідникові потужності (7835/3800 МВт) на порядок перевищують
+# історичний розкид фічі (std≈392 МВт), LightGBM не екстраполює за межі
+# навчених порогів і прогноз "насичується" вже при 20-30% відхилення
+# (знайдено 2026-08-03 при розслідуванні скарги диспетчера — поправка на
+# генерацію не давала жодного видимого ефекту на прогноз).
+BASELOAD_DELTA_CLIP_QUANTILE = 0.99
+BASELOAD_DELTA_CLIP_LOOKBACK_DAYS = 180
 PRICE_FLOOR = TariffService.PRICE_FLOOR_UAH_MWH
 PRICE_CAP = 16000.0
 LGBM_MODEL_PATH = os.path.join(DATA_DIR, "model_lightgbm.pkl")
@@ -63,7 +79,7 @@ FEATURES = [
     # (build_forecast_feature_matrix) свіжі 24г IDM_Price майже завжди NaN і
     # limit_direction='both' на хвості БЕЗ якоря вперед вироджується у пласку
     # константу — IDM_Price_Lag_24 (найвпливовіша ознака моделі, ~55% gain)
-    # системно приходить на inference "зіпсованим" (плоским), хоча під час
+    # системно приходить на inference "зіпсованим" (пласким), хоча під час
     # НАВЧАННЯ (prepare_features рахує на всій історії одразу, якір є з обох
     # боків) той самий стовпець зазвичай МАВ реальну форму — справжній
     # train/serve skew.
@@ -77,12 +93,12 @@ FEATURES = [
     # покращитись — стали ГІРШЕ. Причина: walk_forward_backtest симулює
     # кожен тестовий день через prepare_features на всій історії одразу
     # (якір є завжди), тобто НЕ відтворює живий "хвіст без якоря" — Lag_24 у
-    # бектесті майже завжди "здоровий" і залишається кращим сигналом, ніж
+    # бектесті майже завжди "здоровий" і лишається кращим сигналом, ніж
     # застарілий на добу Lag_48. Тобто діагноз реальний, а глобальна заміна
     # лагу — НЕ те виправлення (жертвуємо загалом кращим сигналом заради
     # рідкісного edge-case на inference). Lag_24 ЗАЛИШЕНО. Правильний
     # наступний крок — не міняти лаг, а розумніше заповнювати саме
-    # inference-хвіст (напр. формою РДН-ціни через нещодавнє реальне
+    # inference-хвост (напр. формою РДН-ціни через нещодавнє реальне
     # співвідношення ВДР/РДН, а не пласкою константою) — НЕ зроблено.
     'IDM_Price_Lag_24', 'DAM_IDM_Spread_Lag_24', 'Spread_Mean_24h',
     # Реальний транскордонний нетто-експорт (ENTSO-E, звітується сусідами
@@ -570,7 +586,7 @@ def walk_forward_backtest(test_days=90, retrain_every_days=7, model_type='lightg
     85/15 holdout, який не показує, як точність змінюється у часі.
 
     use_surplus_classifier=True — експериментальний двоступеневий режим:
-    окремий LightGBM-класифікатор "ця година потрапить у профіцитну підлогу"
+    окремий LightGBM-класифікатор "ця година потрапить в профіцитну підлогу"
     (клас Price<=20, class_weight='balanced' через рідкість класу), змішаний
     з точковою регресією. Перевіряється ТУТ, у бектесті, на реальних даних,
     ДО того як потрапити у прод (як і з recency weighting — не віримо
@@ -586,7 +602,7 @@ def walk_forward_backtest(test_days=90, retrain_every_days=7, model_type='lightg
 
     РЕЗУЛЬТАТ ПЕРЕВІРКИ (walk_forward_backtest, test_days=60,
     retrain_every_days=7, дані 2021-2026-07, scratch/backtest_ensemble.py):
-    baseline (солo LightGBM) mean_wape=26.224%, last_7d_mean_mape=1009.72,
+    baseline (соло LightGBM) mean_wape=26.224%, last_7d_mean_mape=1009.72,
     last_30d_mean_mape=566.38. ensemble_average: mean_wape=25.935% (краще),
     last_7d_mean_mape=985.59 (краще), last_30d_mean_mape=591.61 (ГІРШЕ).
     ensemble_weighted: mean_wape=25.765% (краще), last_7d_mean_mape=1043.09
@@ -597,7 +613,7 @@ def walk_forward_backtest(test_days=90, retrain_every_days=7, model_type='lightg
     (prepare_features вище), тільки тут ще й сам напрямок псування нестійкий
     між двома схемами зважування. На 60 тестових днях last_7d — це лише 7
     точок, замало для довіри. Ансамбль НЕ підключено до проду (scheduler.py
-    лишається на солo LightGBM). Код лишається доступним
+    лишається на соло LightGBM). Код лишається доступним
     (ENSEMBLE_MODEL_TYPES/_train_ensemble_members/_compute_inverse_error_weights)
     для повторної перевірки — напр. на test_days=90+ (менше шуму в last_7d)
     або з іншою схемою зважування, а не для повторення цього самого прогону.
@@ -747,6 +763,20 @@ def _get_reference_capacities_mw():
             pass
     return nuclear, hydro
 
+def _get_baseload_passthrough_ratio():
+    """Частка дефіциту АЕС/ГЕС, що реально проявляється в Grid_Net_Export
+    (редагована в Settings) — див. коментар при DEFAULT_BASELOAD_PASSTHROUGH_RATIO."""
+    path = os.path.join(DATA_DIR, "system_settings.json")
+    ratio = DEFAULT_BASELOAD_PASSTHROUGH_RATIO
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                saved = json.load(f)
+                ratio = float(saved.get("baseload_passthrough_ratio", ratio))
+        except Exception:
+            pass
+    return max(0.0, min(1.0, ratio))
+
 def build_forecast_feature_matrix(forecast_date, forecast_weather, last_prices):
     """
     Будує матрицю ознак (FEATURES) для прогнозу на 24 години наперед. Спільна
@@ -760,24 +790,40 @@ def build_forecast_feature_matrix(forecast_date, forecast_weather, last_prices):
     - solar_pct/wind_pct масштабують Solar_Gen/Wind_Gen напряму (реальні
       навчені ознаки — чесний вплив на прогноз через саму модель).
     - nuclear_pct/hydro_pct не мають навченої ознаки (даних по типах немає з
-      2022 року) — переводяться в МВт-дельту через довідникові потужності і
-      додаються до Grid_Net_Export_Lag_24/Mean_24h (реальна навчена ознака
-      балансу генерація/споживання) — це приблизна, але НЕ вигадана оцінка:
-      дельта проходить крізь вже навчену моделлю залежність ціни від
-      нетто-експорту, а не через довільний множник.
+      2022 року) — переводяться в МВт-дельту через довідникові потужності,
+      масштабуються baseload_passthrough_ratio (не весь дефіцит проявляється
+      в транскордонному потоці — частина поглинається всередині країни) і
+      жорстко обмежуються реальним 99-перцентилем Grid_Net_Export_MW за
+      останні BASELOAD_DELTA_CLIP_LOOKBACK_DAYS днів, перш ніж додатись до
+      Grid_Net_Export_Lag_24/Mean_24h (реальна навчена ознака балансу
+      генерація/споживання) — це приблизна, але НЕ вигадана оцінка: дельта
+      проходить крізь вже навчену моделлю залежність ціни від нетто-експорту,
+      а не через довільний множник, і не виштовхує ознаку за межі діапазону,
+      на якому модель взагалі навчалась (без цього — насичення, знайдено
+      2026-08-03: корекція генерації не давала видимого ефекту на прогноз).
     """
     adjustment = _get_generation_adjustment(forecast_date)
     nuclear_ref_mw, hydro_ref_mw = _get_reference_capacities_mw()
-    baseload_delta_mw = (
+    passthrough_ratio = _get_baseload_passthrough_ratio()
+    baseload_delta_raw = (
         nuclear_ref_mw * (adjustment['nuclear_pct'] / 100.0 - 1.0)
         + hydro_ref_mw * (adjustment['hydro_pct'] / 100.0 - 1.0)
-    )
+    ) * passthrough_ratio
 
     df_hist = pd.read_csv(dm.MERGED_DATA_PATH)
     df_hist['Datetime'] = pd.to_datetime(df_hist['Datetime'])
     df_hist = df_hist.sort_values('Datetime')
 
     forecast_dt_start = pd.to_datetime(forecast_date)
+
+    lookback_start = forecast_dt_start - pd.Timedelta(days=BASELOAD_DELTA_CLIP_LOOKBACK_DAYS)
+    recent_export = df_hist.loc[df_hist['Datetime'] >= lookback_start, 'Grid_Net_Export_MW'].dropna()
+    export_source = recent_export if len(recent_export) >= 200 else df_hist['Grid_Net_Export_MW'].dropna()
+    clip_bound = (
+        float(export_source.abs().quantile(BASELOAD_DELTA_CLIP_QUANTILE))
+        if len(export_source) > 30 else 1800.0
+    )
+    baseload_delta_mw = float(np.clip(baseload_delta_raw, -clip_bound, clip_bound))
     hist_before_target = df_hist[df_hist['Datetime'] < forecast_dt_start].sort_values('Datetime')
 
     def _last_n(col, n, fallback):
@@ -793,7 +839,7 @@ def build_forecast_feature_matrix(forecast_date, forecast_weather, last_prices):
         mean_p = np.mean(last_prices) if len(last_prices) > 0 else 4000.0
         last_prices = [mean_p] * (168 - len(last_prices)) + list(last_prices)
 
-    # ВДР (IDM) публікується із затримкою ~1 доба — свіжий хвіст (типово
+    # ВДР (IDM) публікується із затримкою ~1 доба — свіжий хвост (типово
     # останні ~24г) на момент прогнозу завжди NaN. РАНІШЕ тут просто
     # "протягувався" останній відомий IDM_Price пласкою константою
     # (interpolate(limit_direction='both') на хвості без якоря вперед) — це
@@ -915,7 +961,7 @@ def build_forecast_feature_matrix(forecast_date, forecast_weather, last_prices):
 
 def predict_next_day(forecast_date, forecast_weather, last_prices, factors=None):
     """
-    factors лишений опціональним параметром заради зворотної сумісності з
+    factors лишається опціональним параметром заради зворотної сумісності з
     існуючими викликами (scheduler.py, forecast endpoint) — АЛЕ більше не
     застосовує довільні хардкод-поправки (gas_adj/nuke_adj/solar_strike тощо),
     як було раніше: ці "фактори" були фейковими вхідними даними, яких
@@ -995,8 +1041,8 @@ def estimate_idm_price_for_hour(actual_dam_price_uah, as_of_date=None):
     (напр. заявка РДН щойно не зіграла, і диспетчеру пропонується альтернатива
     на ВДР — bidding_service.py). ВДР на цю саму годину ще НЕ відбувся (він
     ближче до реального часу постачання, ніж момент, коли ми дізнались
-    результат РДН-аукціону) — тому реальної ціни ВДР для неї ще нема, лише
-    оцінка через той самий метод, що вже підтверджений у
+    результат РДН-аукціону) — тому реальної ціни ВДР для неї ще нема,
+    лише оцінка через той самий метод, що вже підтверджений у
     build_forecast_feature_matrix для заповнення хвоста IDM_Price_Lag_24:
     реальна медіанна різниця (ВДР-РДН) за останній тиждень перекриття,
     додана до ВЖЕ ВІДОМОЇ реальної ціни РДН (а не до прогнозу — тут прогноз
