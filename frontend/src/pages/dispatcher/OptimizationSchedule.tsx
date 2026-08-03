@@ -1,129 +1,129 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Area, Bar, Line, ReferenceLine, ResponsiveContainer } from 'recharts';
+import { AlertTriangle, Radio, Pencil, CalendarClock, History, FileDown } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
-import { LineChart, Line, BarChart, Bar, ComposedChart, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
-import { AlertCircle, AlertTriangle, Download } from 'lucide-react';
+import GlobalFilterBar from '../../components/GlobalFilterBar';
 import * as api from '../../api/client';
 
 export default function OptimizationSchedule() {
   const {
-    targetDate, optimizationResult, manualOverrides, setManualOverrides, saveOverrides,
-    resetOverridesToOptimal, capacity, runForecastAndOptimization, loading, dispatchProfile,
-    initialSoc, saveInitialSocAndRecalculate, clearInitialSocAndRecalculate,
-    bidMargin, saveBidMarginAndRegenerate, clearBidMarginAndRegenerate,
-    bids, generateBidsNow, settleBidsNow,
-    activeRole, activeAssetId,
+    optimizationResult, manualOverrides, setManualOverrides, dispatchProfile, targetDate, capacity, power, saveOverrides, resetOverridesToOptimal,
+    initialSoc, saveInitialSocAndRecalculate, clearInitialSocAndRecalculate, forecastPrices,
+    bidMargin, saveBidMarginAndRegenerate, clearBidMarginAndRegenerate, bids, generateBidsNow, settleBidsNow,
+    activeRole, activeAssetId, addLog,
   } = useApp();
 
-  const [socDraft, setSocDraft] = useState('');
-  const [marginDraft, setMarginDraft] = useState('');
   const [exporting, setExporting] = useState(false);
-
-  useEffect(() => {
-    setSocDraft(initialSoc ? String(Math.round(initialSoc.capacity_kwh)) : '');
-  }, [initialSoc]);
-
-  useEffect(() => {
-    setMarginDraft(bidMargin ? String(bidMargin.margin_pct) : '');
-  }, [bidMargin]);
-
-  const hasManualSchedule = manualOverrides.some((o: any) => o.is_overridden);
-
-  const totalRevenue = dispatchProfile.reduce((s, h) => s + h.revenueUah, 0);
-  const totalCost = dispatchProfile.reduce((s, h) => s + h.costUah, 0);
-  const totalDegradation = dispatchProfile.reduce((s, h) => s + h.degradationUah, 0);
-  const netProfit = totalRevenue - totalCost - totalDegradation;
-
-  const chargeChartData = dispatchProfile.map((h) => ({
-    hour: h.hour,
-    charge: h.charge,
-    discharge: h.discharge,
-    soc: h.soc,
-    price: h.price,
-  }));
-
-  const handlePowerChange = (idx: number, value: string) => {
-    const powerKw = parseFloat(value) || 0;
-    const powerMw = powerKw / 1000.0;
-    const updated = [...manualOverrides];
-    updated[idx] = { ...updated[idx], power_mw: powerMw, is_overridden: true };
-    setManualOverrides(updated);
-  };
-
-  const handlePriceChange = (idx: number, value: string) => {
-    const price = parseFloat(value) || 0;
-    const updated = [...manualOverrides];
-    updated[idx] = { ...updated[idx], price_uah: price, is_overridden: true };
-    setManualOverrides(updated);
-  };
-
-  const handleQuickAction = (idx: number, action: 'charge_max' | 'discharge_max' | 'idle') => {
-    const updated = [...manualOverrides];
-    const powerMw = capacity > 0 ? capacity / 4000.0 : 0.25;
-    if (action === 'charge_max') {
-      updated[idx] = { ...updated[idx], power_mw: -powerMw, is_overridden: true };
-    } else if (action === 'discharge_max') {
-      updated[idx] = { ...updated[idx], power_mw: powerMw, is_overridden: true };
-    } else {
-      updated[idx] = { ...updated[idx], power_mw: 0, is_overridden: true };
-    }
-    setManualOverrides(updated);
-  };
-
   const handleExport = async () => {
     if (!activeAssetId) return;
     setExporting(true);
     try {
-      const blob = await api.exportDayReport(activeRole, activeAssetId, targetDate);
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `smartbess_${targetDate}.xlsx`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.URL.revokeObjectURL(url);
-    } catch (e) {
-      console.error('Export failed', e);
+      await api.exportDayExcel(activeRole, activeAssetId, targetDate);
+      addLog('EXPORT', `Excel-звіт за ${targetDate} завантажено.`, 'success');
+    } catch (e: any) {
+      addLog('API', `Помилка експорту в Excel: ${e.message}`, 'error');
     } finally {
       setExporting(false);
     }
   };
 
+  // forecastPrices === null означає, що для targetDate ще ЖОДНОГО разу не
+  // рахували прогноз/MILP (а не що результат "порожній" — MILP може
+  // легітимно нічого не робити, якщо арбітраж невигідний). Диспетчер це
+  // сплутав із "не рахує" — тому явне повідомлення замість порожнього графіка.
+  const neverCalculated = forecastPrices === null;
+
+  const baseSchedule = optimizationResult?.scenarios?.base?.schedule || [];
+
+  // Фолбек лише одразу після "Розрахувати", поки manualOverrides (і похідний
+  // dispatchProfile) ще не підвантажились для нової дати.
+  const chartProfile = baseSchedule.length === 24
+    ? baseSchedule.map((s: any) => ({ hour: `${s.hour + 1}`, charge: s.power_kw < 0 ? -s.power_kw : 0, discharge: s.power_kw > 0 ? s.power_kw : 0, soc: s.soc_kwh, price: s.price_forecast_uah_mwh }))
+    : [];
+
+  const hasProfile = dispatchProfile.length === 24;
+  // ManualOverride "заморожує" ціну/потужність на момент збереження
+  // (saveOverrides шле весь масив, навіть непроторкнуті години) і сам не
+  // оновлюється, якщо прогноз/оптимізацію перерахували пізніше — реальний
+  // кейс плутанини, знайдений диспетчером (графік показував застарілу ціну
+  // після виправлення прогнозу, поки хтось не натиснув "Скинути").
+  const hasOverrides = manualOverrides.some((o: any) => o.is_overridden);
+  // dispatchProfile (AppContext) — ЄДИНЕ джерело правди для заряду/розряду/
+  // SoC, спільне з Price Forecast: раніше кожна сторінка рахувала це окремо,
+  // і при ручному оверрайді, що перевищував реальну ємність батареї, графіки
+  // на двох сторінках показували різні стовпчики (реальний баг, знайдений
+  // диспетчером).
+  const currentDayProfile = hasProfile
+    ? dispatchProfile.map((d) => ({ hour: `${d.hour}`, charge: d.charge, discharge: d.discharge, soc: d.soc, price: d.price }))
+    : [];
+
+  const dailyRevenue = dispatchProfile.reduce((s, d) => s + d.revenueUah, 0);
+  const dailyCost = dispatchProfile.reduce((s, d) => s + d.costUah, 0);
+  const dailyDegradation = dispatchProfile.reduce((s, d) => s + d.degradationUah, 0);
+  const dailyNetProfit = dailyRevenue - dailyCost - dailyDegradation;
+
+  const [socDraft, setSocDraft] = useState<string>('');
+  useEffect(() => {
+    if (initialSoc) setSocDraft(String(Math.round(initialSoc.capacity_kwh)));
+  }, [initialSoc]);
+
+  const [marginDraft, setMarginDraft] = useState<string>('');
+  useEffect(() => {
+    if (bidMargin) setMarginDraft(String(bidMargin.margin_pct));
+  }, [bidMargin]);
+
+  const socSourceLabel: Record<string, { text: string; color: string; icon: any }> = {
+    manual: { text: 'Ручне значення диспетчера', color: '#3b82f6', icon: Pencil },
+    scada_telemetry: { text: 'Реальна SCADA-телеметрія', color: '#059669', icon: Radio },
+    calculated_previous_day: { text: 'Розрахунок з кінця попередньої доби (учорашній MILP-план)', color: '#8b5cf6', icon: History },
+    fallback_default: { text: "Фолбек 20% — немає ні телеметрії, ні розрахунку за попередню добу", color: '#d97706', icon: AlertTriangle },
+  };
+
   return (
     <div>
-      <div className="glass-card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-          <h3 className="card-title" style={{ margin: 0 }}>Оптимізація графіка на {targetDate}</h3>
-          <button className="btn" onClick={runForecastAndOptimization} disabled={loading}>
-            {loading ? 'Розрахунок...' : 'Розрахувати'}
-          </button>
-        </div>
+      <GlobalFilterBar />
 
-        <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: '4px' }}>
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label className="form-label">Стартовий SoC на 00:00 (кВт·год) {initialSoc && <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>— джерело: {initialSoc.source === 'manual' ? 'ручне' : initialSoc.source === 'scada' ? 'SCADA' : initialSoc.source === 'prev_day_plan' ? 'розрахунок з попереднього дня' : 'дефолт 20%'}</span>}</label>
-            <input
-              type="number" min={0} max={capacity} step={10} className="form-input" style={{ width: '160px' }}
-              value={socDraft}
-              onChange={(e) => setSocDraft(e.target.value)}
-            />
-          </div>
-          <button className="btn" onClick={() => saveInitialSocAndRecalculate(Number(socDraft))}>
-            Зберегти SoC і перерахувати
-          </button>
-          {initialSoc?.source === 'manual' && (
-            <button
-              className="btn"
-              style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', border: '1px solid #ef4444' }}
-              onClick={clearInitialSocAndRecalculate}
-            >
-              Скинути ручне значення
-            </button>
-          )}
-        </div>
-        {!initialSoc && (
+      <div className="glass-card">
+        <h3 className="card-title" style={{ marginBottom: '4px' }}>SoC батареї на початок доби (00:00 {targetDate})</h3>
+        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 12px' }}>
+          Визначає, з якого реального рівня заряду MILP планує добу. Пріоритет: ручне значення → SCADA-телеметрія → розрахунок з кінця попередньої доби → фолбек 20% (лише якщо немає нічого з вищого).
+        </p>
+        {!initialSoc ? (
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Завантаження...</p>
+        ) : (
           <>
-            <div style={{ height: '8px' }} />
+            {(() => {
+              const info = socSourceLabel[initialSoc.source];
+              const Icon = info.icon;
+              return (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px', fontSize: '0.85rem', color: info.color }}>
+                  <Icon size={16} />
+                  <span>Джерело: {info.text} — {Math.round(initialSoc.capacity_kwh).toLocaleString()} кВт·год ({initialSoc.capacity_pct.toFixed(1)}%)</span>
+                </div>
+              );
+            })()}
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Ємність на 00:00 (кВт·год)</label>
+                <input
+                  type="number" min={0} max={capacity} step={10} className="form-input" style={{ width: '180px' }}
+                  value={socDraft}
+                  onChange={(e) => setSocDraft(e.target.value)}
+                />
+              </div>
+              <button className="btn" onClick={() => saveInitialSocAndRecalculate(Number(socDraft))}>
+                Зберегти вручну і перерахувати
+              </button>
+              {initialSoc.has_manual_override && (
+                <button
+                  className="btn"
+                  style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', border: '1px solid #ef4444' }}
+                  onClick={clearInitialSocAndRecalculate}
+                >
+                  Скинути на автоматичне
+                </button>
+              )}
+            </div>
           </>
         )}
       </div>
@@ -192,16 +192,18 @@ export default function OptimizationSchedule() {
                     <td style={{ padding: '4px 8px' }}>{Math.round(b.volume_kw)}</td>
                     <td style={{ padding: '4px 8px' }}>{Math.round(b.forecast_price_uah).toLocaleString()}</td>
                     <td style={{ padding: '4px 8px', color: '#3b82f6' }}>{Math.round(b.bid_price_uah).toLocaleString()} (ручна, маржа {b.margin_pct}%)</td>
-                    <td style={{ padding: '4px 8px' }}>{b.actual_price_uah == null ? '—' : Math.round(b.actual_price_uah).toLocaleString()}</td>
+                    <td style={{ padding: '4px 8px' }}>{b.actual_price_uah != null ? Math.round(b.actual_price_uah).toLocaleString() : '—'}</td>
                     <td style={{ padding: '4px 8px' }}>
                       {b.executed === null ? '⏳ очікує факту' : b.executed ? '✅ виконано' : '❌ не виконано'}
                     </td>
                     <td style={{ padding: '4px 8px' }}>
-                      {b.executed
-                        ? <span style={{ color: '#059669' }}>{Math.round(b.realized_profit_uah ?? 0).toLocaleString()} грн</span>
-                        : b.idm_fallback_suggested
-                          ? <span style={{ color: '#d97706' }}>ВДР ~{Math.round(b.idm_fallback_price_uah ?? 0).toLocaleString()} грн/МВт·год → {Math.round(b.idm_fallback_profit_uah ?? 0).toLocaleString()} грн</span>
-                          : '—'}
+                      {b.executed ? (
+                        <span style={{ color: '#059669' }}>{Math.round(b.realized_profit_uah ?? 0).toLocaleString()} грн</span>
+                      ) : b.idm_fallback_suggested ? (
+                        <span style={{ color: '#d97706' }}>
+                          ВДР ~{Math.round(b.idm_fallback_price_uah ?? 0).toLocaleString()} грн/МВт·год → {Math.round(b.idm_fallback_profit_uah ?? 0).toLocaleString()} грн
+                        </span>
+                      ) : '—'}
                     </td>
                   </tr>
                 ))}
@@ -214,42 +216,43 @@ export default function OptimizationSchedule() {
       <div className="kpi-container" style={{ marginBottom: '24px' }}>
         <div className="kpi-card" style={{ borderLeft: '4px solid #059669' }}>
           <span className="kpi-title">Чистий прибуток за добу (з урахуванням втрат)</span>
-          <span className="kpi-value" style={{ color: netProfit >= 0 ? '#059669' : '#ef4444' }}>{Math.round(netProfit).toLocaleString()} грн</span>
+          <span className="kpi-value" style={{ color: dailyNetProfit >= 0 ? '#059669' : '#ef4444' }}>{Math.round(dailyNetProfit).toLocaleString()} грн</span>
           <span className="kpi-change neutral">Дохід мінус Витрати та Знос</span>
         </div>
         <div className="kpi-card">
           <span className="kpi-title">Дохід від розряду (Продаж)</span>
-          <span className="kpi-value" style={{ color: '#059669' }}>{Math.round(totalRevenue).toLocaleString()} грн</span>
+          <span className="kpi-value" style={{ color: '#059669' }}>{Math.round(dailyRevenue).toLocaleString()} грн</span>
         </div>
         <div className="kpi-card">
           <span className="kpi-title">Витрати заряду (Купівля + Тарифи)</span>
-          <span className="kpi-value" style={{ color: '#ef4444' }}>{Math.round(totalCost).toLocaleString()} грн</span>
+          <span className="kpi-value" style={{ color: '#ef4444' }}>{Math.round(dailyCost).toLocaleString()} грн</span>
         </div>
         <div className="kpi-card">
           <span className="kpi-title">Знос батареї (Деградація)</span>
-          <span className="kpi-value">{Math.round(totalDegradation).toLocaleString()} грн</span>
+          <span className="kpi-value">{Math.round(dailyDegradation).toLocaleString()} грн</span>
         </div>
       </div>
 
       <div className="glass-card">
         <h3 className="card-title" style={{ marginBottom: '4px' }}>Потужність заряду/розряду та рівень SoC BESS</h3>
-        {dispatchProfile.length === 0 ? (
+        {neverCalculated ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', padding: '60px 20px', color: 'var(--text-muted)' }}>
-            <AlertCircle size={32} />
+            <CalendarClock size={32} />
             <p style={{ margin: 0, fontSize: '0.9rem', textAlign: 'center' }}>
-              Прогноз і графік заряду/розряду ще жодного разу не розраховувались на {targetDate}.
-              <br />
+              Прогноз і графік заряду/розряду ще жодного разу не розраховувались на {targetDate}.<br />
               Натисніть «Розрахувати» вище, щоб отримати їх (не автоматично — щоб не запускати важкі ML/MILP розрахунки на кожну зміну дати).
             </p>
           </div>
         ) : (
           <>
             <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 12px' }}>
-              Пунктирні лінії — межі ємності батареї: {Math.round(capacity * 0.9).toLocaleString()} кВт·год (макс. SoC 90%) і {Math.round(capacity * 0.1).toLocaleString()} кВт·год (мін. SoC 10%) з {Math.round(capacity).toLocaleString()} кВт·год загальної ємності. Стовпчики показують реально виконану потужність — якщо батарея вже на межі ємності, подальша команда заряду/розряду не виконується і стовпчик зменшується, навіть якщо введена потужність більша. Фіолетова лінія — ціна прогнозу (або ручна заявка, якщо годину скориговано вручну), для якої й порахований цей графік.
+              Пунктирні лінії — межі ємності батареї: {Math.round(capacity * 0.9).toLocaleString()} кВт·год (макс. SoC 90%) і {Math.round(capacity * 0.1).toLocaleString()} кВт·год (мін. SoC 10%) з {Math.round(capacity).toLocaleString()} кВт·год загальної ємності.
+              Стовпчики показують реально виконану потужність — якщо батарея вже на межі ємності, подальша команда заряду/розряду не виконується і стовпчик зменшується, навіть якщо введена потужність більша.
+              Фіолетова лінія — ціна прогнозу (або ручна заявка, якщо годину скориговано вручну), для якої й порахований цей графік.
             </p>
             <div style={{ width: '100%', height: 380 }}>
               <ResponsiveContainer>
-                <ComposedChart data={hasManualSchedule ? chargeChartData : chargeChartData}>
+                <ComposedChart data={hasProfile ? currentDayProfile : chartProfile}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                   <XAxis dataKey="hour" stroke="#9ca3af" />
                   <YAxis yAxisId="power" stroke="#9ca3af" label={{ value: 'кВт', angle: -90, position: 'insideLeft', fill: '#9ca3af', fontSize: 11 }} />
@@ -261,7 +264,7 @@ export default function OptimizationSchedule() {
                   <ReferenceLine yAxisId="soc" y={capacity * 0.1} stroke="#d97706" strokeDasharray="4 4" />
                   <Bar yAxisId="power" dataKey="charge" name="Потужність заряду (кВт)" fill="#3b82f6" />
                   <Bar yAxisId="power" dataKey="discharge" name="Потужність розряду (кВт)" fill="#059669" />
-                  <Line yAxisId="soc" type="monotone" dataKey="soc" name="Рівень заряду SoC (кВт-год)" stroke="#d97706" fill="rgba(217, 119, 6, 0.12)" strokeWidth={2} />
+                  <Area yAxisId="soc" type="monotone" dataKey="soc" name="Рівень заряду SoC (кВт-год)" stroke="#d97706" fill="rgba(217, 119, 6, 0.12)" strokeWidth={2} />
                   <Line yAxisId="price" type="monotone" dataKey="price" name="Ціна прогнозу / заявки (грн/МВт-год)" stroke="#a78bfa" strokeWidth={2} dot={{ r: 2 }} connectNulls />
                 </ComposedChart>
               </ResponsiveContainer>
@@ -280,33 +283,30 @@ export default function OptimizationSchedule() {
           </div>
           <div style={{ display: 'flex', gap: '10px' }}>
             <button className="btn btn-secondary" onClick={handleExport} disabled={exporting} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Download size={14} /> {exporting ? 'Експорт...' : 'Експорт в Excel'}
+              <FileDown size={14} /> {exporting ? 'Експорт...' : 'Експорт в Excel'}
             </button>
-            <button className="btn" onClick={saveOverrides}>
-              Зберегти ручний графік
-            </button>
+            <button className="btn" onClick={saveOverrides}>Зберегти ручний графік</button>
             <button
               className="btn"
               style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', border: '1px solid #ef4444' }}
-              onClick={() => {
-                if (window.confirm('Ви впевнені, що хочете скинути ручний графік до оптимального?')) {
-                  resetOverridesToOptimal();
-                }
-              }}
+              onClick={() => { if (window.confirm('Ви впевнені, що хочете скинути ручний графік до оптимального?')) resetOverridesToOptimal(); }}
             >
               Скинути до оптимального
             </button>
           </div>
         </div>
 
-        {hasManualSchedule && (
-          <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', padding: '12px', borderRadius: '6px', background: 'rgba(217, 119, 6, 0.08)', border: '1px solid rgba(217, 119, 6, 0.3)', fontSize: '13px' }}>
+        {hasOverrides && (
+          <div style={{
+            display: 'flex', gap: '10px', marginBottom: '16px', padding: '12px', borderRadius: '6px',
+            background: 'rgba(217, 119, 6, 0.08)', border: '1px solid rgba(217, 119, 6, 0.3)', fontSize: '13px',
+          }}>
             <AlertTriangle size={16} style={{ color: '#d97706', flexShrink: 0, marginTop: '1px' }} />
             <span>
-              На цю дату вже збережено ручний графік — він «заморожує» ціну/потужність на момент збереження і НЕ оновлюється
-              сам, навіть якщо прогноз чи оптимізацію перерахували пізніше. Якщо після збереження графіка ви ще раз
-              натискали «Розрахувати» — натисніть «Скинути до оптимального», щоб побачити свіжий розрахунок, інакше
-              графік і чистий прибуток показують застарілі числа.
+              На цю дату вже збережено ручний графік — він «заморожує» ціну/потужність на момент збереження і НЕ
+              оновлюється сам, навіть якщо прогноз чи оптимізацію перерахували пізніше. Якщо після збереження
+              графіка ви ще раз натискали «Розрахувати» — натисніть «Скинути до оптимального», щоб побачити
+              свіжий розрахунок, інакше графік і чистий прибуток показують застарілі числа.
             </span>
           </div>
         )}
@@ -324,33 +324,53 @@ export default function OptimizationSchedule() {
             </thead>
             <tbody>
               {manualOverrides.map((o: any, idx: number) => {
-                const dp = dispatchProfile[idx];
-                const optimalKw = dp ? dp.charge > 0 ? -dp.charge : dp.discharge : 0;
+                const sched = baseSchedule[idx];
+                const recPower = sched ? sched.power_kw / 1000.0 : 0.0;
                 return (
                   <tr key={idx}>
                     <td>Година {idx + 1} ({String(idx).padStart(2, '0')}:00–{String(idx + 1).padStart(2, '0')}:00)</td>
-                    <td style={{ color: optimalKw > 0 ? '#059669' : optimalKw < 0 ? '#3b82f6' : 'var(--text-muted)' }}>
-                      {optimalKw > 0 ? `Розряд ${Math.round(optimalKw)} кВт` : optimalKw < 0 ? `Заряд ${Math.round(Math.abs(optimalKw))} кВт` : 'Простій'}
+                    <td style={{ color: recPower > 0 ? '#059669' : recPower < 0 ? '#3b82f6' : '#9ca3af' }}>
+                      {recPower > 0 ? `Розряд +${recPower.toFixed(2)} МВт` : recPower < 0 ? `Заряд ${recPower.toFixed(2)} МВт` : 'Пауза'}
                     </td>
                     <td>
                       <input
-                        type="number" step={10} className="form-input" style={{ width: '110px' }}
-                        value={Math.round(o.power_mw * 1000)}
-                        onChange={(e) => handlePowerChange(idx, e.target.value)}
+                        type="number" step="0.05" min={-power / 1000.0} max={power / 1000.0}
+                        className="form-input" style={{ width: '120px', padding: '4px 8px', fontSize: '13px' }}
+                        value={o.power_mw}
+                        onChange={(e) => {
+                          const raw = Number(e.target.value);
+                          // Клип до реальної макс. потужності БЕСС (Asset.power_mw) —
+                          // без цього можна було ввести значення, у рази більше за
+                          // фізичну потужність батареї (реальний баг, знайдений диспетчером).
+                          const val = Number.isFinite(raw) ? Math.max(-power / 1000.0, Math.min(power / 1000.0, raw)) : raw;
+                          setManualOverrides(manualOverrides.map((it: any, i: number) => (i === idx ? { ...it, power_mw: val } : it)));
+                        }}
                       />
                     </td>
                     <td>
-                      <div style={{ display: 'flex', gap: '4px' }}>
-                        <button className="btn btn-secondary" style={{ padding: '2px 8px', fontSize: '11px' }} onClick={() => handleQuickAction(idx, 'charge_max')}>Заряд</button>
-                        <button className="btn btn-secondary" style={{ padding: '2px 8px', fontSize: '11px' }} onClick={() => handleQuickAction(idx, 'discharge_max')}>Розряд</button>
-                        <button className="btn btn-secondary" style={{ padding: '2px 8px', fontSize: '11px' }} onClick={() => handleQuickAction(idx, 'idle')}>Стоп</button>
+                      <div style={{ display: 'flex', gap: '5px' }}>
+                        <button className="btn" style={{ padding: '3px 8px', fontSize: '11px', backgroundColor: '#3b82f6' }}
+                          onClick={() => setManualOverrides(manualOverrides.map((it: any, i: number) => (i === idx ? { ...it, power_mw: -(power / 1000.0) } : it)))}>
+                          Заряд (Max)
+                        </button>
+                        <button className="btn" style={{ padding: '3px 8px', fontSize: '11px', backgroundColor: '#059669' }}
+                          onClick={() => setManualOverrides(manualOverrides.map((it: any, i: number) => (i === idx ? { ...it, power_mw: power / 1000.0 } : it)))}>
+                          Розряд (Max)
+                        </button>
+                        <button className="btn" style={{ padding: '3px 8px', fontSize: '11px', backgroundColor: '#4b5563' }}
+                          onClick={() => setManualOverrides(manualOverrides.map((it: any, i: number) => (i === idx ? { ...it, power_mw: 0.0 } : it)))}>
+                          Стоп
+                        </button>
                       </div>
                     </td>
                     <td>
                       <input
-                        type="number" step={1} className="form-input" style={{ width: '110px' }}
+                        type="number" step="0.01" className="form-input" style={{ width: '140px', padding: '4px 8px', fontSize: '13px' }}
                         value={Math.round(o.price_uah * 100) / 100}
-                        onChange={(e) => handlePriceChange(idx, e.target.value)}
+                        onChange={(e) => {
+                          const val = Number(e.target.value);
+                          setManualOverrides(manualOverrides.map((it: any, i: number) => (i === idx ? { ...it, price_uah: val } : it)));
+                        }}
                       />
                     </td>
                   </tr>
