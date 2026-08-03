@@ -116,6 +116,30 @@ class GenerationAdjustment(Base):
     note = Column(String(500), nullable=True)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
+class PriceShiftOverride(Base):
+    """
+    Ручний відсотковий зсув прогнозу ціни на конкретну дату — коли диспетчер
+    знає про РЕАЛЬНУ, тимчасову ринкову аномалію (напр. учасник ринку
+    коротко маніпулював/занижував ціну, вже відкочено), яку модель не могла
+    передбачити і НЕ повинна вчитись розпізнавати з одного епізоду (одна
+    доба в 90+ днях історії — перенавчання на ній підвищило б шум, а не
+    сигнал). На відміну від GenerationAdjustment (входить у ФІЧІ моделі —
+    ~92% ваги LightGBM все одно авторегресійне, GenerationAdjustment туди не
+    дотягується, див. коментар при GenerationAdjustment вище й CLAUDE.md
+    хронологія п.10), цей зсув застосовується ПІСЛЯ передбачення моделі
+    (predict_next_day/predict_price_band у ml_pipeline.py) — жодна ознака не
+    змінюється, тож дерева LightGBM не виштовхуються за межі навченого
+    розподілу, і walk_forward_backtest/train_models (рахують на історичних
+    даних напряму) цим зсувом не торкаються — точність моделі на минулих
+    добах лишається чесною. shift_pct=0.0 — нейтрально, без відхилень.
+    """
+    __tablename__ = "price_shift_overrides"
+
+    date = Column(DateTime, primary_key=True, nullable=False)
+    shift_pct = Column(Float, nullable=False, default=0.0)
+    note = Column(String(500), nullable=True)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
 class GridStressOverride(Base):
     """
     Ручна оцінка диспетчера обсягу примусових погодинних відключень (ГПВ,
