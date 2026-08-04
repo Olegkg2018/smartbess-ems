@@ -151,6 +151,32 @@ def run_daily_forecast_and_optimization():
     finally:
         db.close()
 
+def run_nightly_model_retrain():
+    """
+    Щоденне автоматичне перенавчання точкової (LightGBM/XGBoost/MLP) та
+    quantile (P10/P90) моделей — до 2026-08-04 модель перенавчалась лише
+    вручну й локально (див. CLAUDE.md хронологія п.13/14), тому джоба з
+    06:00 могла місяцями рахувати прогноз на застарілих вагах. Живий тест
+    в контейнері smartbess-platform на VPS 2026-08-04 показав пік пам'яті
+    лише 597.9MiB/900MiB (66%, реальний запас ~300MB) і жодного впливу на
+    відповідність живого API (перевірено паралельними запитами) — тому
+    безпечно ганяти цей самий цикл щоночі прямо в проді, без окремого
+    боксу. Не валить процес при будь-якій помилці (мережа, тимчасова
+    недоступність джерела тощо) — старі `.pkl` лишаються робочими завдяки
+    атомарному запису (`_atomic_pickle_dump`/`_atomic_json_dump` в
+    ml_pipeline.py), просто повторна спроба наступної ночі.
+    """
+    print(f"[{datetime.datetime.now()}] Background Scheduler: Starting nightly model retrain job...")
+    try:
+        dm.sync_realtime_data(force=True)
+        metrics = mt.train_models()
+        print(f"Nightly retrain: train_models metrics: {metrics}")
+        qmetrics = mt.train_quantile_models()
+        print(f"Nightly retrain: train_quantile_models: {qmetrics}")
+        print(f"[{datetime.datetime.now()}] Background Scheduler: Nightly model retrain completed successfully.")
+    except Exception as e:
+        print(f"Error in nightly model retrain job: {e}")
+
 scheduler = BackgroundScheduler()
 
 def start_scheduler():
@@ -164,6 +190,12 @@ def start_scheduler():
         # posts) that a 17:30-the-day-before run would have missed — sync_realtime_data
         # below simply picks up whatever is freshest at run time.
         scheduler.add_job(run_daily_forecast_and_optimization, 'cron', hour=6, minute=0, id='daily_bess_opt')
+        # 02:00 — ~4 hours of buffer before the 06:00 forecast job, so the fresh
+        # model is already on disk in time for the same morning's forecast. Live
+        # end-to-end run on 2026-08-04 (VPS, in-container) took ~13.7 min total
+        # (sync 673.6s dominated by external API latency + train_models 132.1s +
+        # train_quantile_models 13.8s) — comfortably inside the window.
+        scheduler.add_job(run_nightly_model_retrain, 'cron', hour=2, minute=0, id='nightly_model_retrain')
         scheduler.start()
         print("Background Scheduler started successfully.")
 
