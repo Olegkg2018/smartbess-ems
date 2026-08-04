@@ -1,6 +1,7 @@
 import os
 import json
 import pickle
+import datetime
 import pandas as pd
 import numpy as np
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
@@ -47,6 +48,25 @@ CONFORMAL_CALIBRATION_PATH = os.path.join(DATA_DIR, "conformal_calibration.json"
 QUANTILE_LOWER = 0.1
 QUANTILE_UPPER = 0.9
 
+def _atomic_pickle_dump(obj, path):
+    """
+    Пише у tmp-файл поруч і атомарно (os.replace, POSIX rename) підміняє
+    боевий шлях — якщо процес уб'ють (OOM, рестарт) саме під час запису,
+    predict_next_day/predict_price_band все одно побачать або повністю
+    старий, або повністю новий файл, ніколи не битий pickle посередині.
+    Критично при автоматичному нічному перенавчанні без нагляду.
+    """
+    tmp_path = path + ".tmp"
+    with open(tmp_path, 'wb') as f:
+        pickle.dump(obj, f)
+    os.replace(tmp_path, path)
+
+def _atomic_json_dump(obj, path, **kwargs):
+    tmp_path = path + ".tmp"
+    with open(tmp_path, 'w') as f:
+        json.dump(obj, f, **kwargs)
+    os.replace(tmp_path, path)
+
 # Тільки реальні джерела (oree.com.ua, Open-Meteo) + фізично обґрунтовані
 # оцінки Solar_Gen/Wind_Gen з реальної погоди. Раніше тут були Gas_Price,
 # Nuclear_Outage, Solar_Strike, Market_Coeff, VDR_Volume, Grid_Import_Export —
@@ -54,7 +74,7 @@ QUANTILE_UPPER = 0.9
 #
 # Gas_Price_EUR_MWh / Grid_Stress_High / Grid_Stress_Medium вже збираються
 # реально (src/modules/external_data_service/), але поки що мають занадто
-# коротку історію (перші дні/тижні роботи), щоб модель могла на них чомусь
+# коротку історію (перші дні/тижні роботи), щоб модель могла на
 # навчитись — намеренно НЕ включені в FEATURES. Додати їх сюди, коли
 # накопичиться достатньо днів (перевіряти через dm.verify_data_completeness()
 # та частку не-NaN значень у historical_data_merged.csv).
@@ -92,10 +112,10 @@ FEATURES = [
     # last_30d_mean_mape (399.0→456.2) — САМЕ ті метрики, які мали
     # покращитись — стали ГІРШЕ. Причина: walk_forward_backtest симулює
     # кожен тестовий день через prepare_features на всій історії одразу
-    # (якір є завжди), тобто НЕ відтворює живий "хвіст без якоря" — Lag_24 у
+    # (якір є завжди), тобто НЕ відтворює живий "хвост без якоря" — Lag_24 у
     # бектесті майже завжди "здоровий" і лишається кращим сигналом, ніж
     # застарілий на добу Lag_48. Тобто діагноз реальний, а глобальна заміна
-    # лагу — НЕ те виправлення (жертвуємо загалом кращим сигналом заради
+    # лагу — НЕ те виправлення (жертвуємо загалом кращим сигналом задля
     # рідкісного edge-case на inference). Lag_24 ЗАЛИШЕНО. Правильний
     # наступний крок — не міняти лаг, а розумніше заповнювати саме
     # inference-хвост (напр. формою РДН-ціни через нещодавнє реальне
@@ -163,7 +183,7 @@ def prepare_features(df):
     # покращити — стали ГІРШЕ, не краще. Гіпотеза (єдиний європейський ринок
     # через перетоки має тягнути ціну) не підтвердилась на реальних даних у
     # цій формі (простий mean по зонах, лаг 24г). Ознака НЕ додана в FEATURES.
-    # Дані лишаються зібраними в historical_data_merged.csv (реальні, шкоди
+    # Дані лишаються зібрані в historical_data_merged.csv (реальні, шкоди
     # немає) — можна спробувати інше кодування (напр. зважене по напрямку
     # потоку, різниця EU-UA замість рівня) з новим бектестом, а не повторювати
     # цей самий варіант.
@@ -187,7 +207,7 @@ def prepare_features(df):
     # патерн, що й з EU_DAM_Price (див. вище) і recency weighting (див.
     # walk_forward_backtest докстрінг): саме останні/волатильні дні, які
     # треба покращити, стають гіршими. Ознака НЕ додана в FEATURES. Дані
-    # лишаються зібраними (реальні, шкоди немає) — можливо, варте спробувати
+    # лишаються зібрані (реальні, шкоди немає) — можливо, варте спробувати
     # з більшим лагом (сьогоднішня погода сусіда ще не встигає вплинути на
     # український перетік) або комбінацію з EU_DAM_Price, а не повторювати
     # цей самий варіант.
@@ -318,12 +338,13 @@ def train_models():
     metrics = {
         'lightgbm': {'mae': float(mae_lgb), 'rmse': float(rmse_lgb), 'r2': float(r2_lgb), 'mape': mape_lgb, 'wape': wape_lgb},
         'xgboost': {'mae': float(mae_xgb), 'rmse': float(rmse_xgb), 'r2': float(r2_xgb), 'mape': mape_xgb, 'wape': wape_xgb},
-        'mlp': {'mae': float(mae_mlp), 'rmse': float(rmse_mlp), 'r2': float(r2_mlp), 'mape': mape_mlp, 'wape': wape_mlp}
+        'mlp': {'mae': float(mae_mlp), 'rmse': float(rmse_mlp), 'r2': float(r2_mlp), 'mape': mape_mlp, 'wape': wape_mlp},
+        'trained_at': datetime.datetime.utcnow().isoformat() + 'Z',
     }
 
+    os.makedirs(DATA_DIR, exist_ok=True)
     metrics_path = os.path.join(DATA_DIR, "metrics_report.json")
-    with open(metrics_path, 'w') as f:
-        json.dump(metrics, f, indent=4)
+    _atomic_json_dump(metrics, metrics_path, indent=4)
 
     lgb_final = _make_lgbm()
     lgb_final.fit(X, y)
@@ -337,15 +358,10 @@ def train_models():
     mlp_final = _make_mlp()
     mlp_final.fit(X_scaled, y)
 
-    os.makedirs(DATA_DIR, exist_ok=True)
-    with open(LGBM_MODEL_PATH, 'wb') as f:
-        pickle.dump(lgb_final, f)
-    with open(XGB_MODEL_PATH, 'wb') as f:
-        pickle.dump(xgb_final, f)
-    with open(MLP_MODEL_PATH, 'wb') as f:
-        pickle.dump(mlp_final, f)
-    with open(SCALER_PATH, 'wb') as f:
-        pickle.dump(scaler_final, f)
+    _atomic_pickle_dump(lgb_final, LGBM_MODEL_PATH)
+    _atomic_pickle_dump(xgb_final, XGB_MODEL_PATH)
+    _atomic_pickle_dump(mlp_final, MLP_MODEL_PATH)
+    _atomic_pickle_dump(scaler_final, SCALER_PATH)
 
     return metrics
 
@@ -408,10 +424,8 @@ def train_quantile_models(calibration_days=60):
     upper_final.fit(X_all, y_all)
 
     os.makedirs(DATA_DIR, exist_ok=True)
-    with open(Q_LOWER_MODEL_PATH, 'wb') as f:
-        pickle.dump(lower_final, f)
-    with open(Q_UPPER_MODEL_PATH, 'wb') as f:
-        pickle.dump(upper_final, f)
+    _atomic_pickle_dump(lower_final, Q_LOWER_MODEL_PATH)
+    _atomic_pickle_dump(upper_final, Q_UPPER_MODEL_PATH)
 
     calibration = {
         'quantile_lower': QUANTILE_LOWER,
@@ -421,9 +435,9 @@ def train_quantile_models(calibration_days=60):
         'calibration_hours': int(len(df_calib)),
         'coverage_raw_quantile_regression': coverage_raw,
         'coverage_after_conformal_correction': coverage_conformal,
+        'trained_at': datetime.datetime.utcnow().isoformat() + 'Z',
     }
-    with open(CONFORMAL_CALIBRATION_PATH, 'w') as f:
-        json.dump(calibration, f, indent=2)
+    _atomic_json_dump(calibration, CONFORMAL_CALIBRATION_PATH, indent=2)
 
     return calibration
 
@@ -608,7 +622,7 @@ def walk_forward_backtest(test_days=90, retrain_every_days=7, model_type='lightg
     ensemble_weighted: mean_wape=25.765% (краще), last_7d_mean_mape=1043.09
     (ГІРШЕ), last_30d_mean_mape=533.83 (краще). Обидва варіанти покращують
     mean_wape, але РІЗНОНАПРАВЛЕНО псують одну з двох recency-метрик (та й у
-    протилежні боки одна відносно одної) — той самий патерн "загальне
+    протилежні боки одна відносно одної), той самий патерн "загальне
     покращення / останні дні гірше", що й з EU_DAM_Price і погодою PL/RO
     (prepare_features вище), тільки тут ще й сам напрямок псування нестійкий
     між двома схемами зважування. На 60 тестових днях last_7d — це лише 7
@@ -805,7 +819,7 @@ def build_forecast_feature_matrix(forecast_date, forecast_weather, last_prices):
     - nuclear_pct/hydro_pct не мають навченої ознаки (даних по типах немає з
       2022 року) — переводяться в МВт-дельту через довідникові потужності,
       масштабуються baseload_passthrough_ratio (не весь дефіцит проявляється
-      в транскордонному потоці — частина поглинається всередині країни) і
+      в транскордонному потоці, частина поглинається всередині країни) і
       жорстко обмежуються реальним 99-перцентилем Grid_Net_Export_MW за
       останні BASELOAD_DELTA_CLIP_LOOKBACK_DAYS днів, перш ніж додатись до
       Grid_Net_Export_Lag_24/Mean_24h (реальна навчена ознака балансу
@@ -983,7 +997,7 @@ def predict_next_day(forecast_date, forecast_weather, last_prices, factors=None)
 
     Ручний зсув прогнозу (PriceShiftOverride) застосовується тут, ПІСЛЯ
     передбачення моделі, а не як ознака — на випадок реальної тимчасової
-    ринкової аномалії, яку модель не могла передбачити і не варто вчити з
+    ринкової аномалії, яку модель не могла передбачити і не варто вчитися з
     одного епізоду (див. докстрінг PriceShiftOverride у models.py).
     """
     if not os.path.exists(LGBM_MODEL_PATH):
@@ -1069,8 +1083,8 @@ def predict_price_band(forecast_date, forecast_weather, last_prices):
 
 def estimate_idm_price_for_hour(actual_dam_price_uah, as_of_date=None):
     """
-    Оцінка ціни ВДР на КОНКРЕТНУ годину, для якої вже відома РЕАЛЬНА ціна РДН
-    (напр. заявка РДН щойно не зіграла, і диспетчеру пропонується альтернатива
+    Оцінка ціни ВДР на КОНКРЕТНУ годину, для якої вже відома РЕАЛЬНА
+    ціна РДН (напр. заявка РДН щойно не зіграла, і диспетчеру пропонується альтернатива
     на ВДР — bidding_service.py). ВДР на цю саму годину ще НЕ відбувся (він
     ближче до реального часу постачання, ніж момент, коли ми дізнались
     результат РДН-аукціону) — тому реальної ціни ВДР для неї ще нема,
