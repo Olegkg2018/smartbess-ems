@@ -112,6 +112,15 @@ async def get_metrics():
 
 @app.post("/api/retrain", dependencies=[Depends(RoleChecker(["Manager", "Admin"]))])
 async def retrain():
+    """
+    НЕ ВИКЛИКАТИ на VPS — синхронно тренує модель прямо в живому процесі.
+    Виміряно локально 2026-08-04: пікова пам'ять train_models() ≈426MB,
+    час ≈368с (6+ хв). Контейнер smartbess-platform на VPS у простої вже
+    займає ≈430MB з ліміту 900m (без swap) — сума впритул до ліміту (<5%
+    запасу), плюс 6+ хвилин блокуючого запиту на живому диспетчерському
+    API/SCADA-симуляторі. Тренувати лише локально й заливати готові .pkl
+    (див. CLAUDE.md хронологія п.13, auto-memory feedback_vps_resource_constraints).
+    """
     try:
         metrics = mt.train_models()
         return {

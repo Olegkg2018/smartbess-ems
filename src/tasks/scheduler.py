@@ -90,7 +90,7 @@ def run_daily_forecast_and_optimization():
             'max_soc': asset.max_soc_pct / 100.0,
             # Настроюється в Settings (Asset.max_cycles_per_day) — MILP сам
             # використає другий цикл лише якщо денний спред цін це реально
-            # окупає (обмеження лише СТЕЛЯ можливостей, не примус).
+            # окуповує (обмеження лише СТЕЛЯ можливостей, не примус).
             'max_cycles_per_day': asset.max_cycles_per_day,
             'degradation_cost': asset.deg_cost_per_mwh / 1000.0,
             'transmission_tariff': 528.57,
@@ -155,8 +155,15 @@ scheduler = BackgroundScheduler()
 
 def start_scheduler():
     if not scheduler.running:
-        # Run daily at 17:30 (5:30 PM) which is when Operator Rynka publishes tomorrow's RDN prices
-        scheduler.add_job(run_daily_forecast_and_optimization, 'cron', hour=17, minute=30, id='daily_bess_opt')
+        # Run daily at 06:00 (moved from 17:30 on 2026-08-04, by request) — the
+        # target-date formula below (tomorrow = today + 1) is unchanged, this is
+        # purely a time-of-day move. Rationale: the real RDN clearing price for
+        # the target date isn't published until ~13:00+, so 06:00 still runs well
+        # before that; it also runs AFTER a full night of data accumulation
+        # (Open-Meteo weather forecast refreshes, overnight Telegram grid-stress
+        # posts) that a 17:30-the-day-before run would have missed — sync_realtime_data
+        # below simply picks up whatever is freshest at run time.
+        scheduler.add_job(run_daily_forecast_and_optimization, 'cron', hour=6, minute=0, id='daily_bess_opt')
         scheduler.start()
         print("Background Scheduler started successfully.")
 
