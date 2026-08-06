@@ -61,11 +61,11 @@ export default function BidGateCountdown({ targetDate }: Props) {
 
   return (
     <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', fontSize: '0.8rem', marginBottom: '12px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: rdnMsLeft > 0 ? (rdnMsLeft < 3600000 ? '#d97706' : '#9ca3af') : '#ef4444' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: rdnMsLeft > 0 ? (rdnMsLeft < 3600000 ? 'var(--color-amber)' : 'var(--text-secondary)') : 'var(--color-rose)' }}>
         <Clock size={14} />
         <span>РДН на {targetDate}: {rdnMsLeft > 0 ? `${formatRemaining(rdnMsLeft)} до закриття воріт (12:00 ${rdnGateDay})` : 'ворота закрито'}</span>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#9ca3af' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-secondary)' }}>
         <Clock size={14} />
         <span>
           ВДР: {!vdrOpen ? `відкриється о 15:00 ${rdnGateDay}` : nextVdrHour !== null ? `найближчі ворота (год ${nextVdrHour}) закриються через ${formatRemaining(nextVdrMsLeft)}` : 'всі години сьогодні закрито'}
