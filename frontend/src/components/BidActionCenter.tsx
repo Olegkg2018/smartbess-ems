@@ -2,10 +2,10 @@ import { AlertTriangle, CheckCircle2, Info } from 'lucide-react';
 import { useApp } from '../state/AppContext';
 
 const SEVERITY_STYLE: Record<string, { bg: string; border: string; color: string; icon: any }> = {
-  action:  { bg: 'rgba(59, 130, 246, 0.08)',  border: 'rgba(59, 130, 246, 0.3)',  color: '#3b82f6', icon: Info },
-  warning: { bg: 'rgba(245, 158, 11, 0.08)',  border: 'rgba(217, 119, 6, 0.3)',   color: '#d97706', icon: AlertTriangle },
-  ok:      { bg: 'rgba(5, 150, 105, 0.08)',   border: 'rgba(5, 150, 105, 0.3)',   color: '#059669', icon: CheckCircle2 },
-  info:    { bg: 'rgba(255,255,255,0.02)',    border: 'rgba(255,255,255,0.08)',   color: '#9ca3af', icon: Info },
+  action:  { bg: 'var(--color-blue-bg)',    border: 'var(--color-blue-border)',    color: 'var(--color-blue)',    icon: Info },
+  warning: { bg: 'var(--color-amber-bg)',   border: 'var(--color-amber-border)',   color: 'var(--color-amber)',   icon: AlertTriangle },
+  ok:      { bg: 'var(--color-emerald-bg)', border: 'var(--color-emerald-border)', color: 'var(--color-emerald)', icon: CheckCircle2 },
+  info:    { bg: 'var(--surface-subtle)',   border: 'var(--border-color)',         color: 'var(--text-secondary)', icon: Info },
 };
 
 export default function BidActionCenter() {
@@ -20,7 +20,7 @@ export default function BidActionCenter() {
           const s = SEVERITY_STYLE[a.severity] ?? SEVERITY_STYLE.info;
           const Icon = s.icon;
           return (
-            <div key={idx} style={{ display: 'flex', gap: '10px', background: s.bg, border: `1px solid ${s.border}`, padding: '12px', borderRadius: '6px', fontSize: '0.85rem' }}>
+            <div key={idx} style={{ display: 'flex', gap: '10px', background: s.bg, border: `1px solid ${s.border}`, padding: '12px', borderRadius: 'var(--radius-sm)', fontSize: '0.85rem', transition: 'background var(--transition-fast)' }}>
               <Icon size={16} style={{ color: s.color, flexShrink: 0 }} />
               <span>{a.text}</span>
             </div>

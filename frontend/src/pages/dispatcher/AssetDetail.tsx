@@ -12,11 +12,11 @@ export default function AssetDetail() {
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', margin: '30px 0' }}>
           <div style={{
             width: '180px', height: '180px', borderRadius: '50%',
-            border: '8px solid rgba(5, 150, 105, 0.15)', borderTopColor: '#059669',
+            border: '8px solid rgba(5, 150, 105, 0.15)', borderTopColor: 'var(--color-emerald)',
             display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative',
           }}>
-            <span style={{ fontSize: '0.8rem', color: '#9ca3af', fontWeight: 600 }}>Battery SoC</span>
-            <span style={{ fontSize: '2.5rem', fontWeight: 700, color: '#059669' }}>20.0 %</span>
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Battery SoC</span>
+            <span style={{ fontSize: '2.5rem', fontWeight: 700, color: 'var(--color-emerald)' }}>20.0 %</span>
             <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>{Math.round(capacity * 0.2)} кВт-год / {capacity} кВт-год</span>
           </div>
         </div>
@@ -25,9 +25,9 @@ export default function AssetDetail() {
           <tbody>
             <tr><td>Номінальна ємність</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{capacity} кВт-год</td></tr>
             <tr><td>Макс. потужність</td><td style={{ textAlign: 'right', fontWeight: 600 }}>{power} кВт</td></tr>
-            <tr><td>Поточна активна потужність</td><td style={{ textAlign: 'right', fontWeight: 600, color: '#3b82f6' }}>-150.0 кВт (Заряд)</td></tr>
-            <tr><td>Температура осередків</td><td style={{ textAlign: 'right', fontWeight: 600, color: '#d97706' }}>24.8 °C (Норма)</td></tr>
-            <tr><td>Технічний стан (SOH)</td><td style={{ textAlign: 'right', fontWeight: 600, color: '#059669' }}>99.85 %</td></tr>
+            <tr><td>Поточна активна потужність</td><td style={{ textAlign: 'right', fontWeight: 600, color: 'var(--color-blue)' }}>-150.0 кВт (Заряд)</td></tr>
+            <tr><td>Температура осередків</td><td style={{ textAlign: 'right', fontWeight: 600, color: 'var(--color-amber)' }}>24.8 °C (Норма)</td></tr>
+            <tr><td>Технічний стан (SOH)</td><td style={{ textAlign: 'right', fontWeight: 600, color: 'var(--color-emerald)' }}>99.85 %</td></tr>
           </tbody>
         </table>
       </div>
@@ -35,14 +35,14 @@ export default function AssetDetail() {
       <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
         <div>
           <h3 className="card-title">Ручний байпас EMS (Manual SCADA Dispatch Overrides)</h3>
-          <p style={{ fontSize: '0.8rem', color: '#9ca3af', margin: '8px 0 20px 0' }}>
+          <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '8px 0 20px 0' }}>
             Ця панель дозволяє оператору примусово змінити автоматичний графік та подати миттєву команду заряду чи розряду на контроллер BESS.
           </p>
 
           {activeRole === 'Viewer' && (
             <div style={{ background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.25)', padding: '12px', borderRadius: '8px', marginBottom: '20px', display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <Lock size={16} style={{ color: '#ef4444' }} />
-              <span style={{ fontSize: '0.8rem', color: '#ef4444' }}><strong>Увага:</strong> Для подачі команд потрібна роль Operator або Manager.</span>
+              <Lock size={16} style={{ color: 'var(--color-rose)' }} />
+              <span style={{ fontSize: '0.8rem', color: 'var(--color-rose)' }}><strong>Увага:</strong> Для подачі команд потрібна роль Operator або Manager.</span>
             </div>
           )}
 

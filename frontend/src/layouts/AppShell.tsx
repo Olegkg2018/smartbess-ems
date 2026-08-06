@@ -59,7 +59,7 @@ export default function AppShell({ workspace }: { workspace: 'dispatcher' | 'dir
     <div className="dashboard-container">
       <aside className="sidebar">
         <div className="logo-section">
-          <BatteryCharging style={{ color: '#3b82f6' }} />
+          <BatteryCharging style={{ color: 'var(--color-blue)' }} />
           <span className="logo-text">SmartBESS EMS</span>
         </div>
 
@@ -105,7 +105,7 @@ export default function AppShell({ workspace }: { workspace: 'dispatcher' | 'dir
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Users size={16} style={{ color: '#9ca3af' }} />
+              <Users size={16} style={{ color: 'var(--text-secondary)' }} />
               <select
                 className="rbac-selector"
                 value={activeRole}
