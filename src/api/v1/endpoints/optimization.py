@@ -460,6 +460,7 @@ class SystemSettingsModel(BaseModel):
     hydro_reference_capacity_mw: Optional[float] = None
     baseload_passthrough_ratio: Optional[float] = None
     max_cycles_per_day: Optional[float] = None
+    bid_reminder_telegram_enabled: Optional[bool] = None
 
 # Довідкові потужності для перетворення "% робочих АЕС/ГЕС" у МВт-дельту
 # (generation_adjustments.py). Це НЕ вигадка — реальні опубліковані дані:
@@ -467,7 +468,7 @@ class SystemSettingsModel(BaseModel):
 #   Запорізька) мінус Запорізька (6 блоків ВВЕР-1000, під окупацією й
 #   зупинена з 2022) ≈ 7835 МВт реально доступних. Джерела: World Nuclear
 #   Association, IAEA PRIS (станом на 2025).
-# ГЕС: сумарно ~6229 МВт номінал (включно з ГАЕС), але після руйнування
+# ГЕС: сумарно ~6229 МВт номінал (включно ГАЕС), але після руйнування
 #   Каховської ГЕС (335 МВт) і бойових пошкоджень значна частина каскаду
 #   недоступна — беремо ~3800 МВт як орієнтовну робочу оцінку.
 # ЦІ ЦИФРИ НАБЛИЗНІ й змінюються з часом (ремонти, відбудова, нові удари) —
@@ -479,6 +480,11 @@ DEFAULT_HYDRO_REFERENCE_CAPACITY_MW = 3800.0
 # коефіцієнт, дублює DEFAULT_BASELOAD_PASSTHROUGH_RATIO з ml_pipeline.py
 # (той самий патерн дублювання, що вже є для nuclear/hydro-констант вище).
 DEFAULT_BASELOAD_PASSTHROUGH_RATIO = 0.3
+
+# Прапорець Telegram-нагадувань про дії з заявками РДН/ВДР (bidding_service/
+# services.py::build_daily_action_summary, telegram_bot.py::check_and_send_bid_reminder)
+# — за замовчуванням True (нагадування вимкнене лише якщо диспетчер сам вимкнув).
+DEFAULT_BID_REMINDER_TELEGRAM_ENABLED = True
 
 @router.get("/settings", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
 async def get_system_settings():
@@ -503,13 +509,14 @@ async def get_system_settings():
         "nuclear_reference_capacity_mw": DEFAULT_NUCLEAR_REFERENCE_CAPACITY_MW,
         "hydro_reference_capacity_mw": DEFAULT_HYDRO_REFERENCE_CAPACITY_MW,
         "baseload_passthrough_ratio": DEFAULT_BASELOAD_PASSTHROUGH_RATIO,
+        "bid_reminder_telegram_enabled": DEFAULT_BID_REMINDER_TELEGRAM_ENABLED,
     }
 
     if os.path.exists(path):
         try:
             with open(path, "r") as f:
                 saved = json.load(f)
-                for key in ("launch_date", "osr", "voltage_class", "margin", "nuclear_reference_capacity_mw", "hydro_reference_capacity_mw", "baseload_passthrough_ratio"):
+                for key in ("launch_date", "osr", "voltage_class", "margin", "nuclear_reference_capacity_mw", "hydro_reference_capacity_mw", "baseload_passthrough_ratio", "bid_reminder_telegram_enabled"):
                     if key in saved:
                         data[key] = saved[key]
         except Exception:
@@ -549,6 +556,7 @@ async def save_system_settings(req: SystemSettingsModel):
             "nuclear_reference_capacity_mw": req.nuclear_reference_capacity_mw if req.nuclear_reference_capacity_mw is not None else DEFAULT_NUCLEAR_REFERENCE_CAPACITY_MW,
             "hydro_reference_capacity_mw": req.hydro_reference_capacity_mw if req.hydro_reference_capacity_mw is not None else DEFAULT_HYDRO_REFERENCE_CAPACITY_MW,
             "baseload_passthrough_ratio": req.baseload_passthrough_ratio if req.baseload_passthrough_ratio is not None else DEFAULT_BASELOAD_PASSTHROUGH_RATIO,
+            "bid_reminder_telegram_enabled": req.bid_reminder_telegram_enabled if req.bid_reminder_telegram_enabled is not None else DEFAULT_BID_REMINDER_TELEGRAM_ENABLED,
         }
 
         os.makedirs(os.path.dirname(path), exist_ok=True)

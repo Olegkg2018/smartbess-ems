@@ -79,7 +79,34 @@ def test_value_at_risk():
     assert var_results['value_at_risk_uah'] >= 0
     print("ReportingService (Value at Risk) Test: PASSED\n")
 
+def test_oree_participation_fee():
+    print("=== Testing TariffService (OREE participation fee) ===")
+    fee = TariffService.calculate_oree_participation_fee_uah(traded_volume_mwh=1000.0, months=12.0)
+    expected = 4669.71 * 12 + 6.88 * 1000.0
+    print(f"OREE participation fee: {fee:.2f} UAH (Expected: {expected:.2f})")
+    assert abs(fee - expected) < 1e-6
+    print("TariffService (OREE fee) Test: PASSED\n")
+
+def test_project_economics_with_oree_fee():
+    print("=== Testing ReportingService (Economics + OREE fee) ===")
+    econ_no_fee = ReportingService.calculate_project_economics(
+        capex_uah=10000000.0, yearly_revenue_uah=3500000.0, yearly_opex_uah=500000.0,
+        oree_participation_fee_uah=0.0, discount_rate=0.12, lifetime_years=5,
+    )
+    fee = TariffService.calculate_oree_participation_fee_uah(traded_volume_mwh=500.0)
+    econ_with_fee = ReportingService.calculate_project_economics(
+        capex_uah=10000000.0, yearly_revenue_uah=3500000.0, yearly_opex_uah=500000.0,
+        oree_participation_fee_uah=fee, discount_rate=0.12, lifetime_years=5,
+    )
+    print(f"NPV without fee: {econ_no_fee['npv_uah']:,.2f} UAH; with fee: {econ_with_fee['npv_uah']:,.2f} UAH")
+    assert econ_with_fee['oree_participation_fee_uah'] == fee
+    assert econ_with_fee['npv_uah'] < econ_no_fee['npv_uah']
+    assert econ_with_fee['simple_payback_years'] > econ_no_fee['simple_payback_years']
+    print("ReportingService (OREE fee) Test: PASSED\n")
+
 if __name__ == "__main__":
     test_tariff_service()
     test_project_economics()
     test_value_at_risk()
+    test_oree_participation_fee()
+    test_project_economics_with_oree_fee()
