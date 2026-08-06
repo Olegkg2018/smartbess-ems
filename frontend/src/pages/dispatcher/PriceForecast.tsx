@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
+import { ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Area, Bar, Line, Cell, ResponsiveContainer } from 'recharts';
 import { BookOpen, CheckCircle2, AlertTriangle, CalendarClock, RadioTower } from 'lucide-react';
-import { ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Line, Area, Bar, Cell, ResponsiveContainer } from 'recharts';
 import { useApp } from '../../state/AppContext';
 import GlobalFilterBar from '../../components/GlobalFilterBar';
 
 const COLOR_CHARGE_PLANNED = 'rgba(59, 130, 246, 0.35)';
-const COLOR_CHARGE_MANUAL = '#3b82f6';
+const COLOR_CHARGE_MANUAL = 'var(--color-blue)';
 const COLOR_DISCHARGE_PLANNED = 'rgba(5, 150, 105, 0.35)';
-const COLOR_DISCHARGE_MANUAL = '#059669';
+const COLOR_DISCHARGE_MANUAL = 'var(--color-emerald)';
 
 export default function PriceForecast() {
   const {
@@ -107,7 +107,7 @@ export default function PriceForecast() {
 
       <div className="glass-card">
         <h3 className="card-title" style={{ marginBottom: '16px' }}>
-          Прогноз ціни РДН та графік заряду/розряду (1–24){hasActual && <span style={{ color: '#0891b2', fontSize: '0.75rem', marginLeft: '10px' }}>● Факт з oree.com.ua доступний</span>}
+          Прогноз ціни РДН та графік заряду/розряду (1–24){hasActual && <span style={{ color: 'var(--color-cyan)', fontSize: '0.75rem', marginLeft: '10px' }}>● Факт з oree.com.ua доступний</span>}
         </h3>
         {!forecastPrices ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', padding: '60px 20px', color: 'var(--text-muted)' }}>
@@ -128,9 +128,9 @@ export default function PriceForecast() {
               <ResponsiveContainer>
                 <ComposedChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                  <XAxis dataKey="hour" stroke="#9ca3af" type="category" ticks={[1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 24]} />
-                  <YAxis yAxisId="price" stroke="#9ca3af" />
-                  <YAxis yAxisId="power" orientation="right" stroke="#9ca3af" label={{ value: 'кВт', angle: 90, position: 'insideRight', fill: '#9ca3af', fontSize: 11 }} />
+                  <XAxis dataKey="hour" stroke="var(--text-secondary)" type="category" ticks={[1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 24]} />
+                  <YAxis yAxisId="price" stroke="var(--text-secondary)" />
+                  <YAxis yAxisId="power" orientation="right" stroke="var(--text-secondary)" label={{ value: 'кВт', angle: 90, position: 'insideRight', fill: 'var(--text-secondary)', fontSize: 11 }} />
                   <Tooltip contentStyle={{ backgroundColor: '#111726', borderColor: '#1f293d' }} labelFormatter={(h) => `Година ${h}`} />
                   <Legend />
                   {hasBand && (
@@ -153,9 +153,9 @@ export default function PriceForecast() {
                       ))}
                     </Bar>
                   )}
-                  <Line yAxisId="price" type="monotone" dataKey="price" name="Прогноз РДН (грн/МВт-год)" stroke="#3b82f6" strokeWidth={3} dot={{ r: 3 }} activeDot={{ r: 8 }} />
+                  <Line yAxisId="price" type="monotone" dataKey="price" name="Прогноз РДН (грн/МВт-год)" stroke="var(--color-blue)" strokeWidth={3} dot={{ r: 3 }} activeDot={{ r: 8 }} />
                   {hasActual && (
-                    <Line yAxisId="price" type="monotone" dataKey="actual" name="Факт РДН (oree.com.ua)" stroke="#0891b2" strokeWidth={2} strokeDasharray="5 5" dot={{ r: 3 }} connectNulls />
+                    <Line yAxisId="price" type="monotone" dataKey="actual" name="Факт РДН (oree.com.ua)" stroke="var(--color-cyan)" strokeWidth={2} strokeDasharray="5 5" dot={{ r: 3 }} connectNulls />
                   )}
                 </ComposedChart>
               </ResponsiveContainer>
@@ -169,7 +169,7 @@ export default function PriceForecast() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           {hasAdjustment && (
             <div style={{ display: 'flex', gap: '10px', background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(217, 119, 6, 0.3)', padding: '12px', borderRadius: '6px', fontSize: '0.85rem' }}>
-              <AlertTriangle size={16} style={{ color: '#d97706', flexShrink: 0 }} />
+              <AlertTriangle size={16} style={{ color: 'var(--color-amber)', flexShrink: 0 }} />
               <span>
                 Прогноз враховує ручну корекцію генерації: АЕС {generationAdjustment!.nuclear_pct}%, ГЕС {generationAdjustment!.hydro_pct}%,
                 {' '}СЕС {generationAdjustment!.solar_pct}%, ВЕС {generationAdjustment!.wind_pct}%.
@@ -179,7 +179,7 @@ export default function PriceForecast() {
           )}
           {hasPriceShift && (
             <div style={{ display: 'flex', gap: '10px', background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(217, 119, 6, 0.3)', padding: '12px', borderRadius: '6px', fontSize: '0.85rem' }}>
-              <AlertTriangle size={16} style={{ color: '#d97706', flexShrink: 0 }} />
+              <AlertTriangle size={16} style={{ color: 'var(--color-amber)', flexShrink: 0 }} />
               <span>
                 Прогноз враховує ручний зсув ціни: {priceShift!.shift_pct > 0 ? '+' : ''}{priceShift!.shift_pct}% на всі 24 години.
                 {priceShift!.note ? ` Нотатка: «${priceShift!.note}».` : ''}
@@ -188,7 +188,7 @@ export default function PriceForecast() {
           )}
           {insights.map((exp, idx) => (
             <div key={idx} style={{ display: 'flex', gap: '10px', background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '6px', fontSize: '0.85rem' }}>
-              {hasActual && idx === insights.length - 1 ? <CheckCircle2 size={16} style={{ color: '#059669' }} /> : <BookOpen size={16} style={{ color: '#0891b2' }} />}
+              {hasActual && idx === insights.length - 1 ? <CheckCircle2 size={16} style={{ color: 'var(--color-emerald)' }} /> : <BookOpen size={16} style={{ color: 'var(--color-cyan)' }} />}
               <span>{exp}</span>
             </div>
           ))}
@@ -200,10 +200,10 @@ export default function PriceForecast() {
         <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 16px' }}>
           Реальних даних про генерацію АЕС/ГЕС/СЕС/ВЕС по типах немає (Україна припинила публікацію в ENTSO-E з 2022 року).
           СЕС/ВЕС коригують навчену фізичну ознаку моделі напряму — чесний вплив на прогноз.
-          АЕС/ГЕС не мають навченої ознаки — % переводиться в МВт-дельту (довідникові потужності) і додається до
+          АЕС/ГЕС не мають навченої ознаки — % переводиться в МВт-дельту (довідкові потужності) і додається до
           нетто-експорту — приблизна, але не вигадана оцінка через уже навчену модель, а не довільний коефіцієнт.
-          Навіть повна корекція — це невеликий важіль порівняно з історією ціни (лаги/спред ВДР), яка визначає
-          більшість прогнозу: очікуйте помітний, але не кардинальний зсув прогнозованої ціни.
+          Навіть повна корекція — це невеликий важіль порівняно з історією ціни (лаги/спред ВДР), яка
+          визначає більшість прогнозу: очікуйте помітний, але не кардинальний зсув прогнозованої ціни.
         </p>
         {!generationAdjustment ? (
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Завантаження...</p>
@@ -247,7 +247,7 @@ export default function PriceForecast() {
           Використовуйте, коли відомо про реальну тимчасову аномалію ринку (напр. учасник ринку коротко
           маніпулював/занижував ціну, вже відкочено), яку модель не могла передбачити — і не варто перенавчати на
           одному епізоді. Зсув застосовується у відсотках рівномірно до всіх 24 годин ПІСЛЯ прогнозу моделі (не
-          змінює жодної ознаки), тож не спотворює точність моделі на минулих добах.
+          змінює жодної ознаки), тож не спотворює точності моделі на минулих добах.
         </p>
         {!priceShift ? (
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Завантаження...</p>
@@ -293,7 +293,7 @@ export default function PriceForecast() {
           <>
             {gridStress.source === 'auto_telegram' ? (
               <div style={{ display: 'flex', gap: '10px', background: 'rgba(8, 145, 178, 0.08)', border: '1px solid rgba(8, 145, 178, 0.3)', padding: '12px', borderRadius: '6px', fontSize: '0.85rem', marginBottom: '16px' }}>
-                <RadioTower size={16} style={{ color: '#0891b2', flexShrink: 0 }} />
+                <RadioTower size={16} style={{ color: 'var(--color-cyan)', flexShrink: 0 }} />
                 <span>
                   Автоматично з Telegram-каналу Укренерго: обсяг {gridStress.forced_restriction_queues} черги.
                   {gridStress.auto_consumption_trend != null && (

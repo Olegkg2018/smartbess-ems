@@ -54,9 +54,9 @@ function yesterday() {
 function coverageStatus(hoursWithData: number, hoursTotal: number): { color: string; label: string; icon: React.ReactNode } {
   if (hoursTotal === 0) return { color: '#6b7280', label: 'дата поза межами історії', icon: <XCircle size={14} /> };
   const ratio = hoursWithData / hoursTotal;
-  if (ratio === 1) return { color: '#059669', label: `${hoursWithData}/${hoursTotal} год`, icon: <CheckCircle2 size={14} /> };
-  if (ratio === 0) return { color: '#ef4444', label: `${hoursWithData}/${hoursTotal} год — немає даних`, icon: <XCircle size={14} /> };
-  return { color: '#d97706', label: `${hoursWithData}/${hoursTotal} год — частково`, icon: <AlertTriangle size={14} /> };
+  if (ratio === 1) return { color: 'var(--color-emerald)', label: `${hoursWithData}/${hoursTotal} год`, icon: <CheckCircle2 size={14} /> };
+  if (ratio === 0) return { color: 'var(--color-rose)', label: `${hoursWithData}/${hoursTotal} год — немає даних`, icon: <XCircle size={14} /> };
+  return { color: 'var(--color-amber)', label: `${hoursWithData}/${hoursTotal} год — частково`, icon: <AlertTriangle size={14} /> };
 }
 
 function formatNum(v: number | null, digits = 1) {
@@ -90,12 +90,12 @@ export default function DataAudit() {
 
   return (
     <div>
-      <div className="glass-card" style={{ borderLeft: '4px solid #0891b2' }}>
-        <h4 style={{ margin: '0 0 6px 0', fontSize: '16px', color: '#0891b2' }}>
+      <div className="glass-card" style={{ borderLeft: '4px solid var(--color-cyan)' }}>
+        <h4 style={{ margin: '0 0 6px 0', fontSize: '16px', color: 'var(--color-cyan)' }}>
           <RadioTower size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
           Довідка: що реально було використано в розрахунку за цю дату
         </h4>
-        <p style={{ margin: '0 0 16px', fontSize: '13.5px', color: '#9ca3af', lineHeight: '1.5' }}>
+        <p style={{ margin: '0 0 16px', fontSize: '13.5px', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
           Діагностичний інструмент для тестування — показує буквально, скільки з 24 годин доби реально заповнені
           (а не порожні), і що саме прочитано з Telegram, без згладжування. Якщо джерело за день не дало жодного
           значення — це видно прямо тут, а не ховається за середнім показником.
@@ -112,14 +112,14 @@ export default function DataAudit() {
       </div>
 
       {error && (
-        <div className="glass-card" style={{ borderLeft: '4px solid #ef4444' }}>
-          <p style={{ margin: 0, color: '#ef4444' }}>{error}</p>
+        <div className="glass-card" style={{ borderLeft: '4px solid var(--color-rose)' }}>
+          <p style={{ margin: 0, color: 'var(--color-rose)' }}>{error}</p>
         </div>
       )}
 
       {audit && !audit.csv_covers_date && (
-        <div className="glass-card" style={{ borderLeft: '4px solid #ef4444', display: 'flex', gap: '10px' }}>
-          <AlertTriangle size={16} style={{ color: '#ef4444', flexShrink: 0, marginTop: '2px' }} />
+        <div className="glass-card" style={{ borderLeft: '4px solid var(--color-rose)', display: 'flex', gap: '10px' }}>
+          <AlertTriangle size={16} style={{ color: 'var(--color-rose)', flexShrink: 0, marginTop: '2px' }} />
           <p style={{ margin: 0, fontSize: '13.5px' }}>
             Ця дата поза межами накопиченої історії (historical_data_merged.csv) — або ще не синхронізована
             (майбутня дата), або дані ще жодного разу не завантажувались. Це очікувано для завтрашньої дати
@@ -148,7 +148,7 @@ export default function DataAudit() {
                   {status.icon} {status.label}
                 </span>
                 <span className="kpi-change neutral">
-                  {usedInForecast ? 'Впливає на прогноз ціни' : 'Не впливає на прогноз (див. звіт)'} · натисніть для деталей
+                  {usedInForecast ? 'Впливає на прогноз' : 'Не впливає на прогноз (див. звіт)'} · натисніть для деталей
                 </span>
               </div>
             );
@@ -194,14 +194,14 @@ export default function DataAudit() {
       {audit && (
         <div className="glass-card">
           <h3 className="card-title" style={{ marginBottom: '6px' }}>Що прочитано з Telegram за {date}</h3>
-          <p style={{ margin: '0 0 16px', fontSize: '13px', color: '#9ca3af' }}>
+          <p style={{ margin: '0 0 16px', fontSize: '13px', color: 'var(--text-secondary)' }}>
             Канали: ukrenergo, minenergo_ua. Показані буквально пости, знайдені в кеші за цю дату, і що з кожного
             з них автоматично витягнуто (parse_energy_status).
           </p>
 
           {audit.telegram.posts.length === 0 ? (
             <div style={{ display: 'flex', gap: '10px', padding: '12px', background: 'rgba(217, 119, 6, 0.08)', border: '1px solid rgba(217, 119, 6, 0.3)', borderRadius: '6px' }}>
-              <AlertTriangle size={16} style={{ color: '#d97706', flexShrink: 0 }} />
+              <AlertTriangle size={16} style={{ color: 'var(--color-amber)', flexShrink: 0 }} />
               <span style={{ fontSize: '13.5px' }}>
                 За цю дату в кеші немає жодного поста з жодного з двох каналів. Це або означає, що канали цього дня
                 нічого не публікували, або що фонова синхронізація (щоденний job о 17:30) того дня не відпрацювала —
@@ -214,7 +214,7 @@ export default function DataAudit() {
                 <div key={post.id} style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: '16px' }}>
                   <div style={{
                     fontSize: '0.85rem', padding: '12px', borderRadius: '6px', background: 'rgba(255,255,255,0.02)',
-                    borderLeft: `3px solid ${post.severity === 'high' ? '#ef4444' : post.severity === 'medium' ? '#d97706' : '#3b82f6'}`,
+                    borderLeft: `3px solid ${post.severity === 'high' ? 'var(--color-rose)' : post.severity === 'medium' ? 'var(--color-amber)' : 'var(--color-blue)'}`,
                     whiteSpace: 'pre-wrap',
                   }}>
                     <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginBottom: '6px' }}>
