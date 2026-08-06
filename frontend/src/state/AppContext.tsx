@@ -89,6 +89,8 @@ interface AppState {
   clearBidMarginAndRegenerate: () => Promise<void>;
   bids: MarketBid[] | null;
   refreshBids: () => Promise<void>;
+  actionSummary: api.ActionSummary | null;
+  refreshActionSummary: () => Promise<void>;
   generateBidsNow: () => Promise<void>;
   settleBidsNow: () => Promise<void>;
 
@@ -100,6 +102,7 @@ interface AppState {
   power: number; setPower: (v: number) => void;
   efficiency: number; setEfficiency: (v: number) => void;
   maxCyclesPerDay: number; setMaxCyclesPerDay: (v: number) => void;
+  bidReminderTelegramEnabled: boolean; setBidReminderTelegramEnabled: (v: boolean) => void;
   launchDate: string; setLaunchDate: (v: string) => void;
   saveSettings: () => Promise<void>;
 
@@ -156,6 +159,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [gridStress, setGridStress] = useState<GridStress | null>(null);
   const [bidMargin, setBidMargin] = useState<BidMargin | null>(null);
   const [bids, setBids] = useState<MarketBid[] | null>(null);
+  const [actionSummary, setActionSummary] = useState<api.ActionSummary | null>(null);
 
   const [osr, setOsr] = useState('dtek_kiev_regional');
   const [voltageClass, setVoltageClass] = useState(1);
@@ -164,6 +168,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [power, setPower] = useState(250);
   const [efficiency, setEfficiency] = useState(95);
   const [maxCyclesPerDay, setMaxCyclesPerDay] = useState(1.5);
+  const [bidReminderTelegramEnabled, setBidReminderTelegramEnabled] = useState(true);
   const [launchDate, setLaunchDate] = useState('2026-01-01');
 
   const [capex, setCapex] = useState(15200000);
@@ -201,6 +206,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setPower(data.power_kw);
       setEfficiency(data.efficiency_pct);
       if (data.max_cycles_per_day != null) setMaxCyclesPerDay(data.max_cycles_per_day);
+      if (data.bid_reminder_telegram_enabled != null) setBidReminderTelegramEnabled(data.bid_reminder_telegram_enabled);
     }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeAssetId]);
@@ -275,12 +281,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         launch_date: launchDate, osr, voltage_class: voltageClass, margin,
         capacity_kw: capacity, power_kw: power, efficiency_pct: efficiency,
         max_cycles_per_day: maxCyclesPerDay,
+        bid_reminder_telegram_enabled: bidReminderTelegramEnabled,
       });
       addLog('SETTINGS', `Параметри системи збережено. Дата запуску: ${launchDate}.`, 'success');
     } catch (e: any) {
       addLog('API', `Помилка збереження налаштувань: ${e.message}`, 'error');
     }
-  }, [activeRole, launchDate, osr, voltageClass, margin, capacity, power, efficiency, maxCyclesPerDay, addLog]);
+  }, [activeRole, launchDate, osr, voltageClass, margin, capacity, power, efficiency, maxCyclesPerDay, bidReminderTelegramEnabled, addLog]);
 
   useEffect(() => {
     if (!activeAssetId) return;
@@ -301,8 +308,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // Зміна дати раніше лишала forecastPrices/priceBand/actualPrices/
   // optimizationResult від ПОПЕРЕДНЬОЇ дати на екрані (тільки manualOverrides
-  // оновлювались вище) — диспетчер бачив прогноз/графік заряду для однієї
-  // дати поверх графіку ручних заявок для іншої. Тепер при зміні дати:
+  // оновлювались вище). Диспетчер бачив прогноз/графік заряду для однієї
+  // дати поверх графіку ручних заявок для іншої дати. Тепер при зміні дати:
   // 1) optimizationResult одразу скидається (для нової дати він ще не порахований —
   //    сценарний VaR-аналіз завжди вимагає явного «Розрахувати»);
   // 2) forecastPrices/priceBand/actualPrices підтягуються заново — якщо
@@ -353,6 +360,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       api.fetchBids(activeRole, activeAssetId, targetDate)
         .then((r) => { if (!cancelled) setBids(r.bids); })
         .catch(() => { if (!cancelled) setBids(null); });
+
+      api.fetchActionSummary(activeRole, activeAssetId, targetDate)
+        .then((s) => { if (!cancelled) setActionSummary(s); })
+        .catch(() => { if (!cancelled) setActionSummary(null); });
     }
 
     return () => { cancelled = true; };
@@ -444,16 +455,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [activeRole, activeAssetId, targetDate]);
 
+  const refreshActionSummary = useCallback(async () => {
+    if (!activeAssetId) return;
+    try {
+      const s = await api.fetchActionSummary(activeRole, activeAssetId, targetDate);
+      setActionSummary(s);
+    } catch {
+      setActionSummary(null);
+    }
+  }, [activeRole, activeAssetId, targetDate]);
+
   const generateBidsNow = useCallback(async () => {
     if (!activeAssetId) return;
     try {
       const r = await api.generateBids(activeRole, activeAssetId, targetDate);
-      addLog('BIDS', `Заявки РДН на ${targetDate} сформовано (маржа ${r.margin_pct}%, ${r.n_bids} годин).`, 'success');
+      const clampSuffix = r.n_price_clamped > 0 ? `, ${r.n_price_clamped} год. з ціною скоригованою до межі OREE` : '';
+      addLog('BIDS', `Заявки РДН на ${targetDate} сформовано (маржа ${r.margin_pct}%, ${r.n_bids} годин${clampSuffix}).`, r.n_price_clamped > 0 ? 'warn' : 'success');
       await refreshBids();
+      await refreshActionSummary();
     } catch (e: any) {
       addLog('API', `Помилка формування заявок: ${e.message}`, 'error');
     }
-  }, [activeRole, activeAssetId, targetDate, addLog, refreshBids]);
+  }, [activeRole, activeAssetId, targetDate, addLog, refreshBids, refreshActionSummary]);
 
   const settleBidsNow = useCallback(async () => {
     if (!activeAssetId) return;
@@ -461,10 +484,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const r = await api.settleBids(activeRole, activeAssetId, targetDate);
       addLog('BIDS', `Заявки на ${targetDate} звірено з фактом OREE: виконано ${r.n_executed}, не виконано ${r.n_failed_needs_idm} (пропозиція ВДР).`, r.n_failed_needs_idm > 0 ? 'warn' : 'success');
       await refreshBids();
+      await refreshActionSummary();
     } catch (e: any) {
       addLog('API', `Помилка звірки заявок: ${e.message}`, 'error');
     }
-  }, [activeRole, activeAssetId, targetDate, addLog, refreshBids]);
+  }, [activeRole, activeAssetId, targetDate, addLog, refreshBids, refreshActionSummary]);
 
   const refreshBidMargin = useCallback(async () => {
     if (!activeAssetId) return;
@@ -602,10 +626,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     initialSoc, saveInitialSocAndRecalculate, clearInitialSocAndRecalculate,
     gridStress, saveGridStressOverride, clearGridStressOverride,
     bidMargin, saveBidMarginAndRegenerate, clearBidMarginAndRegenerate,
-    bids, refreshBids, generateBidsNow, settleBidsNow,
+    bids, refreshBids, actionSummary, refreshActionSummary, generateBidsNow, settleBidsNow,
     osr, setOsr, voltageClass, setVoltageClass, margin, setMargin,
     capacity, setCapacity, power, setPower, efficiency, setEfficiency,
-    maxCyclesPerDay, setMaxCyclesPerDay,
+    maxCyclesPerDay, setMaxCyclesPerDay, bidReminderTelegramEnabled, setBidReminderTelegramEnabled,
     launchDate, setLaunchDate, saveSettings,
     capex, setCapex, discountRate, setDiscountRate, lifetime, setLifetime,
     systemLogs, addLog, auditLogs,
@@ -621,8 +645,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     initialSoc, saveInitialSocAndRecalculate, clearInitialSocAndRecalculate,
     gridStress, saveGridStressOverride, clearGridStressOverride,
     bidMargin, saveBidMarginAndRegenerate, clearBidMarginAndRegenerate,
-    bids, refreshBids, generateBidsNow, settleBidsNow,
-    osr, voltageClass, margin, capacity, power, efficiency, maxCyclesPerDay, launchDate, saveSettings,
+    bids, refreshBids, actionSummary, refreshActionSummary, generateBidsNow, settleBidsNow,
+    osr, voltageClass, margin, capacity, power, efficiency, maxCyclesPerDay, bidReminderTelegramEnabled, launchDate, saveSettings,
     capex, discountRate, lifetime, systemLogs, addLog, auditLogs,
     showApprovalModal, pendingAction, approvalToken, triggerFourEyesApproval, executeApprovedAction, cancelApproval,
   ]);
