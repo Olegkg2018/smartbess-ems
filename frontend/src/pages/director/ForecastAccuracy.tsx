@@ -24,18 +24,18 @@ export default function ForecastAccuracy() {
 
   return (
     <div>
-      <div className="glass-card" style={{ marginBottom: '24px', borderLeft: '4px solid #0891b2' }}>
-        <h4 style={{ margin: '0 0 6px 0', fontSize: '16px', color: '#0891b2' }}>Наскільки прогноз збігається з реальністю</h4>
-        <p style={{ margin: 0, fontSize: '13.5px', color: '#9ca3af', lineHeight: '1.5' }}>
+      <div className="glass-card" style={{ marginBottom: '24px', borderLeft: '4px solid var(--color-cyan)' }}>
+        <h4 style={{ margin: '0 0 6px 0', fontSize: '16px', color: 'var(--color-cyan)' }}>Наскільки прогноз збігається з реальністю</h4>
+        <p style={{ margin: 0, fontSize: '13.5px', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
           WAPE (Weighted Absolute Percentage Error) надійніший за MAPE у години з ціною, близькою до нуля —
           саме тому дохід у звіті вище дораховується за WAPE, а не за фіксованою константою.
         </p>
       </div>
 
       <div className="kpi-container" style={{ marginBottom: '24px' }}>
-        <div className="kpi-card" style={{ borderLeft: '4px solid #059669' }}>
+        <div className="kpi-card" style={{ borderLeft: '4px solid var(--color-emerald)' }}>
           <span className="kpi-title">Коефіцієнт захопленого прибутку</span>
-          <span className="kpi-value" style={{ color: '#059669' }}>{(ratio.ratio * 100).toFixed(1)}%</span>
+          <span className="kpi-value" style={{ color: 'var(--color-emerald)' }}>{(ratio.ratio * 100).toFixed(1)}%</span>
           <span className="kpi-change neutral">Джерело: {SOURCE_LABELS[ratio.source] || ratio.source}</span>
           {ratio.source === 'real_dispatch_vs_perfect_foresight' && (
             <>
@@ -71,11 +71,11 @@ export default function ForecastAccuracy() {
             <ResponsiveContainer>
               <LineChart data={live.daily || []}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                <XAxis dataKey="date" stroke="#9ca3af" fontSize={11} />
-                <YAxis stroke="#9ca3af" fontSize={11} />
+                <XAxis dataKey="date" stroke="var(--text-secondary)" fontSize={11} />
+                <YAxis stroke="var(--text-secondary)" fontSize={11} />
                 <Tooltip contentStyle={{ backgroundColor: '#111726', borderColor: '#1f293d' }} />
                 <Legend />
-                <Line type="monotone" dataKey="wape" name="WAPE (%)" stroke="#059669" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="wape" name="WAPE (%)" stroke="var(--color-emerald)" strokeWidth={2} dot={false} />
                 <Line type="monotone" dataKey="mape" name="MAPE (%, нестабільний біля нуля)" stroke="#6b7280" strokeWidth={1} strokeDasharray="4 4" dot={false} />
               </LineChart>
             </ResponsiveContainer>

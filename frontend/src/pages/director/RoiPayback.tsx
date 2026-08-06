@@ -56,14 +56,14 @@ export default function RoiPayback() {
 
         <div className="audit-item" style={{ background: 'rgba(217, 119, 6, 0.05)', borderColor: 'rgba(217, 119, 6, 0.2)' }}>
           <span>Реєстраційний внесок OREE (реальний тариф 2026: 4669.71 грн/міс + 6.88 грн/МВт·год):</span>
-          <strong style={{ color: '#d97706', fontSize: '0.95rem' }}>
+          <strong style={{ color: 'var(--color-amber)', fontSize: '0.95rem' }}>
             {Math.round(oreeParticipationFeeYearly).toLocaleString()} грн/рік
           </strong>
         </div>
 
         <div className="audit-item" style={{ background: 'rgba(5, 150, 105, 0.05)', borderColor: 'rgba(5, 150, 105, 0.2)' }}>
           <span>Простий період окупності (Simple Payback):</span>
-          <strong style={{ color: '#059669', fontSize: '1rem' }}>
+          <strong style={{ color: 'var(--color-emerald)', fontSize: '1rem' }}>
             {netYearlyInflow > 0 ? (capex / netYearlyInflow).toFixed(1) : '—'} р.
           </strong>
         </div>
@@ -75,11 +75,11 @@ export default function RoiPayback() {
           <ResponsiveContainer>
             <ComposedChart data={paybackData}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-              <XAxis dataKey="year" stroke="#9ca3af" />
-              <YAxis stroke="#9ca3af" />
+              <XAxis dataKey="year" stroke="var(--text-secondary)" />
+              <YAxis stroke="var(--text-secondary)" />
               <Tooltip contentStyle={{ backgroundColor: '#111726', borderColor: '#1f293d' }} />
-              <Area type="monotone" dataKey="NPV" name="NPV (грн)" stroke="#059669" fill="rgba(5, 150, 105, 0.1)" strokeWidth={2} />
-              <Line type="monotone" dataKey="ZeroLine" name="Точка беззбитковості" stroke="#ef4444" strokeWidth={1} activeDot={false} dot={false} />
+              <Area type="monotone" dataKey="NPV" name="NPV (грн)" stroke="var(--color-emerald)" fill="rgba(5, 150, 105, 0.1)" strokeWidth={2} />
+              <Line type="monotone" dataKey="ZeroLine" name="Точка беззбитковості" stroke="var(--color-rose)" strokeWidth={1} activeDot={false} dot={false} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>

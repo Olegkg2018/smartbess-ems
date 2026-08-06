@@ -29,28 +29,28 @@ export default function RiskScenarios() {
           <ResponsiveContainer>
             <LineChart data={scenariosData}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-              <XAxis dataKey="hour" stroke="#9ca3af" />
-              <YAxis stroke="#9ca3af" />
+              <XAxis dataKey="hour" stroke="var(--text-secondary)" />
+              <YAxis stroke="var(--text-secondary)" />
               <Tooltip contentStyle={{ backgroundColor: '#111726', borderColor: '#1f293d' }} />
               <Legend />
-              <Line type="monotone" dataKey="base" name="Базовий прогноз" stroke="#3b82f6" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="pessimistic" name="Песимістичний (5-й перцентиль)" stroke="#ef4444" strokeWidth={1.5} dot={false} />
-              <Line type="monotone" dataKey="aggressive" name="Агресивний (95-й перцентиль)" stroke="#059669" strokeWidth={1.5} dot={false} />
+              <Line type="monotone" dataKey="base" name="Базовий прогноз" stroke="var(--color-blue)" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="pessimistic" name="Песимістичний (5-й перцентиль)" stroke="var(--color-rose)" strokeWidth={1.5} dot={false} />
+              <Line type="monotone" dataKey="aggressive" name="Агресивний (95-й перцентиль)" stroke="var(--color-emerald)" strokeWidth={1.5} dot={false} />
             </LineChart>
           </ResponsiveContainer>
         </div>
       </div>
 
       <div className="grid-3">
-        <div className="kpi-card" style={{ borderLeft: '4px solid #3b82f6' }}>
+        <div className="kpi-card" style={{ borderLeft: '4px solid var(--color-blue)' }}>
           <span className="kpi-title">Очікуваний прибуток (Base)</span>
           <span className="kpi-value">{summary ? Math.round(summary.base_expected_profit_uah).toLocaleString() : '—'} грн</span>
         </div>
-        <div className="kpi-card" style={{ borderLeft: '4px solid #ef4444' }}>
+        <div className="kpi-card" style={{ borderLeft: '4px solid var(--color-rose)' }}>
           <span className="kpi-title">Найгірший сценарій (Monte Carlo, {summary?.confidence_level_pct ?? 95}%)</span>
           <span className="kpi-value">{summary ? Math.round(summary.worst_case_profit_uah).toLocaleString() : '—'} грн</span>
         </div>
-        <div className="kpi-card" style={{ borderLeft: '4px solid #0891b2' }}>
+        <div className="kpi-card" style={{ borderLeft: '4px solid var(--color-cyan)' }}>
           <span className="kpi-title">Value at Risk (VaR {summary?.confidence_level_pct ?? 95}%)</span>
           <span className="kpi-value">{summary ? Math.round(summary.value_at_risk_uah).toLocaleString() : '—'} грн/день</span>
         </div>
