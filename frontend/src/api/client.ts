@@ -277,6 +277,8 @@ export interface MarketBid {
   idm_fallback_suggested: boolean;
   idm_fallback_price_uah: number | null;
   idm_fallback_profit_uah: number | null;
+  bid_price_legally_clamped: boolean;
+  oree_bid_price_bounds_uah: { min: number; max: number };
 }
 
 export async function fetchBids(role: UserRole, assetId: string, date: string): Promise<{ date: string; asset_id: string; bids: MarketBid[] }> {
@@ -288,6 +290,7 @@ export interface GenerateBidsResult {
   date: string;
   margin_pct: number;
   n_bids: number;
+  n_price_clamped: number;
   bids: MarketBid[];
 }
 
@@ -315,6 +318,28 @@ export async function settleBids(role: UserRole, assetId: string, date: string):
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ asset_id: assetId, date }),
   });
+}
+
+export interface ActionItem {
+  severity: 'action' | 'warning' | 'info' | 'ok';
+  hour: number | null;
+  text: string;
+}
+
+export interface ActionSummary {
+  status: string;
+  date: string;
+  has_bids: boolean;
+  all_settled: boolean;
+  n_total: number;
+  n_executed: number;
+  n_needs_idm_action: number;
+  n_price_clamped: number;
+  actions: ActionItem[];
+}
+
+export async function fetchActionSummary(role: UserRole, assetId: string, date: string): Promise<ActionSummary> {
+  return authJson(role, `/api/v1/bids/action-summary?asset_id=${assetId}&date=${date}`);
 }
 
 export interface GridStress {
