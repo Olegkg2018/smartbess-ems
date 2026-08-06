@@ -5,6 +5,7 @@ export default function Settings() {
     osr, setOsr, voltageClass, setVoltageClass, margin, setMargin,
     capacity, setCapacity, power, setPower, efficiency, setEfficiency,
     maxCyclesPerDay, setMaxCyclesPerDay,
+    bidReminderTelegramEnabled, setBidReminderTelegramEnabled,
     launchDate, setLaunchDate, saveSettings,
   } = useApp();
 
@@ -56,7 +57,7 @@ export default function Settings() {
         </div>
 
         <div className="form-group">
-          <label className="form-label">Макс. циклів заряд/розряд на добу</label>
+          <label className="form-label">Макс. циклів заряд розряд на добу</label>
           <input
             type="number" min={0.5} max={5} step={0.1} className="form-input"
             value={maxCyclesPerDay}
@@ -73,6 +74,17 @@ export default function Settings() {
         <div className="form-group">
           <label className="form-label">Дата початку роботи (Launch Date)</label>
           <input type="date" className="form-input" value={launchDate} onChange={(e) => setLaunchDate(e.target.value)} />
+        </div>
+
+        <div className="form-group">
+          <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={bidReminderTelegramEnabled}
+              onChange={(e) => setBidReminderTelegramEnabled(e.target.checked)}
+            />
+            Telegram-нагадування про дії з заявками РДН/ВДР (щодня о 10:00)
+          </label>
         </div>
 
         <button className="btn" style={{ width: '100%', marginTop: '10px' }} onClick={saveSettings}>

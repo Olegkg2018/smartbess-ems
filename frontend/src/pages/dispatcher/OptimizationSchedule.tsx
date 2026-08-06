@@ -3,6 +3,8 @@ import { ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Area, Bar,
 import { AlertTriangle, Radio, Pencil, CalendarClock, History, FileDown } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import GlobalFilterBar from '../../components/GlobalFilterBar';
+import BidGateCountdown from '../../components/BidGateCountdown';
+import BidActionCenter from '../../components/BidActionCenter';
 import * as api from '../../api/client';
 
 export default function OptimizationSchedule() {
@@ -29,8 +31,7 @@ export default function OptimizationSchedule() {
 
   // forecastPrices === null означає, що для targetDate ще ЖОДНОГО разу не
   // рахували прогноз/MILP (а не що результат "порожній" — MILP може
-  // легітимно нічого не робити, якщо арбітраж невигідний). Диспетчер це
-  // сплутав із "не рахує" — тому явне повідомлення замість порожнього графіка.
+  // легітимно нічого не робити, якщо арбітраж невигідний). Диспетчер це сплутав із "не рахує" — тому явне повідомлення замість порожнього графіка.
   const neverCalculated = forecastPrices === null;
 
   const baseSchedule = optimizationResult?.scenarios?.base?.schedule || [];
@@ -43,8 +44,8 @@ export default function OptimizationSchedule() {
 
   const hasProfile = dispatchProfile.length === 24;
   // ManualOverride "заморожує" ціну/потужність на момент збереження
-  // (saveOverrides шле весь масив, навіть непроторкнуті години) і сам не
-  // оновлюється, якщо прогноз/оптимізацію перерахували пізніше — реальний
+  // (saveOverrides шле весь масив, навіть непроторкнуті години) і сам
+  // не оновлюється, якщо прогноз/оптимізацію перерахували пізніше — реальний
   // кейс плутанини, знайдений диспетчером (графік показував застарілу ціну
   // після виправлення прогнозу, поки хтось не натиснув "Скинути").
   const hasOverrides = manualOverrides.some((o: any) => o.is_overridden);
@@ -128,6 +129,10 @@ export default function OptimizationSchedule() {
         )}
       </div>
 
+      <div style={{ marginBottom: '24px' }}>
+        <BidActionCenter />
+      </div>
+
       <div className="glass-card">
         <h3 className="card-title" style={{ marginBottom: '4px' }}>Заявка РДН на {targetDate}</h3>
         <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 12px' }}>
@@ -136,6 +141,7 @@ export default function OptimizationSchedule() {
           нашу ціну від прогнозу в бік більшої ймовірності виконання (продаж дешевше, купівля дорожче) — це РУЧНЕ налаштування
           ризику, а не сам прогноз.
         </p>
+        <BidGateCountdown targetDate={targetDate} />
         {!bidMargin ? (
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Завантаження...</p>
         ) : (
@@ -191,7 +197,17 @@ export default function OptimizationSchedule() {
                     <td style={{ padding: '4px 8px' }}>{b.bid_type === 'sell' ? 'Продаж' : 'Купівля'}</td>
                     <td style={{ padding: '4px 8px' }}>{Math.round(b.volume_kw)}</td>
                     <td style={{ padding: '4px 8px' }}>{Math.round(b.forecast_price_uah).toLocaleString()}</td>
-                    <td style={{ padding: '4px 8px', color: '#3b82f6' }}>{Math.round(b.bid_price_uah).toLocaleString()} (ручна, маржа {b.margin_pct}%)</td>
+                    <td style={{ padding: '4px 8px', color: '#3b82f6' }}>
+                      {Math.round(b.bid_price_uah).toLocaleString()} (ручна, маржа {b.margin_pct}%)
+                      {b.bid_price_legally_clamped && (
+                        <span
+                          title={`Ціна скоригована до законної межі OREE (${b.oree_bid_price_bounds_uah.min}–${b.oree_bid_price_bounds_uah.max} грн/МВт·год)`}
+                          style={{ display: 'inline-flex', verticalAlign: 'middle', marginLeft: '4px' }}
+                        >
+                          <AlertTriangle size={13} style={{ color: '#d97706' }} />
+                        </span>
+                      )}
+                    </td>
                     <td style={{ padding: '4px 8px' }}>{b.actual_price_uah != null ? Math.round(b.actual_price_uah).toLocaleString() : '—'}</td>
                     <td style={{ padding: '4px 8px' }}>
                       {b.executed === null ? '⏳ очікує факту' : b.executed ? '✅ виконано' : '❌ не виконано'}

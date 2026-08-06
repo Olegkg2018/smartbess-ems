@@ -51,6 +51,11 @@ export default function ExecutiveOverview() {
           <span className="kpi-value">{report.roy_forecast.estimated_payback_years.toFixed(2)} років</span>
           <span className="kpi-change negative">CAPEX: {Math.round(report.bess_properties.estimated_capex_uah).toLocaleString()} грн</span>
         </div>
+        <div className="kpi-card">
+          <span className="kpi-title">Внесок OREE (участь у ринку) YTD</span>
+          <span className="kpi-value" style={{ color: '#d97706' }}>{Math.round(report.ytd_metrics.oree_participation_fee_ytd_uah ?? 0).toLocaleString()} грн</span>
+          <span className="kpi-change neutral">4669.71 грн/міс + 6.88 грн/МВт·год (тариф 2026)</span>
+        </div>
       </div>
 
       <div className="grid-2">

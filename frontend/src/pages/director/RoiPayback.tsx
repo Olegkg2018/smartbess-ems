@@ -2,11 +2,24 @@ import { ComposedChart, Area, Line, CartesianGrid, XAxis, YAxis, Tooltip, Respon
 import { useApp } from '../../state/AppContext';
 
 export default function RoiPayback() {
-  const { capex, setCapex, discountRate, setDiscountRate, lifetime, setLifetime, executiveReport } = useApp();
+  const {
+    capex, setCapex, discountRate, setDiscountRate, lifetime, setLifetime, executiveReport,
+    capacity, maxCyclesPerDay,
+  } = useApp();
 
   const avgDailyProfit = executiveReport?.ytd_metrics?.average_daily_profit_uah ?? 0;
   const baseYearlyProfit = avgDailyProfit * 365;
-  const opexYearly = capex * 0.02 + 180000;
+
+  // Реальні тарифи 2026 (oree.com.ua/index.php/newsctr/n/30795, MEMORY.md §8).
+  // Дублює TariffService.OREE_MARKET_PARTICIPATION_FEE_* — той самий патерн
+  // дублювання констант між Python/TS, що вже є для baseload_passthrough_ratio.
+  const OREE_FEE_UAH_MONTH = 4669.71;
+  const OREE_FEE_UAH_PER_MWH = 6.88;
+  // Оцінка річного обсягу торгів: ємність (кВт-год→МВт-год) × цикли/добу × 2 (заряд+розряд) × 365.
+  const annualTradedVolumeMwh = (capacity / 1000) * maxCyclesPerDay * 2 * 365;
+  const oreeParticipationFeeYearly = OREE_FEE_UAH_MONTH * 12 + OREE_FEE_UAH_PER_MWH * annualTradedVolumeMwh;
+
+  const opexYearly = capex * 0.02 + 180000 + oreeParticipationFeeYearly;
   const netYearlyInflow = baseYearlyProfit - opexYearly;
 
   const years = Array.from({ length: lifetime + 1 }, (_, i) => i);
@@ -39,6 +52,13 @@ export default function RoiPayback() {
             <label className="form-label">Термін служби проекту (років)</label>
             <input type="number" className="form-input" value={lifetime} onChange={(e) => setLifetime(Number(e.target.value))} />
           </div>
+        </div>
+
+        <div className="audit-item" style={{ background: 'rgba(217, 119, 6, 0.05)', borderColor: 'rgba(217, 119, 6, 0.2)' }}>
+          <span>Реєстраційний внесок OREE (реальний тариф 2026: 4669.71 грн/міс + 6.88 грн/МВт·год):</span>
+          <strong style={{ color: '#d97706', fontSize: '0.95rem' }}>
+            {Math.round(oreeParticipationFeeYearly).toLocaleString()} грн/рік
+          </strong>
         </div>
 
         <div className="audit-item" style={{ background: 'rgba(5, 150, 105, 0.05)', borderColor: 'rgba(5, 150, 105, 0.2)' }}>
