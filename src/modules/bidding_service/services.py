@@ -14,7 +14,21 @@ import src.modules.forecast_service.ml_pipeline as mt
 
 DEFAULT_MARGIN_PCT = 2.0
 
-# Ті самі тарифи, що scheduler.py реально використовує для боевого плану
+# Легальні межі ціни заявки на OREE (Правила ринку РДН/ВДР, НКРЕКП №308,
+# ред. №1169/24.06.2019 зі змінами №832/02.05.2023) — 10.00-50000.00 грн/МВт·год.
+# Це ІНША межа, ніж PRICE_FLOOR/PRICE_CAP=16000.0 у ml_pipeline.py/milp_model.py —
+# ті клипають ПРОГНОЗ ціни, а не саму ціну заявки, що піде в кабінет oree.com.ua.
+# Джерело: MEMORY.md §8.
+OREE_BID_PRICE_MIN_UAH = 10.0
+OREE_BID_PRICE_MAX_UAH = 50000.0
+
+
+def clamp_bid_price_to_oree_bounds(raw_price_uah: float) -> tuple:
+    """Обмежує ціну заявки легальними межами OREE. Повертає (clamped_price, was_clamped)."""
+    clamped = min(max(raw_price_uah, OREE_BID_PRICE_MIN_UAH), OREE_BID_PRICE_MAX_UAH)
+    return clamped, clamped != raw_price_uah
+
+# Ті самі тарифи, що scheduler.py реально використовує для боєвого плану
 # (Settings поки не підключені до battery_params там) — щоб P&L заявки
 # рахувався на однакових умовах з тим, що реально диспетчерувалось.
 TARIFF_KWARGS = dict(
@@ -65,15 +79,17 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
         if p.target_power_mw > 0.001:
             bid_type = 'sell'
             volume_kw = p.target_power_mw * 1000.0
-            bid_price = forecast_price * (1.0 - margin_pct / 100.0)
+            bid_price_raw = forecast_price * (1.0 - margin_pct / 100.0)
         elif p.target_power_mw < -0.001:
             bid_type = 'buy'
             volume_kw = -p.target_power_mw * 1000.0
-            bid_price = forecast_price * (1.0 + margin_pct / 100.0)
+            bid_price_raw = forecast_price * (1.0 + margin_pct / 100.0)
         else:
             bid_type = 'standby'
             volume_kw = 0.0
-            bid_price = forecast_price
+            bid_price_raw = forecast_price
+
+        bid_price, _ = clamp_bid_price_to_oree_bounds(bid_price_raw)
 
         row = db.query(MarketBid).filter(
             MarketBid.asset_id == asset.id, MarketBid.timestamp == p.timestamp,
@@ -98,12 +114,14 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
         bids.append(row)
 
     db.commit()
+    bid_dicts = [_bid_to_dict(b) for b in bids]
     return {
         'status': 'ok',
         'date': target_date.date().isoformat(),
         'margin_pct': margin_pct,
         'n_bids': len(bids),
-        'bids': [_bid_to_dict(b) for b in bids],
+        'n_price_clamped': sum(1 for d in bid_dicts if d['bid_price_legally_clamped']),
+        'bids': bid_dicts,
     }
 
 
@@ -189,6 +207,10 @@ def settle_bids_for_date(db, asset, target_date: datetime.datetime, actual_price
 
 
 def _bid_to_dict(b: MarketBid) -> dict:
+    price_clamped = (
+        b.bid_price_uah <= OREE_BID_PRICE_MIN_UAH + 1e-6
+        or b.bid_price_uah >= OREE_BID_PRICE_MAX_UAH - 1e-6
+    )
     return {
         'hour': b.timestamp.hour,
         'bid_type': b.bid_type,
@@ -202,4 +224,66 @@ def _bid_to_dict(b: MarketBid) -> dict:
         'idm_fallback_suggested': b.idm_fallback_suggested,
         'idm_fallback_price_uah': b.idm_fallback_price_uah,
         'idm_fallback_profit_uah': b.idm_fallback_profit_uah,
+        'bid_price_legally_clamped': price_clamped,
+        'oree_bid_price_bounds_uah': {'min': OREE_BID_PRICE_MIN_UAH, 'max': OREE_BID_PRICE_MAX_UAH},
+    }
+
+
+def build_daily_action_summary(db, asset, target_date: datetime.datetime) -> dict:
+    """
+    "Що робити зараз" по вже ІСНУЮЧОМУ стану MarketBid на target_date.
+    Тільки ЧИТАЄ — нічого не генерує й не звіряє сама (щоб не перетворитись
+    на приховану автоматизацію подачі заявок, явно відкладену користувачем).
+    """
+    bids = db.query(MarketBid).filter(
+        MarketBid.asset_id == asset.id,
+        MarketBid.timestamp >= target_date,
+        MarketBid.timestamp < target_date + datetime.timedelta(days=1),
+    ).order_by(MarketBid.timestamp).all()
+
+    date_str = target_date.date().isoformat()
+    actions = []
+
+    if not bids:
+        actions.append({
+            'severity': 'action', 'hour': None,
+            'text': f'Заявки РДН на {date_str} ще не сформовано — натисніть «Сформувати заявки зараз» (потрібен готовий прогноз/MILP-графік на цю дату).',
+        })
+        return {'status': 'ok', 'date': date_str, 'has_bids': False, 'all_settled': False,
+                'n_total': 0, 'n_executed': 0, 'n_needs_idm_action': 0, 'n_price_clamped': 0, 'actions': actions}
+
+    dicts = [_bid_to_dict(b) for b in bids if b.bid_type != 'standby']
+    n_unsettled = sum(1 for d in dicts if d['executed'] is None)
+    n_executed = sum(1 for d in dicts if d['executed'] is True)
+    n_needs_idm = sum(1 for d in dicts if d['executed'] is False and d['idm_fallback_suggested'])
+    n_clamped = sum(1 for d in dicts if d['bid_price_legally_clamped'])
+
+    if n_unsettled > 0:
+        actions.append({
+            'severity': 'action', 'hour': None,
+            'text': f'Подайте вручну {n_unsettled} заявок РДН на {date_str} у кабінеті oree.com.ua (закриття воріт — 12:00 напередодні). Після публікації факту ціни (~13:00) натисніть «Звірити з фактом OREE».',
+        })
+
+    if n_clamped > 0:
+        actions.append({
+            'severity': 'warning', 'hour': None,
+            'text': f'{n_clamped} год. з ціною заявки, скоригованою до законної межі OREE (10.00–50000.00 грн/МВт·год) — перевірте вручну перед поданням.',
+        })
+
+    for d in dicts:
+        if d['executed'] is False and d['idm_fallback_suggested']:
+            actions.append({
+                'severity': 'warning', 'hour': d['hour'],
+                'text': (f"Год {d['hour']}: заявка РДН НЕ виконана (заявлено {round(d['bid_price_uah'])}, факт {round(d['actual_price_uah'] or 0)} грн/МВт·год) — "
+                         f"подайте на ВДР {round(d['volume_kw'])} кВт за ~{round(d['idm_fallback_price_uah'] or 0)} грн/МВт·год "
+                         f"(очікуваний прибуток {round(d['idm_fallback_profit_uah'] or 0)} грн)."),
+            })
+
+    if not actions and n_executed > 0:
+        actions.append({'severity': 'ok', 'hour': None, 'text': f'Усі {n_executed} заявок РДН на {date_str} виконано — дій не потрібно.'})
+
+    return {
+        'status': 'ok', 'date': date_str, 'has_bids': True, 'all_settled': n_unsettled == 0,
+        'n_total': len(dicts), 'n_executed': n_executed, 'n_needs_idm_action': n_needs_idm,
+        'n_price_clamped': n_clamped, 'actions': actions,
     }

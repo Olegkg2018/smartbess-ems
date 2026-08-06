@@ -118,3 +118,78 @@ def check_and_send_grid_stress_alert() -> dict:
         _save_sent_state(sent_state)
 
     return {"sent": bool(result.get("ok")), "severity": severity, "detail": result}
+
+
+def _bid_reminder_enabled() -> bool:
+    """Читає прапорець з system_settings.json (SystemSettingsModel-патерн, як
+    baseload_passthrough_ratio) — за замовчуванням True (нагадування корисне,
+    диспетчер сам вимикає при потребі)."""
+    path = os.path.join(settings.DATA_DIR, "system_settings.json")
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                return bool(json.load(f).get("bid_reminder_telegram_enabled", True))
+        except Exception:
+            pass
+    return True
+
+
+def check_and_send_bid_reminder() -> dict:
+    """
+    Читає ІСНУЮЧИЙ стан MarketBid на сьогодні і завтра через
+    build_daily_action_summary (тільки читання — нічого не генерує/не
+    звіряє сама, щоб не перетворитись на приховану автоматизацію подачі
+    заявок, явно відкладену користувачем) і надсилає нагадування зі
+    списком конкретних дій, якщо такі є.
+    """
+    if not CHAT_ID:
+        return {"sent": False, "reason": "TELEGRAM_CHAT_ID не налаштований"}
+    if not _bid_reminder_enabled():
+        return {"sent": False, "reason": "Нагадування про заявки вимкнено в системних налаштуваннях"}
+
+    from src.database.session import SessionLocal
+    from src.database.models import Asset
+    import src.modules.bidding_service.services as bidding
+
+    db = SessionLocal()
+    try:
+        asset = db.query(Asset).first()
+        if not asset:
+            return {"sent": False, "reason": "Немає жодного активу (Asset) у системі"}
+        today = datetime.datetime.combine(datetime.date.today(), datetime.time.min)
+        tomorrow = today + datetime.timedelta(days=1)
+        summary_tomorrow = bidding.build_daily_action_summary(db, asset, tomorrow)
+        summary_today = bidding.build_daily_action_summary(db, asset, today)
+    finally:
+        db.close()
+
+    lines = []
+    actionable_tomorrow = [a for a in summary_tomorrow['actions'] if a['severity'] in ('action', 'warning')]
+    actionable_today = [a for a in summary_today['actions'] if a['severity'] in ('action', 'warning')]
+    if actionable_tomorrow:
+        lines.append(f"📅 Заявка РДН на {tomorrow.date().isoformat()} (подати сьогодні до 12:00):")
+        lines += [f"  • {a['text']}" for a in actionable_tomorrow]
+    if actionable_today:
+        lines.append(f"⚡ Сьогоднішні заявки ({today.date().isoformat()}):")
+        lines += [f"  • {a['text']}" for a in actionable_today]
+
+    if not lines:
+        return {"sent": False, "reason": "Немає дій, що потребують уваги"}
+
+    today_str = datetime.date.today().isoformat()
+    sent_state = _load_sent_state()
+    dedup_key = f"bid_reminder_{today_str}"
+    # На відміну від check_and_send_grid_stress_alert (один severity/добу), список
+    # дій може легітимно змінитись протягом дня (напр. після звірки
+    # ~13:00 з'являється нова порада по ВДР) — тому дедуп за ЗМІСТОМ, а не
+    # лише за датою, щоб не подавити нове реально нове повідомлення.
+    content_signature = str(hash(tuple(lines)))
+    if sent_state.get(dedup_key) == content_signature:
+        return {"sent": False, "reason": "Вже надсилали цей самий набір дій сьогодні"}
+
+    text = "🔔 SmartBESS EMS — дії по заявках РДН/ВДР\n\n" + "\n".join(lines)
+    result = send_notification(CHAT_ID, text)
+    if result.get("ok"):
+        sent_state[dedup_key] = content_signature
+        _save_sent_state(sent_state)
+    return {"sent": bool(result.get("ok")), "detail": result}

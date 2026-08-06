@@ -51,6 +51,18 @@ class TariffService:
     # нового walk-forward бектесту з підтвердженим джерелом.
     PRICE_FLOOR_UAH_MWH: float = 10.0
 
+    # Реальні тарифи участі в ринку РДН/ВДР на 2026 рік (без ПДВ), сплата
+    # щоденно за фактом торгів. Джерело: oree.com.ua/index.php/newsctr/n/30795
+    # (див. MEMORY.md §8). НЕ плутати з тарифами передачі/розподілу вище —
+    # це окремий диспетчерський/членський внесок за реєстрацію учасником ринку.
+    OREE_MARKET_PARTICIPATION_FEE_UAH_MONTH: float = 4669.71
+    OREE_MARKET_PARTICIPATION_FEE_UAH_MWH: float = 6.88
+
+    @classmethod
+    def calculate_oree_participation_fee_uah(cls, traded_volume_mwh: float, months: float = 12.0) -> float:
+        """Фіксований місячний внесок × months + тариф на операції × реальний обсяг торгів (МВт·год)."""
+        return cls.OREE_MARKET_PARTICIPATION_FEE_UAH_MONTH * months + cls.OREE_MARKET_PARTICIPATION_FEE_UAH_MWH * traded_volume_mwh
+
     @classmethod
     def get_distribution_tariff(cls, oblenergo_name: str, voltage_class: int) -> float:
         """
