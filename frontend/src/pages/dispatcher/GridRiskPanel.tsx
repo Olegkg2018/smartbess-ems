@@ -23,7 +23,7 @@ export default function GridRiskPanel() {
 
   const stress = marketConditions.grid_stress_today || { grid_stress_high: 0, grid_stress_medium: 0, mentions: 0 };
   const severity = stress.grid_stress_high ? 'high' : stress.grid_stress_medium ? 'medium' : 'none';
-  const severityColor = severity === 'high' ? '#ef4444' : severity === 'medium' ? '#d97706' : '#059669';
+  const severityColor = severity === 'high' ? 'var(--color-rose)' : severity === 'medium' ? 'var(--color-amber)' : 'var(--color-emerald)';
   const severityText = severity === 'high' ? 'Підвищений ризик (аварії/обстріли)' : severity === 'medium' ? 'Помірний ризик (обмеження)' : 'Без відхилень';
 
   return (
@@ -33,7 +33,7 @@ export default function GridRiskPanel() {
           <AlertTriangle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
           Сьогоднішній стан енергосистеми: {severityText}
         </h4>
-        <p style={{ margin: 0, fontSize: '13.5px', color: '#9ca3af', lineHeight: '1.5' }}>
+        <p style={{ margin: 0, fontSize: '13.5px', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
           Реальний keyword-сигнал з публічних каналів Укренерго/Міненерго ({stress.mentions} згадувань сьогодні).
           Це операційна обізнаність для диспетчера, а не автоматична поправка прогнозу.
         </p>
@@ -53,7 +53,7 @@ export default function GridRiskPanel() {
             <Zap size={14} style={{ verticalAlign: 'middle', marginRight: '4px' }} />
             Транскордонний нетто-експорт
           </span>
-          <span className="kpi-value" style={{ color: (marketConditions.grid_net_export_mw ?? 0) >= 0 ? '#059669' : '#ef4444' }}>
+          <span className="kpi-value" style={{ color: (marketConditions.grid_net_export_mw ?? 0) >= 0 ? 'var(--color-emerald)' : 'var(--color-rose)' }}>
             {marketConditions.grid_net_export_mw?.toFixed(0) ?? '—'} МВт
           </span>
           <span className="kpi-change neutral">
@@ -79,7 +79,7 @@ export default function GridRiskPanel() {
           {(marketConditions.latest_posts || []).map((post: any, idx: number) => (
             <div key={idx} style={{
               fontSize: '0.85rem', padding: '12px', borderRadius: '6px', background: 'rgba(255,255,255,0.02)',
-              borderLeft: `3px solid ${post.severity === 'high' ? '#ef4444' : post.severity === 'medium' ? '#d97706' : '#3b82f6'}`,
+              borderLeft: `3px solid ${post.severity === 'high' ? 'var(--color-rose)' : post.severity === 'medium' ? 'var(--color-amber)' : 'var(--color-blue)'}`,
               whiteSpace: 'pre-wrap',
             }}>
               <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginBottom: '6px' }}>
