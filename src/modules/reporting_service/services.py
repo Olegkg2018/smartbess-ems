@@ -12,6 +12,7 @@ class ReportingService:
         capex_uah: float,
         yearly_revenue_uah: float,
         yearly_opex_uah: float,
+        oree_participation_fee_uah: float = 0.0,
         discount_rate: float = 0.12,
         lifetime_years: int = 10
     ) -> Dict[str, Any]:
@@ -22,10 +23,15 @@ class ReportingService:
         - Simple Payback Period
         - Discounted Payback Period
         - ROI (Return on Investment)
+
+        oree_participation_fee_uah — реальний річний внесок за участь у ринку
+        РДН/ВДР (окрема регуляторна стаття витрат, не змішується мовчки
+        з генеричним yearly_opex_uah — див. TariffService.calculate_oree_participation_fee_uah).
         """
         cash_flows = [-capex_uah]
-        net_yearly_cf = yearly_revenue_uah - yearly_opex_uah
-        
+        total_yearly_opex = yearly_opex_uah + oree_participation_fee_uah
+        net_yearly_cf = yearly_revenue_uah - total_yearly_opex
+
         for _ in range(lifetime_years):
             cash_flows.append(net_yearly_cf)
             
@@ -59,6 +65,9 @@ class ReportingService:
         
         return {
             "capex_uah": capex_uah,
+            "yearly_opex_uah": yearly_opex_uah,
+            "oree_participation_fee_uah": oree_participation_fee_uah,
+            "total_yearly_opex_uah": total_yearly_opex,
             "yearly_net_cash_flow_uah": net_yearly_cf,
             "total_net_profit_uah": total_net_profit,
             "roi_pct": float(roi),
@@ -238,7 +247,10 @@ class ReportingService:
         curr = start_date
         while curr < today:
             date_str = curr.isoformat()
-            if date_str not in cached_days:
+            # 'not in cached_days' — звичайний пропуск дня; 'traded_volume_mwh' not
+            # in cached_days[date_str] — self-heal бэкфілл для старих кеш-записів,
+            # порахованих до додавання обсягу торгів (для реального тарифу OREE).
+            if date_str not in cached_days or 'traded_volume_mwh' not in cached_days[date_str]:
                 dates_to_calculate.append(curr)
             curr += datetime.timedelta(days=1)
             
@@ -275,6 +287,7 @@ class ReportingService:
                     # Daily Actual P&L from manual overrides
                     actual_profit = 0.0
                     total_discharge_kwh = 0.0
+                    total_charge_kwh = 0.0
                     charge_cost = 0.0
                     discharge_rev = 0.0
                     for o in overrides:
@@ -290,10 +303,11 @@ class ReportingService:
                             val = abs(power_kw) * (price_kwh + total_tariffs_kwh)
                             actual_profit -= val
                             charge_cost += val
-                            
+                            total_charge_kwh += abs(power_kw)
+
                     degr_cost_day = total_discharge_kwh * (deg_cost_mwh / 1000.0)
                     actual_profit -= degr_cost_day
-                    
+
                     cached_days[d_str] = {
                         "optimal_profit_uah": float(actual_profit),
                         "actual_profit_uah": float(actual_profit),
@@ -301,12 +315,14 @@ class ReportingService:
                         "charge_cost_uah": float(charge_cost),
                         "discharge_revenue_uah": float(discharge_rev),
                         "status": "actual",
-                        "accuracy_rate": 1.0
+                        "accuracy_rate": 1.0,
+                        "traded_volume_mwh": float((total_discharge_kwh + total_charge_kwh) / 1000.0)
                     }
                 elif telemetry and len(telemetry) >= 12:
                     # Actual BESS execution P&L from telemetry
                     actual_profit = 0.0
                     total_discharge_kwh = 0.0
+                    total_charge_kwh = 0.0
                     charge_cost = 0.0
                     discharge_rev = 0.0
                     for tel in telemetry:
@@ -314,7 +330,7 @@ class ReportingService:
                         price_rows = df_day[df_day['Datetime'].dt.hour == hour]
                         price_uah = price_rows['Price'].values[0] if not price_rows.empty else 3000.0
                         price_kwh = price_uah / 1000.0
-                        
+
                         power_kw = tel.current_power_mw * 1000.0
                         if power_kw > 0: # sell
                             val = power_kw * price_kwh
@@ -325,11 +341,12 @@ class ReportingService:
                             val = abs(power_kw) * (price_kwh + total_tariffs_kwh)
                             actual_profit -= val
                             charge_cost += val
-                            
+                            total_charge_kwh += abs(power_kw)
+
                     # Degradation cost
                     degr_cost_day = total_discharge_kwh * (deg_cost_mwh / 1000.0)
                     actual_profit -= degr_cost_day
-                    
+
                     cached_days[d_str] = {
                         "optimal_profit_uah": float(actual_profit),
                         "actual_profit_uah": float(actual_profit),
@@ -337,7 +354,8 @@ class ReportingService:
                         "charge_cost_uah": float(charge_cost),
                         "discharge_revenue_uah": float(discharge_rev),
                         "status": "actual",
-                        "accuracy_rate": 1.0
+                        "accuracy_rate": 1.0,
+                        "traded_volume_mwh": float((total_discharge_kwh + total_charge_kwh) / 1000.0)
                     }
                 else:
                     # Simulated optimal backtesting dispatch
@@ -380,6 +398,8 @@ class ReportingService:
                                 if h < len(discharge_list) and discharge_list[h] > 0:
                                     sim_discharge_revenue += discharge_list[h] * pr_kwh
 
+                            traded_volume_mwh = (sum(charge_list) + sum(discharge_list)) / 1000.0
+
                             cached_days[d_str] = {
                                 "optimal_profit_uah": float(opt_profit),
                                 "actual_profit_uah": float(actual_simulation_profit),
@@ -389,6 +409,7 @@ class ReportingService:
                                 "status": "simulated",
                                 "accuracy_rate": profit_capture_ratio,
                                 "accuracy_source": capture_info['source'],
+                                "traded_volume_mwh": float(traded_volume_mwh),
                             }
                         except Exception as oe:
                             print(f"Error solving optimization for date {d_str}: {oe}")
@@ -401,6 +422,7 @@ class ReportingService:
                                 "status": "simulated",
                                 "accuracy_rate": profit_capture_ratio,
                                 "accuracy_source": capture_info['source'],
+                                "traded_volume_mwh": 0.0,
                             }
                     else:
                         cached_days[d_str] = {
@@ -412,6 +434,7 @@ class ReportingService:
                             "status": "simulated",
                             "accuracy_rate": profit_capture_ratio,
                             "accuracy_source": capture_info['source'],
+                            "traded_volume_mwh": 0.0,
                         }
             
             # Save updated cache
@@ -459,25 +482,44 @@ class ReportingService:
         
         total_annual_profit_projected = cumulative_actual + projected_roy_profit
         
-        # 7. Generate Payback Trajectory Curve
+        # 7. Generate Payback Trajectory Curve — з урахуванням реального
+        # щоденного внеску за участь у ринку OREE (TariffService, тариф 2026:
+        # 4669.71 грн/міс + 6.88 грн/МВт·год). Раніше траєкторія взагалі не
+        # враховувала жодних регулярних витрат — payback був оптимістичнішим
+        # за реальність зареєстрованого учасника ринку.
+        import calendar
+        from src.modules.tariff_service.services import TariffService
+
+        def _oree_daily_fee_uah(day: datetime.date, traded_volume_mwh: float) -> float:
+            days_in_month = calendar.monthrange(day.year, day.month)[1]
+            return (TariffService.OREE_MARKET_PARTICIPATION_FEE_UAH_MONTH / days_in_month
+                    + TariffService.OREE_MARKET_PARTICIPATION_FEE_UAH_MWH * traded_volume_mwh)
+
         trajectory = []
         running_payback = -capex_uah
-        
+        total_oree_fee_ytd = 0.0
+
         for idx, d_str in enumerate(sorted_dates):
-            running_payback += cached_days[d_str]["actual_profit_uah"]
+            day_date = datetime.date.fromisoformat(d_str)
+            daily_fee = _oree_daily_fee_uah(day_date, cached_days[d_str].get('traded_volume_mwh', 0.0))
+            total_oree_fee_ytd += daily_fee
+            running_payback += cached_days[d_str]["actual_profit_uah"] - daily_fee
             trajectory.append({
                 "date": d_str,
                 "cumulative_p_l_uah": float(running_payback),
                 "is_projected": False
             })
-            
+
+        last_30_volume = [cached_days[k].get('traded_volume_mwh', 0.0) for k in sorted_dates[-30:]] if len(sorted_dates) >= 30 else [cached_days[k].get('traded_volume_mwh', 0.0) for k in sorted_dates]
+        avg_daily_volume_mwh = float(np.mean(last_30_volume)) if last_30_volume else 0.0
+
         proj_day = today
         max_proj_days = 365 * 4
         proj_count = 0
-        
+
         while running_payback < 0 and proj_count < max_proj_days:
             proj_day += datetime.timedelta(days=1)
-            running_payback += avg_daily_actual
+            running_payback += avg_daily_actual - _oree_daily_fee_uah(proj_day, avg_daily_volume_mwh)
             proj_count += 1
             if proj_count % 7 == 0 or running_payback >= 0:
                 trajectory.append({
@@ -485,7 +527,7 @@ class ReportingService:
                     "cumulative_p_l_uah": float(running_payback),
                     "is_projected": True
                 })
-                
+
         payback_years = len(sorted_dates) / 365.0 + proj_count / 365.0
         
         return {
@@ -501,7 +543,8 @@ class ReportingService:
                 "actual_p_l_ytd_uah": cumulative_actual,
                 "degradation_amortization_ytd_uah": total_degradation,
                 "average_daily_profit_uah": avg_daily_actual,
-                "days_in_operation": len(sorted_dates)
+                "days_in_operation": len(sorted_dates),
+                "oree_participation_fee_ytd_uah": float(total_oree_fee_ytd)
             },
             "roy_forecast": {
                 "remaining_days": remaining_days,
