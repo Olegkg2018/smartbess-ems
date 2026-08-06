@@ -16,6 +16,7 @@ import RiskScenarios from './pages/director/RiskScenarios';
 import Settings from './pages/shared/Settings';
 import Audit from './pages/shared/Audit';
 import DataAudit from './pages/shared/DataAudit';
+import About from './pages/shared/About';
 
 function DefaultRedirect() {
   const { activeRole } = useApp();
@@ -46,6 +47,7 @@ function AppRoutes() {
         <Route path="/settings" element={<Settings />} />
         <Route path="/audit" element={<Audit />} />
         <Route path="/data-audit" element={<DataAudit />} />
+        <Route path="/about" element={<About />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

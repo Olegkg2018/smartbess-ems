@@ -1,7 +1,7 @@
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   TrendingUp, Cpu, BatteryCharging, DollarSign, ShieldAlert,
-  Settings as SettingsIcon, Users, Database, ArrowLeftRight, Radio, SearchCheck,
+  Settings as SettingsIcon, Users, Database, ArrowLeftRight, Radio, SearchCheck, Info,
 } from 'lucide-react';
 import { useApp } from '../state/AppContext';
 import type { UserRole } from '../api/client';
@@ -26,6 +26,7 @@ const SHARED_NAV: NavItem[] = [
   { to: '/settings', label: 'Settings & Tariffs', icon: <SettingsIcon size={18} /> },
   { to: '/audit', label: 'Audit & Model Decisions', icon: <Users size={18} /> },
   { to: '/data-audit', label: 'Довідка про дані дня', icon: <SearchCheck size={18} /> },
+  { to: '/about', label: 'Про програму', icon: <Info size={18} /> },
 ];
 
 const PAGE_TITLES: Record<string, string> = {
@@ -40,6 +41,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/settings': 'System Tariffs & Limit Configurator',
   '/audit': 'Four-Eyes Audit Trail & Model Decisions',
   '/data-audit': 'Довідка: що реально використано в розрахунку за дату',
+  '/about': 'Про програму',
 };
 
 export default function AppShell({ workspace }: { workspace: 'dispatcher' | 'director' }) {
