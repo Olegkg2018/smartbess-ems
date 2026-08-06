@@ -9,6 +9,7 @@ from src.core.security import RoleChecker
 import src.modules.market_data_service.data_manager as dm
 from src.modules.bidding_service.services import (
     generate_bids_for_date, settle_bids_for_date, get_margin_pct, DEFAULT_MARGIN_PCT, _bid_to_dict,
+    build_daily_action_summary,
 )
 
 router = APIRouter()
@@ -94,6 +95,20 @@ async def list_bids(asset_id: str, date: str):
         if not bids:
             raise HTTPException(status_code=404, detail="Заявок на цю дату ще не згенеровано")
         return {"date": date, "asset_id": asset_id, "bids": [_bid_to_dict(b) for b in bids]}
+    finally:
+        db.close()
+
+
+@router.get("/action-summary", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
+async def get_action_summary(asset_id: str, date: str):
+    """Синтезований список дій диспетчеру на конкретну дату — тільки читання існуючих MarketBid."""
+    db = SessionLocal()
+    try:
+        asset = db.query(Asset).filter(Asset.id == asset_id).first()
+        if not asset:
+            raise HTTPException(status_code=404, detail="Asset not found")
+        target_dt = datetime.datetime.strptime(date, '%Y-%m-%d')
+        return build_daily_action_summary(db, asset, target_dt)
     finally:
         db.close()
 

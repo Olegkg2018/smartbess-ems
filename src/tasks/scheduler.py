@@ -154,9 +154,9 @@ def run_daily_forecast_and_optimization():
 def run_nightly_model_retrain():
     """
     Щоденне автоматичне перенавчання точкової (LightGBM/XGBoost/MLP) та
-    quantile (P10/P90) моделей — до 2026-08-04 модель перенавчалась лише
-    вручну й локально (див. CLAUDE.md хронологія п.13/14), тому джоба з
-    06:00 могла місяцями рахувати прогноз на застарілих вагах. Живий тест
+    quantile (P10/P90) моделей — до 2026-08-04 модель перенавчалась лише вручну й
+    локально (див. CLAUDE.md хронологія п.13/14), тому джоба з 06:00 могла
+    місяцями рахувати прогноз на застарілих вагах. Живий тест
     в контейнері smartbess-platform на VPS 2026-08-04 показав пік пам'яті
     лише 597.9MiB/900MiB (66%, реальний запас ~300MB) і жодного впливу на
     відповідність живого API (перевірено паралельними запитами) — тому
@@ -177,6 +177,20 @@ def run_nightly_model_retrain():
     except Exception as e:
         print(f"Error in nightly model retrain job: {e}")
 
+def run_bid_reminder_check():
+    """
+    Читає ІСНУЮЧИЙ стан заявок (сьогодні/завтра) і шле Telegram-нагадування
+    диспетчеру зі списком конкретних дій — НІКОЛИ сама не генерує і не
+    звіряє заявки (це відкладена користувачем автоматизація), тільки читає
+    вже наявні MarketBid через build_daily_action_summary.
+    """
+    print(f"[{datetime.datetime.now()}] Background Scheduler: Checking bid reminder...")
+    try:
+        result = telegram_bot.check_and_send_bid_reminder()
+        print(f"[{datetime.datetime.now()}] Bid reminder check result: {result}")
+    except Exception as e:
+        print(f"Warning: bid reminder check failed: {e}")
+
 scheduler = BackgroundScheduler()
 
 def start_scheduler():
@@ -196,6 +210,13 @@ def start_scheduler():
         # (sync 673.6s dominated by external API latency + train_models 132.1s +
         # train_quantile_models 13.8s) — comfortably inside the window.
         scheduler.add_job(run_nightly_model_retrain, 'cron', hour=2, minute=0, id='nightly_model_retrain')
+        # 10:00 — ~2 год запасу до закриття воріт РДН (12:00), достатньо часу,
+        # щоб заявки на завтра вже були сформовані (диспетчер робить це вручну
+        # після 06:00). Як і для 06:00/02:00 джоб: відповідність "10:00
+        # контейнера" реальному київському часу НЕ перевірена (те саме
+        # застереження, що в CLAUDE.md п.17) — якщо контейнер працює не в
+        # Europe/Kyiv, скоригувати hour вручну.
+        scheduler.add_job(run_bid_reminder_check, 'cron', hour=10, minute=0, id='bid_reminder_check')
         scheduler.start()
         print("Background Scheduler started successfully.")
 
