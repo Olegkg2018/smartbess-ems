@@ -30,7 +30,7 @@ export default function OptimizationSchedule() {
   };
 
   // forecastPrices === null означає, що для targetDate ще ЖОДНОГО разу не
-  // рахували прогноз/MILP (а не що результат "порожній" — MILP може
+  // рахували прогноз/MILP (а не що результат "порожній" — MILP може бути
   // легітимно нічого не робити, якщо арбітраж невигідний). Диспетчер це сплутав із "не рахує" — тому явне повідомлення замість порожнього графіка.
   const neverCalculated = forecastPrices === null;
 
@@ -74,10 +74,10 @@ export default function OptimizationSchedule() {
   }, [bidMargin]);
 
   const socSourceLabel: Record<string, { text: string; color: string; icon: any }> = {
-    manual: { text: 'Ручне значення диспетчера', color: '#3b82f6', icon: Pencil },
-    scada_telemetry: { text: 'Реальна SCADA-телеметрія', color: '#059669', icon: Radio },
-    calculated_previous_day: { text: 'Розрахунок з кінця попередньої доби (учорашній MILP-план)', color: '#8b5cf6', icon: History },
-    fallback_default: { text: "Фолбек 20% — немає ні телеметрії, ні розрахунку за попередню добу", color: '#d97706', icon: AlertTriangle },
+    manual: { text: 'Ручне значення диспетчера', color: 'var(--color-blue)', icon: Pencil },
+    scada_telemetry: { text: 'Реальна SCADA-телеметрія', color: 'var(--color-emerald)', icon: Radio },
+    calculated_previous_day: { text: 'Розрахунок з кінця попередньої доби (учорайшній MILP-план)', color: '#8b5cf6', icon: History },
+    fallback_default: { text: "Фолбек 20% — немає ні телеметрії, ні розрахунку за попередню добу", color: 'var(--color-amber)', icon: AlertTriangle },
   };
 
   return (
@@ -118,7 +118,7 @@ export default function OptimizationSchedule() {
               {initialSoc.has_manual_override && (
                 <button
                   className="btn"
-                  style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', border: '1px solid #ef4444' }}
+                  style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', border: '1px solid var(--color-rose)' }}
                   onClick={clearInitialSocAndRecalculate}
                 >
                   Скинути на автоматичне
@@ -160,16 +160,16 @@ export default function OptimizationSchedule() {
             {bidMargin.source === 'manual' && (
               <button
                 className="btn"
-                style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', border: '1px solid #ef4444' }}
+                style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', border: '1px solid var(--color-rose)' }}
                 onClick={clearBidMarginAndRegenerate}
               >
                 Скинути на дефолт
               </button>
             )}
-            <button className="btn" style={{ backgroundColor: 'rgba(59, 130, 246, 0.15)', border: '1px solid #3b82f6' }} onClick={generateBidsNow}>
+            <button className="btn" style={{ backgroundColor: 'rgba(59, 130, 246, 0.15)', border: '1px solid var(--color-blue)' }} onClick={generateBidsNow}>
               Сформувати заявки зараз
             </button>
-            <button className="btn" style={{ backgroundColor: 'rgba(217, 119, 6, 0.15)', border: '1px solid #d97706' }} onClick={settleBidsNow}>
+            <button className="btn" style={{ backgroundColor: 'rgba(217, 119, 6, 0.15)', border: '1px solid var(--color-amber)' }} onClick={settleBidsNow}>
               Звірити з фактом OREE
             </button>
           </div>
@@ -197,14 +197,14 @@ export default function OptimizationSchedule() {
                     <td style={{ padding: '4px 8px' }}>{b.bid_type === 'sell' ? 'Продаж' : 'Купівля'}</td>
                     <td style={{ padding: '4px 8px' }}>{Math.round(b.volume_kw)}</td>
                     <td style={{ padding: '4px 8px' }}>{Math.round(b.forecast_price_uah).toLocaleString()}</td>
-                    <td style={{ padding: '4px 8px', color: '#3b82f6' }}>
+                    <td style={{ padding: '4px 8px', color: 'var(--color-blue)' }}>
                       {Math.round(b.bid_price_uah).toLocaleString()} (ручна, маржа {b.margin_pct}%)
                       {b.bid_price_legally_clamped && (
                         <span
                           title={`Ціна скоригована до законної межі OREE (${b.oree_bid_price_bounds_uah.min}–${b.oree_bid_price_bounds_uah.max} грн/МВт·год)`}
                           style={{ display: 'inline-flex', verticalAlign: 'middle', marginLeft: '4px' }}
                         >
-                          <AlertTriangle size={13} style={{ color: '#d97706' }} />
+                          <AlertTriangle size={13} style={{ color: 'var(--color-amber)' }} />
                         </span>
                       )}
                     </td>
@@ -214,9 +214,9 @@ export default function OptimizationSchedule() {
                     </td>
                     <td style={{ padding: '4px 8px' }}>
                       {b.executed ? (
-                        <span style={{ color: '#059669' }}>{Math.round(b.realized_profit_uah ?? 0).toLocaleString()} грн</span>
+                        <span style={{ color: 'var(--color-emerald)' }}>{Math.round(b.realized_profit_uah ?? 0).toLocaleString()} грн</span>
                       ) : b.idm_fallback_suggested ? (
-                        <span style={{ color: '#d97706' }}>
+                        <span style={{ color: 'var(--color-amber)' }}>
                           ВДР ~{Math.round(b.idm_fallback_price_uah ?? 0).toLocaleString()} грн/МВт·год → {Math.round(b.idm_fallback_profit_uah ?? 0).toLocaleString()} грн
                         </span>
                       ) : '—'}
@@ -230,18 +230,18 @@ export default function OptimizationSchedule() {
       </div>
 
       <div className="kpi-container" style={{ marginBottom: '24px' }}>
-        <div className="kpi-card" style={{ borderLeft: '4px solid #059669' }}>
+        <div className="kpi-card" style={{ borderLeft: '4px solid var(--color-emerald)' }}>
           <span className="kpi-title">Чистий прибуток за добу (з урахуванням втрат)</span>
-          <span className="kpi-value" style={{ color: dailyNetProfit >= 0 ? '#059669' : '#ef4444' }}>{Math.round(dailyNetProfit).toLocaleString()} грн</span>
+          <span className="kpi-value" style={{ color: dailyNetProfit >= 0 ? 'var(--color-emerald)' : 'var(--color-rose)' }}>{Math.round(dailyNetProfit).toLocaleString()} грн</span>
           <span className="kpi-change neutral">Дохід мінус Витрати та Знос</span>
         </div>
         <div className="kpi-card">
           <span className="kpi-title">Дохід від розряду (Продаж)</span>
-          <span className="kpi-value" style={{ color: '#059669' }}>{Math.round(dailyRevenue).toLocaleString()} грн</span>
+          <span className="kpi-value" style={{ color: 'var(--color-emerald)' }}>{Math.round(dailyRevenue).toLocaleString()} грн</span>
         </div>
         <div className="kpi-card">
           <span className="kpi-title">Витрати заряду (Купівля + Тарифи)</span>
-          <span className="kpi-value" style={{ color: '#ef4444' }}>{Math.round(dailyCost).toLocaleString()} грн</span>
+          <span className="kpi-value" style={{ color: 'var(--color-rose)' }}>{Math.round(dailyCost).toLocaleString()} грн</span>
         </div>
         <div className="kpi-card">
           <span className="kpi-title">Знос батареї (Деградація)</span>
@@ -270,17 +270,17 @@ export default function OptimizationSchedule() {
               <ResponsiveContainer>
                 <ComposedChart data={hasProfile ? currentDayProfile : chartProfile}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                  <XAxis dataKey="hour" stroke="#9ca3af" />
-                  <YAxis yAxisId="power" stroke="#9ca3af" label={{ value: 'кВт', angle: -90, position: 'insideLeft', fill: '#9ca3af', fontSize: 11 }} />
-                  <YAxis yAxisId="soc" orientation="right" domain={[0, capacity]} stroke="#9ca3af" label={{ value: 'кВт·год', angle: 90, position: 'insideRight', fill: '#9ca3af', fontSize: 11 }} />
+                  <XAxis dataKey="hour" stroke="var(--text-secondary)" />
+                  <YAxis yAxisId="power" stroke="var(--text-secondary)" label={{ value: 'кВт', angle: -90, position: 'insideLeft', fill: 'var(--text-secondary)', fontSize: 11 }} />
+                  <YAxis yAxisId="soc" orientation="right" domain={[0, capacity]} stroke="var(--text-secondary)" label={{ value: 'кВт·год', angle: 90, position: 'insideRight', fill: 'var(--text-secondary)', fontSize: 11 }} />
                   <YAxis yAxisId="price" hide domain={['auto', 'auto']} />
                   <Tooltip contentStyle={{ backgroundColor: '#111726', borderColor: '#1f293d' }} />
                   <Legend />
-                  <ReferenceLine yAxisId="soc" y={capacity * 0.9} stroke="#d97706" strokeDasharray="4 4" />
-                  <ReferenceLine yAxisId="soc" y={capacity * 0.1} stroke="#d97706" strokeDasharray="4 4" />
-                  <Bar yAxisId="power" dataKey="charge" name="Потужність заряду (кВт)" fill="#3b82f6" />
-                  <Bar yAxisId="power" dataKey="discharge" name="Потужність розряду (кВт)" fill="#059669" />
-                  <Area yAxisId="soc" type="monotone" dataKey="soc" name="Рівень заряду SoC (кВт-год)" stroke="#d97706" fill="rgba(217, 119, 6, 0.12)" strokeWidth={2} />
+                  <ReferenceLine yAxisId="soc" y={capacity * 0.9} stroke="var(--color-amber)" strokeDasharray="4 4" />
+                  <ReferenceLine yAxisId="soc" y={capacity * 0.1} stroke="var(--color-amber)" strokeDasharray="4 4" />
+                  <Bar yAxisId="power" dataKey="charge" name="Потужність заряду (кВт)" fill="var(--color-blue)" />
+                  <Bar yAxisId="power" dataKey="discharge" name="Потужність розряду (кВт)" fill="var(--color-emerald)" />
+                  <Area yAxisId="soc" type="monotone" dataKey="soc" name="Рівень заряду SoC (кВт-год)" stroke="var(--color-amber)" fill="rgba(217, 119, 6, 0.12)" strokeWidth={2} />
                   <Line yAxisId="price" type="monotone" dataKey="price" name="Ціна прогнозу / заявки (грн/МВт-год)" stroke="#a78bfa" strokeWidth={2} dot={{ r: 2 }} connectNulls />
                 </ComposedChart>
               </ResponsiveContainer>
@@ -293,7 +293,7 @@ export default function OptimizationSchedule() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
           <div>
             <h3 className="card-title" style={{ margin: 0 }}>Ручне коригування заявок (Manual Dispatch Schedule)</h3>
-            <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#9ca3af' }}>
+            <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: 'var(--text-secondary)' }}>
               Введіть потужність (МВт: розряд +, заряд -) та реальну ціну заявки (грн/МВт-год) для кожної години на {targetDate}.
             </p>
           </div>
@@ -304,7 +304,7 @@ export default function OptimizationSchedule() {
             <button className="btn" onClick={saveOverrides}>Зберегти ручний графік</button>
             <button
               className="btn"
-              style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', border: '1px solid #ef4444' }}
+              style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', border: '1px solid var(--color-rose)' }}
               onClick={() => { if (window.confirm('Ви впевнені, що хочете скинути ручний графік до оптимального?')) resetOverridesToOptimal(); }}
             >
               Скинути до оптимального
@@ -317,7 +317,7 @@ export default function OptimizationSchedule() {
             display: 'flex', gap: '10px', marginBottom: '16px', padding: '12px', borderRadius: '6px',
             background: 'rgba(217, 119, 6, 0.08)', border: '1px solid rgba(217, 119, 6, 0.3)', fontSize: '13px',
           }}>
-            <AlertTriangle size={16} style={{ color: '#d97706', flexShrink: 0, marginTop: '1px' }} />
+            <AlertTriangle size={16} style={{ color: 'var(--color-amber)', flexShrink: 0, marginTop: '1px' }} />
             <span>
               На цю дату вже збережено ручний графік — він «заморожує» ціну/потужність на момент збереження і НЕ
               оновлюється сам, навіть якщо прогноз чи оптимізацію перерахували пізніше. Якщо після збереження
@@ -345,7 +345,7 @@ export default function OptimizationSchedule() {
                 return (
                   <tr key={idx}>
                     <td>Година {idx + 1} ({String(idx).padStart(2, '0')}:00–{String(idx + 1).padStart(2, '0')}:00)</td>
-                    <td style={{ color: recPower > 0 ? '#059669' : recPower < 0 ? '#3b82f6' : '#9ca3af' }}>
+                    <td style={{ color: recPower > 0 ? 'var(--color-emerald)' : recPower < 0 ? 'var(--color-blue)' : 'var(--text-secondary)' }}>
                       {recPower > 0 ? `Розряд +${recPower.toFixed(2)} МВт` : recPower < 0 ? `Заряд ${recPower.toFixed(2)} МВт` : 'Пауза'}
                     </td>
                     <td>
@@ -356,8 +356,8 @@ export default function OptimizationSchedule() {
                         onChange={(e) => {
                           const raw = Number(e.target.value);
                           // Клип до реальної макс. потужності БЕСС (Asset.power_mw) —
-                          // без цього можна було ввести значення, у рази більше за
-                          // фізичну потужність батареї (реальний баг, знайдений диспетчером).
+                          // без цього можна було ввести значення, у рази більше за фізичну
+                          // потужність батареї (реальний баг, знайдений диспетчером).
                           const val = Number.isFinite(raw) ? Math.max(-power / 1000.0, Math.min(power / 1000.0, raw)) : raw;
                           setManualOverrides(manualOverrides.map((it: any, i: number) => (i === idx ? { ...it, power_mw: val } : it)));
                         }}
@@ -365,11 +365,11 @@ export default function OptimizationSchedule() {
                     </td>
                     <td>
                       <div style={{ display: 'flex', gap: '5px' }}>
-                        <button className="btn" style={{ padding: '3px 8px', fontSize: '11px', backgroundColor: '#3b82f6' }}
+                        <button className="btn" style={{ padding: '3px 8px', fontSize: '11px', backgroundColor: 'var(--color-blue)' }}
                           onClick={() => setManualOverrides(manualOverrides.map((it: any, i: number) => (i === idx ? { ...it, power_mw: -(power / 1000.0) } : it)))}>
                           Заряд (Max)
                         </button>
-                        <button className="btn" style={{ padding: '3px 8px', fontSize: '11px', backgroundColor: '#059669' }}
+                        <button className="btn" style={{ padding: '3px 8px', fontSize: '11px', backgroundColor: 'var(--color-emerald)' }}
                           onClick={() => setManualOverrides(manualOverrides.map((it: any, i: number) => (i === idx ? { ...it, power_mw: power / 1000.0 } : it)))}>
                           Розряд (Max)
                         </button>
