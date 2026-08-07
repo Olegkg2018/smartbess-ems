@@ -100,7 +100,7 @@ export default function DataAudit() {
           (а не порожні), і що саме прочитано з Telegram, без згладжування. Якщо джерело за день не дало жодного
           значення — це видно прямо тут, а не ховається за середнім показником.
         </p>
-        <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-end' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'flex-end' }}>
           <div className="form-group" style={{ margin: 0, maxWidth: '220px' }}>
             <label className="form-label">Дата для перевірки</label>
             <input type="date" className="form-input" value={date} onChange={(e) => setDate(e.target.value)} />
@@ -148,7 +148,7 @@ export default function DataAudit() {
                   {status.icon} {status.label}
                 </span>
                 <span className="kpi-change neutral">
-                  {usedInForecast ? 'Впливає на прогноз' : 'Не впливає на прогноз (див. звіт)'} · натисніть для деталей
+                  {usedInForecast ? 'Впливає на прогноз ціни' : 'Не впливає на прогноз (див. звіт)'} · натисніть для деталей
                 </span>
               </div>
             );
