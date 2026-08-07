@@ -332,7 +332,7 @@ export default function PriceForecast() {
                     />
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: '10px' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
                   <button
                     className="btn"
                     onClick={() => saveGridStressOverride(queuesDraft === '' ? null : Number(queuesDraft), noteDraft || null)}
