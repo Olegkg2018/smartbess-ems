@@ -623,15 +623,28 @@ a:focus-visible > .nav-item {
   }
 
   .top-header {
-    flex-wrap: wrap;
-    height: auto;
-    min-height: 64px;
+    flex-wrap: nowrap;
+    height: 64px;
     padding: 10px 12px;
     gap: 8px;
   }
 
+  .header-title-section {
+    min-width: 0;
+    overflow: hidden;
+    flex: 1 1 auto;
+  }
+
   .header-title {
-    font-size: 1rem;
+    font-size: 0.9rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+
+  .header-title-section .status-badge {
+    display: none;
   }
 
   .page-content {
@@ -653,9 +666,5 @@ a:focus-visible > .nav-item {
 
   .glass-card, .kpi-card {
     padding: var(--space-4);
-  }
-
-  .header-title-section .status-badge {
-    display: none;
   }
 }
