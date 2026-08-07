@@ -59,13 +59,23 @@ export default function BidGateCountdown({ targetDate }: Props) {
   }
   const vdrOpen = now.getTime() >= kyivWallClock(rdnGateDay, 15, 0).getTime();
 
+  // Критичний поріг — 15 хв до закриття воріт: тут countdown має привертати
+  // увагу (пульсація), а не просто змінювати колір тексту, як раніше.
+  const CRITICAL_MS = 15 * 60 * 1000;
+  const rdnCritical = rdnMsLeft > 0 && rdnMsLeft < CRITICAL_MS;
+  const vdrCritical = vdrOpen && nextVdrHour !== null && nextVdrMsLeft > 0 && nextVdrMsLeft < CRITICAL_MS;
+  const anyCritical = rdnCritical || vdrCritical;
+
   return (
-    <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', fontSize: '0.8rem', marginBottom: '12px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: rdnMsLeft > 0 ? (rdnMsLeft < 3600000 ? 'var(--color-amber)' : 'var(--text-secondary)') : 'var(--color-rose)' }}>
+    <div
+      className={anyCritical ? 'gate-countdown gate-countdown-critical' : 'gate-countdown'}
+      style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', fontSize: '0.8rem' }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: rdnMsLeft > 0 ? (rdnCritical ? 'var(--color-rose)' : rdnMsLeft < 3600000 ? 'var(--color-amber)' : 'var(--text-secondary)') : 'var(--color-rose)' }}>
         <Clock size={14} />
         <span>РДН на {targetDate}: {rdnMsLeft > 0 ? `${formatRemaining(rdnMsLeft)} до закриття воріт (12:00 ${rdnGateDay})` : 'ворота закрито'}</span>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-secondary)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: vdrCritical ? 'var(--color-rose)' : 'var(--text-secondary)' }}>
         <Clock size={14} />
         <span>
           ВДР: {!vdrOpen ? `відкриється о 15:00 ${rdnGateDay}` : nextVdrHour !== null ? `найближчі ворота (год ${nextVdrHour}) закриються через ${formatRemaining(nextVdrMsLeft)}` : 'всі години сьогодні закрито'}
