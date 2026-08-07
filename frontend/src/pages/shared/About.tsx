@@ -47,7 +47,7 @@ function Step({ n, children }: { n: number; children: React.ReactNode }) {
 
 export default function About() {
   return (
-    <div style={{ maxWidth: '860px' }}>
+    <div>
       <div className="glass-card" style={sectionGap}>
         <h3 className="card-title" style={cardTitleStyle}>Що це за програма</h3>
         <p style={bodyStyle}>
