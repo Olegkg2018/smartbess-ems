@@ -24,7 +24,7 @@ export default function ForecastAccuracy() {
 
   return (
     <div>
-      <div className="glass-card" style={{ marginBottom: '24px', borderLeft: '4px solid var(--color-cyan)' }}>
+      <div className="glass-card" style={{ marginBottom: '24px' }}>
         <h4 style={{ margin: '0 0 6px 0', fontSize: '16px', color: 'var(--color-cyan)' }}>Наскільки прогноз збігається з реальністю</h4>
         <p style={{ margin: 0, fontSize: '13.5px', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
           WAPE (Weighted Absolute Percentage Error) надійніший за MAPE у години з ціною, близькою до нуля —
@@ -33,7 +33,7 @@ export default function ForecastAccuracy() {
       </div>
 
       <div className="kpi-container" style={{ marginBottom: '24px' }}>
-        <div className="kpi-card" style={{ borderLeft: '4px solid var(--color-emerald)' }}>
+        <div className="kpi-card">
           <span className="kpi-title">Коефіцієнт захопленого прибутку</span>
           <span className="kpi-value" style={{ color: 'var(--color-emerald)' }}>{(ratio.ratio * 100).toFixed(1)}%</span>
           <span className="kpi-change neutral">Джерело: {SOURCE_LABELS[ratio.source] || ratio.source}</span>

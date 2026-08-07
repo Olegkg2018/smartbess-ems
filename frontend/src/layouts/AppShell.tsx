@@ -63,14 +63,14 @@ export default function AppShell({ workspace }: { workspace: 'dispatcher' | 'dir
           <span className="logo-text">SmartBESS EMS</span>
         </div>
 
-        <div
+        <button
           className="nav-item"
           style={{ background: 'rgba(59,130,246,0.08)', marginBottom: '12px' }}
           onClick={() => navigate(otherWorkspaceHome)}
         >
           <ArrowLeftRight size={18} />
           <span>Перейти: {otherWorkspaceLabel}</span>
-        </div>
+        </button>
 
         <div className="nav-section-title">{workspace === 'dispatcher' ? 'Dispatcher Console' : 'Director Dashboard'}</div>
         {workspaceNav.map((item) => (

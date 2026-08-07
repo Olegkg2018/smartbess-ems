@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Area, Bar, Line, ReferenceLine, ResponsiveContainer } from 'recharts';
-import { AlertTriangle, Radio, Pencil, CalendarClock, History, FileDown } from 'lucide-react';
+import { AlertTriangle, Radio, Pencil, CalendarClock, History, FileDown, Clock, CheckCircle2, XCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import GlobalFilterBar from '../../components/GlobalFilterBar';
 import BidGateCountdown from '../../components/BidGateCountdown';
 import BidActionCenter from '../../components/BidActionCenter';
+import ConfirmModal from '../../components/ConfirmModal';
 import * as api from '../../api/client';
 
 export default function OptimizationSchedule() {
@@ -73,6 +74,14 @@ export default function OptimizationSchedule() {
     if (bidMargin) setMarginDraft(String(bidMargin.margin_pct));
   }, [bidMargin]);
 
+  // Графік і таблиця ручних корективів згорнуті за замовчуванням — на добу
+  // з уже сформованими заявками найважливіше на екрані це центр дій і
+  // таблиця заявок, а не 24-рядкова таблиця чи графік, які актуальні лише
+  // коли диспетчер свідомо хоче їх переглянути чи скоригувати.
+  const [chartOpen, setChartOpen] = useState(false);
+  const [overridesOpen, setOverridesOpen] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+
   const socSourceLabel: Record<string, { text: string; color: string; icon: any }> = {
     manual: { text: 'Ручне значення диспетчера', color: 'var(--color-blue)', icon: Pencil },
     scada_telemetry: { text: 'Реальна SCADA-телеметрія', color: 'var(--color-emerald)', icon: Radio },
@@ -116,11 +125,7 @@ export default function OptimizationSchedule() {
                 Зберегти вручну і перерахувати
               </button>
               {initialSoc.has_manual_override && (
-                <button
-                  className="btn"
-                  style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', border: '1px solid var(--color-rose)' }}
-                  onClick={clearInitialSocAndRecalculate}
-                >
+                <button className="btn btn-danger" onClick={clearInitialSocAndRecalculate}>
                   Скинути на автоматичне
                 </button>
               )}
@@ -158,11 +163,7 @@ export default function OptimizationSchedule() {
               Зберегти маржу і сформувати заявки
             </button>
             {bidMargin.source === 'manual' && (
-              <button
-                className="btn"
-                style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', border: '1px solid var(--color-rose)' }}
-                onClick={clearBidMarginAndRegenerate}
-              >
+              <button className="btn btn-danger" onClick={clearBidMarginAndRegenerate}>
                 Скинути на дефолт
               </button>
             )}
@@ -177,27 +178,27 @@ export default function OptimizationSchedule() {
 
         {bids && bids.length > 0 && (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+            <table className="data-table">
               <thead>
-                <tr style={{ textAlign: 'left', color: 'var(--text-muted)' }}>
-                  <th style={{ padding: '4px 8px' }}>Год</th>
-                  <th style={{ padding: '4px 8px' }}>Тип</th>
-                  <th style={{ padding: '4px 8px' }}>Обсяг (кВт)</th>
-                  <th style={{ padding: '4px 8px' }}>Прогноз (грн/МВт·год)</th>
-                  <th style={{ padding: '4px 8px' }}>Ціна заявки (ручна, з маржею)</th>
-                  <th style={{ padding: '4px 8px' }}>Факт OREE</th>
-                  <th style={{ padding: '4px 8px' }}>Статус</th>
-                  <th style={{ padding: '4px 8px' }}>P&L / ВДР-пропозиція</th>
+                <tr>
+                  <th>Год</th>
+                  <th>Тип</th>
+                  <th>Обсяг (кВт)</th>
+                  <th>Прогноз (грн/МВт·год)</th>
+                  <th>Ціна заявки (ручна, з маржею)</th>
+                  <th>Факт OREE</th>
+                  <th>Статус</th>
+                  <th>P&L / ВДР-пропозиція</th>
                 </tr>
               </thead>
               <tbody>
                 {bids.filter((b) => b.bid_type !== 'standby').map((b) => (
-                  <tr key={b.hour} style={{ borderTop: '1px solid var(--border-color, #333)' }}>
-                    <td style={{ padding: '4px 8px' }}>{b.hour}</td>
-                    <td style={{ padding: '4px 8px' }}>{b.bid_type === 'sell' ? 'Продаж' : 'Купівля'}</td>
-                    <td style={{ padding: '4px 8px' }}>{Math.round(b.volume_kw)}</td>
-                    <td style={{ padding: '4px 8px' }}>{Math.round(b.forecast_price_uah).toLocaleString()}</td>
-                    <td style={{ padding: '4px 8px', color: 'var(--color-blue)' }}>
+                  <tr key={b.hour} className={b.executed === false ? 'row-alert' : undefined}>
+                    <td>{b.hour}</td>
+                    <td>{b.bid_type === 'sell' ? 'Продаж' : 'Купівля'}</td>
+                    <td>{Math.round(b.volume_kw)}</td>
+                    <td>{Math.round(b.forecast_price_uah).toLocaleString()}</td>
+                    <td style={{ color: 'var(--color-blue)' }}>
                       {Math.round(b.bid_price_uah).toLocaleString()} (ручна, маржа {b.margin_pct}%)
                       {b.bid_price_legally_clamped && (
                         <span
@@ -208,11 +209,17 @@ export default function OptimizationSchedule() {
                         </span>
                       )}
                     </td>
-                    <td style={{ padding: '4px 8px' }}>{b.actual_price_uah != null ? Math.round(b.actual_price_uah).toLocaleString() : '—'}</td>
-                    <td style={{ padding: '4px 8px' }}>
-                      {b.executed === null ? '⏳ очікує факту' : b.executed ? '✅ виконано' : '❌ не виконано'}
+                    <td>{b.actual_price_uah != null ? Math.round(b.actual_price_uah).toLocaleString() : '—'}</td>
+                    <td>
+                      {b.executed === null ? (
+                        <span className="status-badge pending"><Clock size={12} /> очікує факту</span>
+                      ) : b.executed ? (
+                        <span className="status-badge online"><CheckCircle2 size={12} /> виконано</span>
+                      ) : (
+                        <span className="status-badge offline"><XCircle size={12} /> не виконано</span>
+                      )}
                     </td>
-                    <td style={{ padding: '4px 8px' }}>
+                    <td>
                       {b.executed ? (
                         <span style={{ color: 'var(--color-emerald)' }}>{Math.round(b.realized_profit_uah ?? 0).toLocaleString()} грн</span>
                       ) : b.idm_fallback_suggested ? (
@@ -230,7 +237,7 @@ export default function OptimizationSchedule() {
       </div>
 
       <div className="kpi-container" style={{ marginBottom: '24px' }}>
-        <div className="kpi-card" style={{ borderLeft: '4px solid var(--color-emerald)' }}>
+        <div className="kpi-card">
           <span className="kpi-title">Чистий прибуток за добу (з урахуванням втрат)</span>
           <span className="kpi-value" style={{ color: dailyNetProfit >= 0 ? 'var(--color-emerald)' : 'var(--color-rose)' }}>{Math.round(dailyNetProfit).toLocaleString()} грн</span>
           <span className="kpi-change neutral">Дохід мінус Витрати та Знос</span>
@@ -250,8 +257,13 @@ export default function OptimizationSchedule() {
       </div>
 
       <div className="glass-card">
-        <h3 className="card-title" style={{ marginBottom: '4px' }}>Потужність заряду/розряду та рівень SoC BESS</h3>
-        {neverCalculated ? (
+        <div className="card-header-row" style={{ marginBottom: chartOpen ? '4px' : 0 }}>
+          <h3 className="card-title" style={{ margin: 0 }}>Потужність заряду/розряду та рівень SoC BESS</h3>
+          <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 10px', fontSize: '0.8rem' }} onClick={() => setChartOpen((v) => !v)}>
+            {chartOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />} {chartOpen ? 'Сховати графік' : 'Показати графік'}
+          </button>
+        </div>
+        {!chartOpen ? null : neverCalculated ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', padding: '60px 20px', color: 'var(--text-muted)' }}>
             <CalendarClock size={32} />
             <p style={{ margin: 0, fontSize: '0.9rem', textAlign: 'center' }}>
@@ -302,100 +314,113 @@ export default function OptimizationSchedule() {
               <FileDown size={14} /> {exporting ? 'Експорт...' : 'Експорт в Excel'}
             </button>
             <button className="btn" onClick={saveOverrides}>Зберегти ручний графік</button>
-            <button
-              className="btn"
-              style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', border: '1px solid var(--color-rose)' }}
-              onClick={() => { if (window.confirm('Ви впевнені, що хочете скинути ручний графік до оптимального?')) resetOverridesToOptimal(); }}
-            >
+            <button className="btn btn-danger" onClick={() => setShowResetConfirm(true)}>
               Скинути до оптимального
+            </button>
+            <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '6px' }} onClick={() => setOverridesOpen((v) => !v)}>
+              {overridesOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />} {overridesOpen ? 'Сховати таблицю' : 'Показати таблицю'}
             </button>
           </div>
         </div>
 
-        {hasOverrides && (
-          <div style={{
-            display: 'flex', gap: '10px', marginBottom: '16px', padding: '12px', borderRadius: '6px',
-            background: 'rgba(217, 119, 6, 0.08)', border: '1px solid rgba(217, 119, 6, 0.3)', fontSize: '13px',
-          }}>
-            <AlertTriangle size={16} style={{ color: 'var(--color-amber)', flexShrink: 0, marginTop: '1px' }} />
-            <span>
-              На цю дату вже збережено ручний графік — він «заморожує» ціну/потужність на момент збереження і НЕ
-              оновлюється сам, навіть якщо прогноз чи оптимізацію перерахували пізніше. Якщо після збереження
-              графіка ви ще раз натискали «Розрахувати» — натисніть «Скинути до оптимального», щоб побачити
-              свіжий розрахунок, інакше графік і чистий прибуток показують застарілі числа.
-            </span>
-          </div>
-        )}
+        {overridesOpen && (
+          <>
+            {hasOverrides && (
+              <div style={{
+                display: 'flex', gap: '10px', marginBottom: '16px', padding: '12px', borderRadius: '6px',
+                background: 'rgba(217, 119, 6, 0.08)', border: '1px solid rgba(217, 119, 6, 0.3)', fontSize: '13px',
+              }}>
+                <AlertTriangle size={16} style={{ color: 'var(--color-amber)', flexShrink: 0, marginTop: '1px' }} />
+                <span>
+                  На цю дату вже збережено ручний графік — він «заморожує» ціну/потужність на момент збереження і НЕ
+                  оновлюється сам, навіть якщо прогноз чи оптимізацію перерахували пізніше. Якщо після збереження
+                  графіка ви ще раз натискали «Розрахувати» — натисніть «Скинути до оптимального», щоб побачити
+                  свіжий розрахунок, інакше графік і чистий прибуток показують застарілі числа.
+                </span>
+              </div>
+            )}
 
-        <div style={{ maxHeight: '450px', overflowY: 'auto' }}>
-          <table className="audit-table" style={{ width: '100%' }}>
-            <thead>
-              <tr>
-                <th>Година</th>
-                <th>Рекомендовано (MILP)</th>
-                <th>Ручна потужність (МВт)</th>
-                <th>Швидкі дії</th>
-                <th>Ціна заявки (грн/МВт-год)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {manualOverrides.map((o: any, idx: number) => {
-                const sched = baseSchedule[idx];
-                const recPower = sched ? sched.power_kw / 1000.0 : 0.0;
-                return (
-                  <tr key={idx}>
-                    <td>Година {idx + 1} ({String(idx).padStart(2, '0')}:00–{String(idx + 1).padStart(2, '0')}:00)</td>
-                    <td style={{ color: recPower > 0 ? 'var(--color-emerald)' : recPower < 0 ? 'var(--color-blue)' : 'var(--text-secondary)' }}>
-                      {recPower > 0 ? `Розряд +${recPower.toFixed(2)} МВт` : recPower < 0 ? `Заряд ${recPower.toFixed(2)} МВт` : 'Пауза'}
-                    </td>
-                    <td>
-                      <input
-                        type="number" step="0.05" min={-power / 1000.0} max={power / 1000.0}
-                        className="form-input" style={{ width: '120px', padding: '4px 8px', fontSize: '13px' }}
-                        value={o.power_mw}
-                        onChange={(e) => {
-                          const raw = Number(e.target.value);
-                          // Клип до реальної макс. потужності БЕСС (Asset.power_mw) —
-                          // без цього можна було ввести значення, у рази більше за
-                          // фізичну потужність батареї (реальний баг, знайдений диспетчером).
-                          const val = Number.isFinite(raw) ? Math.max(-power / 1000.0, Math.min(power / 1000.0, raw)) : raw;
-                          setManualOverrides(manualOverrides.map((it: any, i: number) => (i === idx ? { ...it, power_mw: val } : it)));
-                        }}
-                      />
-                    </td>
-                    <td>
-                      <div style={{ display: 'flex', gap: '5px' }}>
-                        <button className="btn" style={{ padding: '3px 8px', fontSize: '11px', backgroundColor: 'var(--color-blue)' }}
-                          onClick={() => setManualOverrides(manualOverrides.map((it: any, i: number) => (i === idx ? { ...it, power_mw: -(power / 1000.0) } : it)))}>
-                          Заряд (Max)
-                        </button>
-                        <button className="btn" style={{ padding: '3px 8px', fontSize: '11px', backgroundColor: 'var(--color-emerald)' }}
-                          onClick={() => setManualOverrides(manualOverrides.map((it: any, i: number) => (i === idx ? { ...it, power_mw: power / 1000.0 } : it)))}>
-                          Розряд (Max)
-                        </button>
-                        <button className="btn" style={{ padding: '3px 8px', fontSize: '11px', backgroundColor: '#4b5563' }}
-                          onClick={() => setManualOverrides(manualOverrides.map((it: any, i: number) => (i === idx ? { ...it, power_mw: 0.0 } : it)))}>
-                          Стоп
-                        </button>
-                      </div>
-                    </td>
-                    <td>
-                      <input
-                        type="number" step="0.01" className="form-input" style={{ width: '140px', padding: '4px 8px', fontSize: '13px' }}
-                        value={Math.round(o.price_uah * 100) / 100}
-                        onChange={(e) => {
-                          const val = Number(e.target.value);
-                          setManualOverrides(manualOverrides.map((it: any, i: number) => (i === idx ? { ...it, price_uah: val } : it)));
-                        }}
-                      />
-                    </td>
+            <div style={{ maxHeight: '450px', overflowY: 'auto' }}>
+              <table className="audit-table" style={{ width: '100%' }}>
+                <thead>
+                  <tr>
+                    <th>Година</th>
+                    <th>Рекомендовано (MILP)</th>
+                    <th>Ручна потужність (МВт)</th>
+                    <th>Швидкі дії</th>
+                    <th>Ціна заявки (грн/МВт-год)</th>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                </thead>
+                <tbody>
+                  {manualOverrides.map((o: any, idx: number) => {
+                    const sched = baseSchedule[idx];
+                    const recPower = sched ? sched.power_kw / 1000.0 : 0.0;
+                    return (
+                      <tr key={idx}>
+                        <td>Година {idx + 1} ({String(idx).padStart(2, '0')}:00–{String(idx + 1).padStart(2, '0')}:00)</td>
+                        <td style={{ color: recPower > 0 ? 'var(--color-emerald)' : recPower < 0 ? 'var(--color-blue)' : 'var(--text-secondary)' }}>
+                          {recPower > 0 ? `Розряд +${recPower.toFixed(2)} МВт` : recPower < 0 ? `Заряд ${recPower.toFixed(2)} МВт` : 'Пауза'}
+                        </td>
+                        <td>
+                          <input
+                            type="number" step="0.05" min={-power / 1000.0} max={power / 1000.0}
+                            className="form-input" style={{ width: '120px', padding: '4px 8px', fontSize: '13px' }}
+                            value={o.power_mw}
+                            onChange={(e) => {
+                              const raw = Number(e.target.value);
+                              // Клип до реальної макс. потужності БЕСС (Asset.power_mw) —
+                              // без цього можна було ввести значення, у рази більше за
+                              // фізичну потужність батареї (реальний баг, знайдений диспетчером).
+                              const val = Number.isFinite(raw) ? Math.max(-power / 1000.0, Math.min(power / 1000.0, raw)) : raw;
+                              setManualOverrides(manualOverrides.map((it: any, i: number) => (i === idx ? { ...it, power_mw: val } : it)));
+                            }}
+                          />
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', gap: '5px' }}>
+                            <button className="btn" style={{ padding: '3px 8px', fontSize: '11px', backgroundColor: 'var(--color-blue)' }}
+                              onClick={() => setManualOverrides(manualOverrides.map((it: any, i: number) => (i === idx ? { ...it, power_mw: -(power / 1000.0) } : it)))}>
+                              Заряд (Max)
+                            </button>
+                            <button className="btn" style={{ padding: '3px 8px', fontSize: '11px', backgroundColor: 'var(--color-emerald)' }}
+                              onClick={() => setManualOverrides(manualOverrides.map((it: any, i: number) => (i === idx ? { ...it, power_mw: power / 1000.0 } : it)))}>
+                              Розряд (Max)
+                            </button>
+                            <button className="btn" style={{ padding: '3px 8px', fontSize: '11px', backgroundColor: '#4b5563' }}
+                              onClick={() => setManualOverrides(manualOverrides.map((it: any, i: number) => (i === idx ? { ...it, power_mw: 0.0 } : it)))}>
+                              Стоп
+                            </button>
+                          </div>
+                        </td>
+                        <td>
+                          <input
+                            type="number" step="0.01" className="form-input" style={{ width: '140px', padding: '4px 8px', fontSize: '13px' }}
+                            value={Math.round(o.price_uah * 100) / 100}
+                            onChange={(e) => {
+                              const val = Number(e.target.value);
+                              setManualOverrides(manualOverrides.map((it: any, i: number) => (i === idx ? { ...it, price_uah: val } : it)));
+                            }}
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
       </div>
+
+      {showResetConfirm && (
+        <ConfirmModal
+          title="Скинути ручний графік?"
+          message="Ви впевнені, що хочете скинути ручний графік до оптимального? Усі ручні корективи на цю добу буде втрачено."
+          confirmLabel="Скинути"
+          onConfirm={() => { resetOverridesToOptimal(); setShowResetConfirm(false); }}
+          onCancel={() => setShowResetConfirm(false)}
+        />
+      )}
     </div>
   );
 }

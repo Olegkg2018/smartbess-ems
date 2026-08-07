@@ -16,7 +16,7 @@ export default function ExecutiveOverview() {
 
   return (
     <div>
-      <div className="glass-card" style={{ marginBottom: '24px', borderLeft: '4px solid var(--color-blue)' }}>
+      <div className="glass-card" style={{ marginBottom: '24px' }}>
         <h4 style={{ margin: '0 0 6px 0', fontSize: '16px', color: '#60a5fa' }}>
           Аналіз окупності інвестицій BESS (C-Level YTD Analytics)
         </h4>
