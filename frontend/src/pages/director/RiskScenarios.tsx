@@ -42,15 +42,15 @@ export default function RiskScenarios() {
       </div>
 
       <div className="grid-3">
-        <div className="kpi-card" style={{ borderLeft: '4px solid var(--color-blue)' }}>
+        <div className="kpi-card">
           <span className="kpi-title">Очікуваний прибуток (Base)</span>
           <span className="kpi-value">{summary ? Math.round(summary.base_expected_profit_uah).toLocaleString() : '—'} грн</span>
         </div>
-        <div className="kpi-card" style={{ borderLeft: '4px solid var(--color-rose)' }}>
+        <div className="kpi-card">
           <span className="kpi-title">Найгірший сценарій (Monte Carlo, {summary?.confidence_level_pct ?? 95}%)</span>
           <span className="kpi-value">{summary ? Math.round(summary.worst_case_profit_uah).toLocaleString() : '—'} грн</span>
         </div>
-        <div className="kpi-card" style={{ borderLeft: '4px solid var(--color-cyan)' }}>
+        <div className="kpi-card">
           <span className="kpi-title">Value at Risk (VaR {summary?.confidence_level_pct ?? 95}%)</span>
           <span className="kpi-value">{summary ? Math.round(summary.value_at_risk_uah).toLocaleString() : '—'} грн/день</span>
         </div>

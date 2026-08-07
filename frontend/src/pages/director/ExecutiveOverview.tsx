@@ -16,7 +16,7 @@ export default function ExecutiveOverview() {
 
   return (
     <div>
-      <div className="glass-card" style={{ marginBottom: '24px', borderLeft: '4px solid var(--color-blue)' }}>
+      <div className="glass-card" style={{ marginBottom: '24px' }}>
         <h4 style={{ margin: '0 0 6px 0', fontSize: '16px', color: '#60a5fa' }}>
           Аналіз окупності інвестицій BESS (C-Level YTD Analytics)
         </h4>
@@ -60,7 +60,7 @@ export default function ExecutiveOverview() {
 
       <div className="grid-2">
         <div className="glass-card">
-          <h3 className="card-title" style={{ marginBottom: '16px' }}>Історія добової дохідності (Daily Arbitrage P&L)</h3>
+          <h3 className="card-title" style={{ marginBottom: '16px' }}>Історія добової доходності (Daily Arbitrage P&L)</h3>
           <div style={{ width: '100%', height: 320 }}>
             <ResponsiveContainer>
               <ComposedChart data={(report.daily_history || []).map((d: any) => ({ ...d, charge_cost_negative: -d.charge_cost_uah }))}>
