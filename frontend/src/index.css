@@ -331,7 +331,7 @@ a:focus-visible > .nav-item {
 
 .kpi-change {
   font-size: 0.75rem;
-  font-weight: 500;
+  font-weight: 600;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -348,10 +348,12 @@ a:focus-visible > .nav-item {
 
 .form-label {
   display: block;
-  font-size: 0.85rem;
-  color: var(--text-secondary);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
   margin-bottom: 6px;
-  font-weight: 500;
+  font-weight: 700;
 }
 
 .form-input, .form-select {
@@ -360,16 +362,18 @@ a:focus-visible > .nav-item {
   background: #111726;
   border: 1px solid var(--border-color);
   color: var(--text-primary);
-  padding: 8px 12px;
+  padding: 10px 14px;
   border-radius: var(--radius-sm);
   font-size: 0.9rem;
+  font-weight: 500;
   outline: none;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.25);
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .form-input:focus-visible, .form-select:focus-visible {
   border-color: var(--color-blue);
-  box-shadow: var(--focus-ring);
+  box-shadow: var(--focus-ring), inset 0 1px 3px rgba(0, 0, 0, 0.25);
 }
 
 .btn {
@@ -424,9 +428,9 @@ a:focus-visible > .nav-item {
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
-  border-radius: 12px;
+  border-radius: 999px;
   font-size: 0.75rem;
-  font-weight: 600;
+  font-weight: 700;
   border: 1px solid transparent;
 }
 
@@ -434,12 +438,14 @@ a:focus-visible > .nav-item {
   background: var(--color-emerald-bg);
   color: var(--color-emerald);
   border-color: var(--color-emerald-border);
+  box-shadow: 0 0 12px var(--color-emerald-bg);
 }
 
 .status-badge.offline {
   background: var(--color-rose-bg);
   color: var(--color-rose);
   border-color: var(--color-rose-border);
+  box-shadow: 0 0 12px var(--color-rose-bg);
 }
 
 /* Tables */
@@ -452,9 +458,12 @@ a:focus-visible > .nav-item {
 
 .data-table th, .audit-table th {
   padding: 12px;
-  border-bottom: 2px solid var(--border-color);
+  border-bottom: 2px solid var(--color-blue-border);
+  background: var(--surface-subtle);
   color: var(--text-muted);
-  font-weight: 600;
+  font-weight: 700;
+  font-size: 0.72rem;
+  letter-spacing: 0.5px;
   text-transform: uppercase;
 }
 
@@ -462,6 +471,10 @@ a:focus-visible > .nav-item {
   padding: 12px;
   border-bottom: 1px solid var(--border-color);
   color: var(--text-secondary);
+}
+
+.data-table tbody tr:nth-child(even) td, .audit-table tbody tr:nth-child(even) td {
+  background: var(--surface-subtle);
 }
 
 .data-table tr:hover td, .audit-table tr:hover td {
@@ -524,8 +537,9 @@ a:focus-visible > .nav-item {
 .modal-content {
   background: #111726;
   border: 1px solid var(--border-color);
+  border-top: 3px solid var(--color-blue);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-xl);
   padding: var(--space-6);
   width: 440px;
   max-width: 90%;
