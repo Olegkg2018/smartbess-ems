@@ -128,13 +128,13 @@ export default function About() {
           <strong style={{ color: 'var(--text-primary)' }}>
             встигнути до закриття воріт ВДР, яке настає за 60 хвилин до кожної конкретної години постачання
           </strong>{' '}
-          (ковзний дедлайн, не єдиний момент на добу). Чим раніше зроблена звірка — тим більше часу лишається на
+          (ковзкий дедлайн, не єдиний момент на добу). Чим раніше зроблена звірка — тим більше часу лишається на
           альтернативу для найближчих годин.
         </Step>
       </div>
 
       <div className="glass-card" style={sectionGap}>
-        <h3 className="card-title" style={cardTitleStyle}>Поточний етап розробки</h3>
+        <h3 className="card-title" style={cardTitleStyle}>Поточний етап розвитку</h3>
         <p style={bodyStyle}>
           <span className="status-badge online" style={{ padding: '2px 8px', fontSize: '0.7rem', marginRight: '8px' }}>реалізовано</span>
           прогноз ціни, MILP-план, ручні поправки, генерація заявок, звірка з фактом ринку, підказка по ВДР для

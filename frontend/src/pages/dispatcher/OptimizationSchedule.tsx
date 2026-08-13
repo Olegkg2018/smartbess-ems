@@ -37,8 +37,8 @@ export default function OptimizationSchedule() {
 
   const baseSchedule = optimizationResult?.scenarios?.base?.schedule || [];
 
-  // Фолбек лише одразу після "Розрахувати", поки manualOverrides (і похідний
-  // dispatchProfile) ще не підвантажились для нової дати.
+  // Фолбек лише одразу після "Розрахувати", поки manualOverrides (і
+  // похідний dispatchProfile) ще не підвантажились для нової дати.
   const chartProfile = baseSchedule.length === 24
     ? baseSchedule.map((s: any) => ({ hour: `${s.hour + 1}`, charge: s.power_kw < 0 ? -s.power_kw : 0, discharge: s.power_kw > 0 ? s.power_kw : 0, soc: s.soc_kwh, price: s.price_forecast_uah_mwh }))
     : [];
@@ -332,7 +332,7 @@ export default function OptimizationSchedule() {
               }}>
                 <AlertTriangle size={16} style={{ color: 'var(--color-amber)', flexShrink: 0, marginTop: '1px' }} />
                 <span>
-                  На цю дату вже збережено ручний графік — він «заморожує» ціну/потужність на момент збереження і НЕ
+                  На цю дату вже збережено ручний графік — він «заморожує» ціну/потужність на момент збереження та НЕ
                   оновлюється сам, навіть якщо прогноз чи оптимізацію перерахували пізніше. Якщо після збереження
                   графіка ви ще раз натискали «Розрахувати» — натисніть «Скинути до оптимального», щоб побачити
                   свіжий розрахунок, інакше графік і чистий прибуток показують застарілі числа.
@@ -369,8 +369,7 @@ export default function OptimizationSchedule() {
                             onChange={(e) => {
                               const raw = Number(e.target.value);
                               // Клип до реальної макс. потужності БЕСС (Asset.power_mw) —
-                              // без цього можна було ввести значення, у рази більше за
-                              // фізичну потужність батареї (реальний баг, знайдений диспетчером).
+                              // без цього можна було ввести значення, у рази більше за фізичну потужність батареї (реальний баг, знайдений диспетчером).
                               const val = Number.isFinite(raw) ? Math.max(-power / 1000.0, Math.min(power / 1000.0, raw)) : raw;
                               setManualOverrides(manualOverrides.map((it: any, i: number) => (i === idx ? { ...it, power_mw: val } : it)));
                             }}

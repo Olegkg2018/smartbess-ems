@@ -111,7 +111,7 @@ export default function AppShell({ workspace }: { workspace: 'dispatcher' | 'dir
                 value={activeRole}
                 onChange={(e) => {
                   setActiveRole(e.target.value as UserRole);
-                  addLog('AUTH', `Пользователь переключил сессию на роль: ${e.target.value}`, 'info');
+                  addLog('AUTH', `Пользователь переключив сессію на роль: ${e.target.value}`, 'info');
                 }}
               >
                 <option value="Viewer">Viewer (Read-Only)</option>

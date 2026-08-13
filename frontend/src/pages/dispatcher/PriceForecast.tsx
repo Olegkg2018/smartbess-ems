@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
+import { ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Area, Bar, Line, Cell, ResponsiveContainer } from 'recharts';
 import { BookOpen, CheckCircle2, AlertTriangle, CalendarClock, RadioTower } from 'lucide-react';
-import { ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Line, Area, Bar, Cell, ResponsiveContainer } from 'recharts';
 import { useApp } from '../../state/AppContext';
 import GlobalFilterBar from '../../components/GlobalFilterBar';
 
@@ -200,10 +200,10 @@ export default function PriceForecast() {
         <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 16px' }}>
           Реальних даних про генерацію АЕС/ГЕС/СЕС/ВЕС по типах немає (Україна припинила публікацію в ENTSO-E з 2022 року).
           СЕС/ВЕС коригують навчену фізичну ознаку моделі напряму — чесний вплив на прогноз.
-          АЕС/ГЕС не мають навченої ознаки — % переводиться в МВт-дельту (довідникові потужності) і додається до
+          АЕС/ГЕС не мають навченої ознаки — % переводиться в МВт-дельту (довідкові потужності) і додається до
           нетто-експорту — приблизна, але не вигадана оцінка через уже навчену модель, а не довільний коефіцієнт.
-          Навіть повна корекція — це невеликий важіль порівняно з історією ціни (лаги/спред ВДР), яка визначає
-          більшість прогнозу: очікуйте помітний, але не кардинальний зсув прогнозованої ціни.
+          Навіть повна корекція — це невеликий важіль порівняно з історією ціни (лаги/спред ВДР), яка
+          визначає більшість прогнозу: очікуйте помітний, але не кардинальний зсув прогнозованої ціни.
         </p>
         {!generationAdjustment ? (
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Завантаження...</p>
@@ -247,7 +247,7 @@ export default function PriceForecast() {
           Використовуйте, коли відомо про реальну тимчасову аномалію ринку (напр. учасник ринку коротко
           маніпулював/занижував ціну, вже відкочено), яку модель не могла передбачити — і не варто перенавчати на
           одному епізоді. Зсув застосовується у відсотках рівномірно до всіх 24 годин ПІСЛЯ прогнозу моделі (не
-          змінює жодної ознаки), тож не спотворює точність моделі на минулих добах.
+          змінює жодної ознаки), тож не спотворює точності моделі на минулих добах.
         </p>
         {!priceShift ? (
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Завантаження...</p>
