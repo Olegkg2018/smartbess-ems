@@ -56,6 +56,7 @@ def run_forecast_background_job(job_id: str, target_date_str: str, selected_mode
         # знаходить прогноз і мовчки підставляє захардкоджені mock-ціни
         # (реальний баг, знайдений і виправлений під час Фази 2).
         from src.database.models import PriceForecast
+        from src.modules.forecast_service.forecast_persistence import persist_forecast_run
         db = SessionLocal()
         try:
             for t in range(24):
@@ -72,6 +73,7 @@ def run_forecast_background_job(job_id: str, target_date_str: str, selected_mode
                     lower_bound_uah=float(price_band['lower_uah'][t]) if price_band else None,
                     upper_bound_uah=float(price_band['upper_uah'][t]) if price_band else None,
                 ))
+            persist_forecast_run(db, target_dt_start, selected_model, predicted_prices, price_band, trigger='manual_api')
             db.commit()
         except Exception:
             db.rollback()

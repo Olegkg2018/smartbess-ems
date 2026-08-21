@@ -6,6 +6,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 import src.modules.market_data_service.data_manager as dm
 import src.modules.forecast_service.ml_pipeline as mt
+from src.modules.forecast_service.forecast_persistence import persist_forecast_run
 import src.modules.optimization_service.milp_model as opt
 from src.modules.reporting_service.forecast_accuracy import sync_market_prices_to_db
 import src.modules.external_data_service.telegram_bot as telegram_bot
@@ -121,7 +122,7 @@ def run_daily_forecast_and_optimization():
                 upper_bound_uah=float(price_band['upper_uah'][t]) if price_band else None,
             )
             db.add(pf)
-            
+
             # Save Plan
             db.query(ChargeDischargePlan).filter(
                 ChargeDischargePlan.timestamp == forecast_time,
@@ -142,7 +143,11 @@ def run_daily_forecast_and_optimization():
                 expected_profit_uah=sched_item['hourly_p_l_uah']
             )
             db.add(plan_entry)
-            
+
+        # Неізмінна історія (ForecastRun/ForecastRunHour) — окремо від
+        # PriceForecast вище, яка й далі перезаписується щоразу.
+        persist_forecast_run(db, target_dt_start, 'lightgbm', predicted_prices, price_band, trigger='scheduler_06:00')
+
         db.commit()
         print(f"[{datetime.datetime.now()}] Background Scheduler: Successfully completed daily forecast and BESS optimization plan.")
     except Exception as e:

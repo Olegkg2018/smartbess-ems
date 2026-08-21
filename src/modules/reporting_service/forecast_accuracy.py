@@ -11,7 +11,7 @@ import pandas as pd
 from sqlalchemy import func
 
 from src.core.config import settings
-from src.database.models import MarketPrice, PriceForecast
+from src.database.models import MarketPrice, PriceForecast, ForecastRun, ForecastRunHour
 
 BACKTEST_REPORT_PATH = os.path.join(settings.DATA_DIR, "backtest_report.json")
 
@@ -60,21 +60,56 @@ def _calc_mape_wape(y_true, y_pred):
 
 def compute_rolling_accuracy(db, days: int = 30, model_version: str = None) -> dict:
     """
-    Реальна точність прогнозу за останні `days` днів: JOIN PriceForecast з
-    MarketPrice по timestamp. Кожна доба бере ОСТАННІЙ прогноз, зроблений ДО
-    настання цієї доби (forecast_run_at < timestamp доби) — щоб не змішувати
-    кілька перезапусків прогнозу за різний час.
+    Реальна точність прогнозу за останні `days` днів.
+
+    Історично цей docstring обіцяв фільтр "forecast_run_at < timestamp доби",
+    але код такого фільтра не мав узагалі — PriceForecast.forecast_run_at це
+    північ ЦІЛЬОВОЇ дати (не реальний час генерації), і кожен перезапуск
+    тихо перезаписував попередній рядок, тож "фільтрувати" було по суті
+    нічого (знайдено зовнішнім ревью 2026-08-21, docs/review_ml_forecast_pipeline_2026-08-21.md).
+
+    Тепер для годин, де вже накопичена історія ForecastRun/ForecastRunHour
+    (з 2026-08-21), реально береться прогноз з максимальним generated_at_utc
+    (справжній wall-clock момент розрахунку), який ще < timestamp самої
+    години — тобто "заднім числом покращити" метрику вже не можна для
+    цих даних. Для дат до цієї фічі (немає рядків ForecastRun) — фолбек на
+    старий шлях через PriceForecast напряму, без цієї гарантії.
     """
     cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=days)
 
-    q = db.query(PriceForecast, MarketPrice.price_uah).join(
+    # Основний шлях: реальна історія запусків, з гарантією generated_at_utc < timestamp.
+    run_q = db.query(ForecastRunHour, ForecastRun, MarketPrice.price_uah).join(
+        ForecastRun, ForecastRunHour.forecast_run_id == ForecastRun.id
+    ).join(
+        MarketPrice, ForecastRunHour.timestamp == MarketPrice.timestamp
+    ).filter(
+        ForecastRunHour.timestamp >= cutoff,
+        ForecastRun.generated_at_utc < ForecastRunHour.timestamp,
+    )
+    if model_version:
+        run_q = run_q.filter(ForecastRun.model_version == model_version)
+
+    latest_per_hour = {}
+    for hour_row, run_row, actual in run_q.all():
+        ts = hour_row.timestamp
+        prev = latest_per_hour.get(ts)
+        if prev is None or run_row.generated_at_utc > prev[2]:
+            latest_per_hour[ts] = (hour_row.predicted_price_uah, actual, run_row.generated_at_utc)
+
+    # Фолбек-пул для дат, де ще немає ForecastRun-історії (старий шлях, без
+    # гарантії відсутності заднього перерахунку).
+    fb_q = db.query(PriceForecast, MarketPrice.price_uah).join(
         MarketPrice, PriceForecast.timestamp == MarketPrice.timestamp
     ).filter(PriceForecast.timestamp >= cutoff)
     if model_version:
-        q = q.filter(PriceForecast.model_version == model_version)
+        fb_q = fb_q.filter(PriceForecast.model_version == model_version)
 
-    rows = q.all()
-    if not rows:
+    combined = {ts: (pred, actual) for ts, (pred, actual, _) in latest_per_hour.items()}
+    n_from_history = len(combined)
+    for pf_row, actual in fb_q.all():
+        combined.setdefault(pf_row.timestamp, (pf_row.predicted_price_uah, actual))
+
+    if not combined:
         return {
             'status': 'insufficient_data',
             'message': f'Немає накопичених пар прогноз/факт за останні {days} днів — MarketPrice/PriceForecast щойно почали заповнюватись.',
@@ -82,16 +117,16 @@ def compute_rolling_accuracy(db, days: int = 30, model_version: str = None) -> d
             'n_hours': 0,
         }
 
-    y_true = [r[1] for r in rows]
-    y_pred = [r[0].predicted_price_uah for r in rows]
+    y_true = [v[1] for v in combined.values()]
+    y_pred = [v[0] for v in combined.values()]
     mape, wape, bias = _calc_mape_wape(y_true, y_pred)
 
     by_day = {}
-    for forecast_row, actual in rows:
-        d = forecast_row.timestamp.date().isoformat()
+    for ts, (pred, actual) in combined.items():
+        d = ts.date().isoformat()
         by_day.setdefault(d, {'y_true': [], 'y_pred': []})
         by_day[d]['y_true'].append(actual)
-        by_day[d]['y_pred'].append(forecast_row.predicted_price_uah)
+        by_day[d]['y_pred'].append(pred)
 
     daily = []
     for d in sorted(by_day.keys()):
@@ -101,7 +136,8 @@ def compute_rolling_accuracy(db, days: int = 30, model_version: str = None) -> d
     return {
         'status': 'ok',
         'days': days,
-        'n_hours': len(rows),
+        'n_hours': len(combined),
+        'n_hours_from_forecast_run_history': n_from_history,
         'mape': mape,
         'wape': wape,
         'bias_uah': bias,

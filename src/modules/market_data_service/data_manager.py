@@ -9,6 +9,7 @@ import numpy as np
 from bs4 import BeautifulSoup
 
 from src.core.config import settings
+from src.core.time_utils import assert_naive_utc
 import src.modules.external_data_service.gas_price as ext_gas
 import src.modules.external_data_service.telegram_public as ext_tg
 import src.modules.external_data_service.entsoe as ext_entsoe
@@ -103,6 +104,21 @@ def fetch_oree_market_month(month, year, market='DAM', value_col='Price', cache_
 
                     if records:
                         df = pd.DataFrame(records).sort_values('Datetime').reset_index(drop=True)
+                        # oree.com.ua віддає час доби у київському часі — раніше це
+                        # трактувалось як наївний час без явної конвертації, що
+                        # могло давати зсув 2-3г відносно ENTSO-E/Open-Meteo (обидва
+                        # фактично UTC). Виправлено ТІЛЬКИ вперед (2026-08-21) — вже
+                        # закешовані місяці (is_current_month guard вище) не
+                        # перечитуються і залишаються у старому (можливо зсунутому)
+                        # вигляді; історію свідомо не перераховуємо, див.
+                        # docs/review_ml_forecast_pipeline_2026-08-21.md.
+                        df['Datetime'] = (
+                            df['Datetime']
+                            .dt.tz_localize('Europe/Kyiv', ambiguous='infer', nonexistent='shift_forward')
+                            .dt.tz_convert('UTC')
+                            .dt.tz_localize(None)
+                        )
+                        assert_naive_utc(df, source=f'fetch_oree_market_month({market})')
                         df.to_csv(cache_path, index=False)
                         return df
         except Exception as e:
@@ -170,7 +186,11 @@ def fetch_weather_archive_full(start_year=2021):
         except Exception as e:
             print(f"Error reading weather cache: {e}")
             
-    url = f"https://archive-api.open-meteo.com/v1/archive?latitude={LAT}&longitude={LON}&start_date={start_date_str}&end_date={end_date_str}&hourly=temperature_2m,cloud_cover,wind_speed_10m,shortwave_radiation"
+    # &timezone=UTC — явно, а не покладаючись на дефолт API (перевірено живим
+    # запитом 2026-08-21: без параметра Open-Meteo вже віддає GMT/UTC,
+    # результат побайтово ідентичний — це чисто документуюча зміна, безпечна
+    # й для історичних діапазонів).
+    url = f"https://archive-api.open-meteo.com/v1/archive?latitude={LAT}&longitude={LON}&start_date={start_date_str}&end_date={end_date_str}&hourly=temperature_2m,cloud_cover,wind_speed_10m,shortwave_radiation&timezone=UTC"
     try:
         r = requests.get(url, timeout=30)
         if r.status_code == 200:
@@ -192,6 +212,7 @@ def fetch_weather_archive_full(start_year=2021):
                     'Shortwave_Radiation': rads[i]
                 })
             df = pd.DataFrame(records).sort_values('Datetime').reset_index(drop=True)
+            assert_naive_utc(df, source='fetch_weather_archive_full')
             df.to_csv(cache_path, index=False)
             return df
     except Exception as e:
@@ -391,7 +412,8 @@ def sync_realtime_data(force=False):
     start_date = f"{current_year}-{current_month:02d}-01"
     end_date = now.strftime('%Y-%m-%d')
     
-    url = f"https://archive-api.open-meteo.com/v1/archive?latitude={LAT}&longitude={LON}&start_date={start_date}&end_date={end_date}&hourly=temperature_2m,cloud_cover,wind_speed_10m,shortwave_radiation"
+    # &timezone=UTC — явно (див. коментар у fetch_weather_archive_full).
+    url = f"https://archive-api.open-meteo.com/v1/archive?latitude={LAT}&longitude={LON}&start_date={start_date}&end_date={end_date}&hourly=temperature_2m,cloud_cover,wind_speed_10m,shortwave_radiation&timezone=UTC"
     
     df_weather = pd.DataFrame()
     try:
@@ -482,6 +504,39 @@ def sync_realtime_data(force=False):
             pass
     return False
 
+def _archive_weather_forecast(df, source):
+    """
+    Best-effort запис реально використаної прогнозної погоди в
+    WeatherForecastArchive — audit trail (включно з чесним маркуванням
+    synthetic_fallback), якого раніше не було. Ніколи не валить основний
+    потік прогнозу при помилці запису (та сама best-effort політика, що і
+    для Telegram-алертів у scheduler.py). Не викликати з бектесту.
+    """
+    if df is None or df.empty:
+        return
+    try:
+        from src.database.session import SessionLocal
+        from src.database.models import WeatherForecastArchive
+        issued_at = datetime.datetime.utcnow()
+        db = SessionLocal()
+        try:
+            for _, row in df.iterrows():
+                db.add(WeatherForecastArchive(
+                    issued_at_utc=issued_at,
+                    target_datetime=row['Datetime'],
+                    temperature=float(row['Temperature']) if pd.notna(row.get('Temperature')) else None,
+                    cloud_cover=float(row['Cloud_Cover']) if pd.notna(row.get('Cloud_Cover')) else None,
+                    wind_speed=float(row['Wind_Speed']) if pd.notna(row.get('Wind_Speed')) else None,
+                    shortwave_radiation=float(row['Shortwave_Radiation']) if pd.notna(row.get('Shortwave_Radiation')) else None,
+                    source=source,
+                ))
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        print(f"Warning: could not archive weather forecast ({source}): {e}")
+
+
 def fetch_weather_forecast(lat=LAT, lon=LON, api_key=OPENWEATHER_KEY):
     if api_key:
         url = f"https://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={api_key}&units=metric"
@@ -525,11 +580,16 @@ def fetch_weather_forecast(lat=LAT, lon=LON, api_key=OPENWEATHER_KEY):
                 df_tomorrow = df_1h[df_1h['Datetime'].dt.date == tomorrow].copy()
                 if len(df_tomorrow) < 24:
                     df_tomorrow = df_1h.iloc[:24].copy()
+                # OpenWeatherMap dt_txt документовано як UTC — уже naive-UTC,
+                # конвертація не потрібна, лише перевірка.
+                assert_naive_utc(df_tomorrow, source='fetch_weather_forecast(openweathermap)')
+                _archive_weather_forecast(df_tomorrow, source='openweathermap')
                 return df_tomorrow
         except:
             pass
             
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=temperature_2m,cloud_cover,wind_speed_10m,shortwave_radiation"
+    # &timezone=UTC — явно (див. коментар у fetch_weather_archive_full).
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=temperature_2m,cloud_cover,wind_speed_10m,shortwave_radiation&timezone=UTC"
     try:
         r = requests.get(url, timeout=10)
         if r.status_code == 200:
@@ -554,9 +614,13 @@ def fetch_weather_forecast(lat=LAT, lon=LON, api_key=OPENWEATHER_KEY):
             now = datetime.datetime.now()
             tomorrow = (now + datetime.timedelta(days=1)).date()
             df_tomorrow = df[df['Datetime'].dt.date == tomorrow].copy()
+            assert_naive_utc(df, source='fetch_weather_forecast(open-meteo)')
             if len(df_tomorrow) == 24:
+                _archive_weather_forecast(df_tomorrow, source='open-meteo')
                 return df_tomorrow
-            return df.iloc[24:48].copy()
+            fallback_slice = df.iloc[24:48].copy()
+            _archive_weather_forecast(fallback_slice, source='open-meteo')
+            return fallback_slice
     except:
         pass
         
@@ -576,7 +640,9 @@ def fetch_weather_forecast(lat=LAT, lon=LON, api_key=OPENWEATHER_KEY):
             'Wind_Speed': wind,
             'Shortwave_Radiation': rad
         })
-    return pd.DataFrame(records)
+    synthetic_df = pd.DataFrame(records)
+    _archive_weather_forecast(synthetic_df, source='synthetic_fallback')
+    return synthetic_df
 
 def verify_data_completeness():
     report = {

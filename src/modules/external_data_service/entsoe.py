@@ -24,6 +24,7 @@ import pandas as pd
 import xml.etree.ElementTree as ET
 
 from src.core.config import settings
+from src.core.time_utils import assert_naive_utc
 
 DATA_DIR = settings.DATA_DIR
 CACHE_DIR = os.path.join(DATA_DIR, "external_cache", "entsoe_flow")
@@ -166,12 +167,15 @@ def fetch_net_export_series(start_year: int = 2021, end_year: int = None) -> pd.
     merged = merged.set_index("Datetime")[["Grid_Net_Export_MW"]].resample("h").mean().reset_index()
 
     # ENTSO-E віддає UTC (tz-aware). Решта пайплайну (oree, Open-Meteo) працює
-    # з naive часовими мітками — приводимо до naive UTC для merge. ПРИМІТКА:
-    # цінові мітки oree історично трактувались як київський час без явної
-    # конвертації — можливе зміщення на 2-3г між Price та рештою джерел існує
-    # в проєкті ще з попередньої версії (до цієї сесії) і потребує окремої
-    # перевірки, а не мовчазного припущення, що воно узгоджене.
+    # з naive часовими мітками — приводимо до naive UTC для merge. ПРИМІТКА
+    # (2026-08-21): цінові мітки oree історично трактувались як київський час
+    # без явної конвертації — можливе зміщення на 2-3г існувало в проєкті.
+    # З 2026-08-21 fetch_oree_market_month() явно конвертує Kyiv→UTC, але
+    # ТІЛЬКИ для нових/поточного місяця даних — уже закешована історія (та
+    # оце ENTSO-E-джерело, яке завжди коректно було UTC) старими лишаються
+    # без перерахунку, див. docs/review_ml_forecast_pipeline_2026-08-21.md.
     merged["Datetime"] = merged["Datetime"].dt.tz_localize(None)
+    assert_naive_utc(merged, source='fetch_net_export_series')
     return merged
 
 

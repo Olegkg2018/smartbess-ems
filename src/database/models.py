@@ -54,6 +54,53 @@ class PriceForecast(Base):
     lower_bound_uah = Column(Float, nullable=True)
     upper_bound_uah = Column(Float, nullable=True)
 
+class ForecastRun(Base):
+    """
+    Неізмінна історія запусків прогнозу — на відміну від PriceForecast (де
+    forecast_run_at насправді дорівнює півночі target_date, а не реальному
+    часу генерації, і кожен перезапуск ТИХО перезаписує попередній рядок),
+    тут generated_at_utc — справжній wall-clock момент розрахунку, і рядки
+    ніколи не видаляються. PriceForecast лишається як є (її контракт
+    "поточний прогноз" потрібен MarketBid/ChargeDischargePlan/фронтенду) —
+    ForecastRun/ForecastRunHour пишуться ДОДАТКОВО, для чесного вимірювання
+    точності заднім числом. Див. docs/review_ml_forecast_pipeline_2026-08-21.md.
+    """
+    __tablename__ = "forecast_runs"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    target_date = Column(DateTime, nullable=False, index=True)
+    generated_at_utc = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
+    trigger = Column(String(30), nullable=False)  # scheduler_06:00 | manual_api
+    model_version = Column(String(50), nullable=False)
+
+class ForecastRunHour(Base):
+    __tablename__ = "forecast_run_hours"
+
+    forecast_run_id = Column(String(36), ForeignKey("forecast_runs.id", ondelete="CASCADE"), primary_key=True)
+    timestamp = Column(DateTime, primary_key=True, nullable=False)
+    predicted_price_uah = Column(Float, nullable=False)
+    lower_bound_uah = Column(Float, nullable=True)
+    upper_bound_uah = Column(Float, nullable=True)
+
+class WeatherForecastArchive(Base):
+    """
+    Реально використана погода на момент генерації прогнозу (включно з
+    чесним маркуванням синтетичного фолбеку) — раніше жодного audit trail
+    не було. Збирається ЗАРАЗ (з 2026-08-21), щоб майбутній чесний backtest
+    міг колись оцінюватись на прогнозній, а не архівній погоді — той самий
+    принцип "збираємо зараз, використовуємо пізніше", що вже застосований
+    до Telegram grid-stress сигналу (див. ml_pipeline.py FEATURES коментар).
+    """
+    __tablename__ = "weather_forecast_archive"
+
+    issued_at_utc = Column(DateTime, primary_key=True, nullable=False)
+    target_datetime = Column(DateTime, primary_key=True, nullable=False)
+    temperature = Column(Float, nullable=True)
+    cloud_cover = Column(Float, nullable=True)
+    wind_speed = Column(Float, nullable=True)
+    shortwave_radiation = Column(Float, nullable=True)
+    source = Column(String(30), nullable=False)  # openweathermap | open-meteo | synthetic_fallback
+
 class BessTelemetry(Base):
     __tablename__ = "bess_telemetry"
 
