@@ -15,7 +15,10 @@ RETRAIN_EVERY_DAYS = 7
 results = {}
 for model_type in ('lightgbm', 'ensemble_average', 'ensemble_weighted'):
     print(f"=== running {model_type} ===", flush=True)
-    report = walk_forward_backtest(test_days=TEST_DAYS, retrain_every_days=RETRAIN_EVERY_DAYS, model_type=model_type)
+    report = walk_forward_backtest(
+        test_days=TEST_DAYS, retrain_every_days=RETRAIN_EVERY_DAYS, model_type=model_type,
+        acknowledge_approximation=True,  # архівна (не прогнозна) погода — Фаза B, 2026-08-21
+    )
     results[model_type] = report['summary']
     print(json.dumps(report['summary'], indent=2), flush=True)
 
