@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import * as api from '../api/client';
-import type { UserRole, Asset, PriceBand, ActualPrices, GenerationAdjustment, PriceShift, InitialSoc, GridStress, BidMargin, MarketBid } from '../api/client';
+import type { UserRole, Asset, PriceBand, ActualPrices, GenerationAdjustment, PriceShift, InitialSoc, GridStress, BidMargin, MarketBid, ScadaStatus } from '../api/client';
 
 export type LogEntry = { time: string; src: string; text: string; type: 'success' | 'info' | 'warn' | 'error' };
 export type AuditEntry = { time: string; user: string; action: string; ip: string; status: string };
@@ -26,6 +26,8 @@ interface AppState {
 
   assets: Asset[];
   activeAssetId: string | null;
+
+  scadaStatus: ScadaStatus | null;
 
   targetDate: string;
   setTargetDate: (d: string) => void;
@@ -136,6 +138,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [activeRole, setActiveRole] = useState<UserRole>('Operator');
   const [assets, setAssets] = useState<Asset[]>([]);
   const activeAssetId = assets.length > 0 ? assets[0].id : null;
+  const [scadaStatus, setScadaStatus] = useState<ScadaStatus | null>(null);
 
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
@@ -194,6 +197,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     api.fetchAssets(activeRole).then(setAssets).catch((e) => addLog('API', `Не вдалося завантажити список активів: ${e.message}`, 'error'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Реальний стан SCADA-телеметрії — раніше бейдж і сторінка Asset Detail
+  // показували статичні захардкоджені значення незалежно від того, чи живий
+  // симулятор. Опитуємо раз на ~20с, поки додаток відкрито.
+  useEffect(() => {
+    if (!activeAssetId) return;
+    let cancelled = false;
+    const poll = () => {
+      api.fetchScadaStatus(activeRole, activeAssetId).then((s) => {
+        if (!cancelled) setScadaStatus(s);
+      }).catch(() => {
+        if (!cancelled) setScadaStatus(null);
+      });
+    };
+    poll();
+    const interval = setInterval(poll, 20000);
+    return () => { cancelled = true; clearInterval(interval); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeAssetId]);
 
   useEffect(() => {
     if (!activeAssetId) return;
@@ -599,23 +621,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const executeApprovedAction = useCallback(() => {
     if (!approvalToken) {
-      alert('Будь ласка, введіть секретний ключ підпису менеджера.');
+      alert('Будь ласка, введіть підтвердження.');
       return;
     }
+    // Демо-панель: жодного виклику API немає, команда НІКУДИ не надсилається
+    // (backend-ендпоінта для неї не існує — на відміну від Optimization
+    // Schedule → "Ручна потужність", яка реально пише ManualOverride в БД).
+    // Формулювання нижче навмисно чесне, а не "успішно виконано".
     const time = new Date().toISOString().replace('T', ' ').substring(0, 19);
     setAuditLogs((prev) => [
-      { time, user: activeRole === 'Admin' ? 'admin@smartbess.ua' : 'operator@smartbess.ua', action: `[Four-Eyes Approved] ${pendingAction}`, ip: '127.0.0.1', status: 'SUCCESS' },
+      { time, user: activeRole === 'Admin' ? 'admin@smartbess.ua' : 'operator@smartbess.ua', action: `[DEMO, не надіслано на BESS] ${pendingAction}`, ip: '127.0.0.1', status: 'DEMO' },
       ...prev,
     ]);
-    addLog('EMS', `Ручну команду диспетчеризації успішно виконано: ${pendingAction}`, 'success');
+    addLog('EMS', `[DEMO] Дію записано в аудит-лог: ${pendingAction}. Реальна команда на контролер BESS НЕ надсилається.`, 'info');
     setShowApprovalModal(false);
     setApprovalToken('');
-    alert('Команду успішно надіслано до BESS контролера Modbus TCP!');
+    alert('Дію записано в демо-аудит-лог. Реальна команда на контролер BESS НЕ надсилається — цей функціонал ще не підключено до backend.');
   }, [approvalToken, activeRole, pendingAction, addLog]);
 
   const value = useMemo<AppState>(() => ({
     activeRole, setActiveRole,
     assets, activeAssetId,
+    scadaStatus,
     targetDate, setTargetDate, selectedModel, setSelectedModel, operationalMode, setOperationalMode,
     loading, forecastPrices, priceBand, actualPrices, optimizationResult, manualOverrides, setManualOverrides,
     dispatchProfile,
@@ -635,7 +662,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     systemLogs, addLog, auditLogs,
     showApprovalModal, pendingAction, approvalToken, setApprovalToken, triggerFourEyesApproval, executeApprovedAction, cancelApproval,
   }), [
-    activeRole, assets, activeAssetId, targetDate, selectedModel, operationalMode,
+    activeRole, assets, activeAssetId, scadaStatus, targetDate, selectedModel, operationalMode,
     loading, forecastPrices, priceBand, actualPrices, optimizationResult, manualOverrides,
     dispatchProfile,
     runForecastAndOptimization, saveOverrides, resetOverridesToOptimal,

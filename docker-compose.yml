@@ -4,10 +4,14 @@ services:
     container_name: smartbess-db
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
       POSTGRES_DB: smartbess
     ports:
-      - "5432:5432"
+      # 127.0.0.1-only: досі був "5432:5432" (0.0.0.0) з дефолтним postgres/postgres —
+      # саме ця комбінація вже призвела до знесення БД ransomware-ботом
+      # 2026-07-15/16 (див. CLAUDE.md). Порт лишається доступним з хоста для
+      # локального дебагу (psql), але не з інтернету.
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: always
@@ -20,13 +24,14 @@ services:
   smartbess-redis:
     image: redis:7-alpine
     container_name: smartbess-redis
+    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     restart: always
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -39,8 +44,8 @@ services:
     volumes:
       - ./data:/app/data
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@smartbess-db:5432/smartbess
-      - REDIS_URL=redis://smartbess-redis:6379/0
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@smartbess-db:5432/smartbess
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@smartbess-redis:6379/0
       - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY}
       - ENTSOE_API_KEY=${ENTSOE_API_KEY}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}

@@ -45,7 +45,7 @@ const PAGE_TITLES: Record<string, string> = {
 };
 
 export default function AppShell({ workspace }: { workspace: 'dispatcher' | 'director' }) {
-  const { activeRole, setActiveRole, addLog } = useApp();
+  const { activeRole, setActiveRole, addLog, scadaStatus } = useApp();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -97,9 +97,9 @@ export default function AppShell({ workspace }: { workspace: 'dispatcher' | 'dir
         <header className="top-header">
           <div className="header-title-section">
             <h1 className="header-title">{title}</h1>
-            <span className="status-badge online">
+            <span className={`status-badge ${scadaStatus?.connected ? 'online' : 'offline'}`}>
               <Database size={12} />
-              SCADA Modbus: ONLINE (127.0.0.1:5020)
+              {scadaStatus?.connected ? "Симулятор SCADA: на зв'язку" : "Симулятор SCADA: немає зв'язку"}
             </span>
           </div>
 

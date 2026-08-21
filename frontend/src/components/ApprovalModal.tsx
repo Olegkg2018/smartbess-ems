@@ -16,14 +16,15 @@ export default function ApprovalModal() {
 
         <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '12px 0' }}>
           Ви ініціювали команду: <strong>{pendingAction}</strong>.
-          Відповідно до регламенту безпеки SmartBESS, ця дія потребує введення секретного криптографічного ключа авторизації менеджера (Four-Eyes Principle).
+          Це демонстраційна панель — реальна команда на контролер BESS не надсилається (backend-ендпоінт ще не реалізовано).
+          Підтвердження нижче лише додає запис у демо-аудит-лог, це НЕ справжня криптографічна авторизація.
         </p>
 
         <div className="form-group">
-          <label className="form-label">Секретний ключ підтвердження</label>
+          <label className="form-label">Підтвердження (демо)</label>
           <input
             type="password"
-            placeholder="Введіть ключ менеджера"
+            placeholder="Введіть будь-яке значення для демо-запису"
             className="form-input"
             value={approvalToken}
             onChange={(e) => setApprovalToken(e.target.value)}

@@ -39,24 +39,22 @@ def get_current_token_payload(credentials: HTTPAuthorizationCredentials = Depend
     token = credentials.credentials
     
     if settings.OIDC_MOCK_MODE:
-        # In Mock Mode, we support both mock JWTs signed with 'mock-secret' (HS256)
-        # and raw JSON-like parsing if signature check is bypassed.
+        # Приймається ЛИШЕ токен, підписаний MOCK_JWT_SECRET (видається
+        # POST /auth/mock-login на backend). Раніше тут був fallback на
+        # verify_signature=False — будь-хто міг підробити роль (напр. Admin)
+        # через curl без жодного звернення до backend. Секрет ніколи не
+        # потрапляє на фронтенд, тому підробка поза /auth/mock-login більше
+        # неможлива (сам логін і далі не питає пароль — canned demo-акаунт
+        # на роль, це свідомий компроміс без реального IdP, див. CLAUDE.md).
         try:
-            # Try to decode with mock secret
-            payload = jwt.decode(token, "mock-secret", algorithms=["HS256"])
+            payload = jwt.decode(token, settings.MOCK_JWT_SECRET, algorithms=["HS256"])
             return payload
-        except PyJWTError:
-            # Fallback: if signature fails, try decoding without signature verification
-            # (only in mock development mode!)
-            try:
-                payload = jwt.decode(token, options={"verify_signature": False})
-                return payload
-            except PyJWTError as e:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail=f"Invalid token format in Mock Mode: {str(e)}",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
+        except PyJWTError as e:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Invalid token format in Mock Mode: {str(e)}",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
                 
     # Production Verification (OIDC / RS256 with JWKS)
     try:

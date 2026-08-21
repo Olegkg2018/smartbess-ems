@@ -1,29 +1,33 @@
 export type UserRole = 'Viewer' | 'Operator' | 'Manager' | 'Admin';
 
-export function getMockToken(role: UserRole): string {
-  const encodeBase64Url = (obj: any) => {
-    const str = JSON.stringify(obj);
-    const base64 = btoa(
-      encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (_, p1) => {
-        return String.fromCharCode(parseInt(p1, 16));
-      })
-    );
-    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-  };
+// Раніше токен збирав сам фронтенд (alg:'none', роль — довільне поле, яке
+// клієнт сам вписував) — будь-хто міг підробити роль через curl без жодного
+// звернення до backend. Тепер токен видає й підписує лише сервер
+// (POST /auth/mock-login), секрет підпису на клієнт не потрапляє. Кеш —
+// щоб не ходити на /auth/mock-login перед кожним API-викликом.
+const MOCK_TOKEN_TTL_MS = 10 * 60 * 1000;
+const mockTokenCache = new Map<UserRole, { token: string; obtainedAt: number }>();
 
-  const header = { alg: 'none', typ: 'JWT' };
-  const payload = {
-    preferred_username: `${role.toLowerCase()}@smartbess.ua`,
-    roles: [role],
-    realm_access: { roles: [role] },
-    resource_access: { 'smartbess-platform': { roles: [role] } },
-  };
-
-  return `${encodeBase64Url(header)}.${encodeBase64Url(payload)}.`;
+async function getAuthToken(role: UserRole): Promise<string> {
+  const cached = mockTokenCache.get(role);
+  if (cached && Date.now() - cached.obtainedAt < MOCK_TOKEN_TTL_MS) {
+    return cached.token;
+  }
+  const res = await fetch('/api/v1/auth/mock-login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role }),
+  });
+  if (!res.ok) {
+    throw new Error(`Не вдалося отримати токен для ролі ${role}: ${res.status} ${res.statusText}`);
+  }
+  const { token } = await res.json();
+  mockTokenCache.set(role, { token, obtainedAt: Date.now() });
+  return token;
 }
 
 async function authFetch(role: UserRole, url: string, options: RequestInit = {}): Promise<Response> {
-  const token = getMockToken(role);
+  const token = await getAuthToken(role);
   const headers: Record<string, string> = {
     ...(options.headers as Record<string, string> | undefined),
     Authorization: `Bearer ${token}`,
@@ -61,6 +65,22 @@ export interface Asset {
 export async function fetchAssets(role: UserRole): Promise<Asset[]> {
   const data = await authJson<{ assets: Asset[] }>(role, '/api/v1/assets');
   return data.assets;
+}
+
+export interface ScadaStatus {
+  connected: boolean;
+  simulator: boolean;
+  timestamp: string | null;
+  soc_pct: number | null;
+  soc_mwh: number | null;
+  power_mw: number | null;
+  battery_temp_c: number | null;
+  soh_pct: number | null;
+  system_status: string | null;
+}
+
+export async function fetchScadaStatus(role: UserRole, assetId: string): Promise<ScadaStatus> {
+  return authJson<ScadaStatus>(role, `/api/v1/assets/${assetId}/scada-status`);
 }
 
 /** Прогноз на 24г наперед. Персистить у PriceForecast на бекенді (потрібно для optimization/run). */

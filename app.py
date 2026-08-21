@@ -15,9 +15,18 @@ from src.database.models import Organization, Asset, PriceForecast, ChargeDischa
 
 from src.tasks.scheduler import start_scheduler, shutdown_scheduler
 from src.modules.scada_service.scada_service import start_scada_service, stop_scada_service
+from src.core.config import settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if settings.OIDC_MOCK_MODE:
+        print(
+            "УВАГА: OIDC_MOCK_MODE=True — авторизація в demo/dev-режимі "
+            "(canned-акаунт на роль через /auth/mock-login, без пароля та без "
+            "реального IdP). Не використовувати з публічним доступом без "
+            "додаткового захисту мережевого рівня (VPN/IP allowlist)."
+        )
+
     # 1. Initialize DB tables
     init_db()
     
@@ -57,15 +66,20 @@ async def lifespan(app: FastAPI):
     # 3. Start the daily background scheduler
     start_scheduler()
     
-    # 4. Start the Modbus BESS simulator
-    import threading
-    from src.modules.scada_service.bess_simulator import run_simulator_process
-    t_sim = threading.Thread(target=run_simulator_process, daemon=True)
-    t_sim.start()
-    print("FastAPI Lifespan: Started BESS Modbus TCP simulator.")
-    
-    # 5. Start the SCADA telemetry and control service
-    start_scada_service()
+    # 4-5. Start the Modbus BESS simulator + SCADA telemetry/control service.
+    # Єдиний реально існуючий сьогодні режим — симулятор (реального обладнання
+    # не підключено, див. CLAUDE.md); прапорець лише дає змогу вимкнути його,
+    # а не перемикає на якийсь інший "реальний" режим.
+    if settings.SCADA_SIMULATOR_ENABLED:
+        import threading
+        from src.modules.scada_service.bess_simulator import run_simulator_process
+        t_sim = threading.Thread(target=run_simulator_process, daemon=True)
+        t_sim.start()
+        print("FastAPI Lifespan: Started BESS Modbus TCP simulator.")
+
+        start_scada_service()
+    else:
+        print("FastAPI Lifespan: SCADA_SIMULATOR_ENABLED=False — simulator and SCADA poll loop not started.")
     
     yield
 
