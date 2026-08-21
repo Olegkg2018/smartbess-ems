@@ -147,7 +147,7 @@ def is_ukrainian_holiday(dt):
     return 0
 
 
-def build_training_table(df_raw):
+def build_training_table(df_raw, idm_lag_hours=24):
     """
     Наступник prepare_features() (до Фази B, 2026-08-21). Той самий reindex
     на повну почасову сітку — потрібен для коректної семантики shift()/
@@ -161,6 +161,14 @@ def build_training_table(df_raw):
     - Ознаки (FEATURE_SOURCE_COLUMNS) — ffill(limit=MAX_CAUSAL_FFILL_GAP_HOURS)
       замість .interpolate()+bfill()+ffill(): лише минулим значенням, дірка
       довша за ліміт лишається NaN і теж уйде через dropna.
+
+    idm_lag_hours=24 — за замовчуванням продове значення. Параметр існує
+    ЛИШЕ для Фази C (docs/review_ml_forecast_pipeline_2026-08-21.md) —
+    чесна повторна перевірка старого відхиленого експерименту "Lag_48
+    замість Lag_24" на новому as-of-бектесті (до Фази B цей експеримент був
+    перевірений на leaky бектесті, що не відтворював живий "хвост без
+    якоря"). Назва колонки лишається 'IDM_Price_Lag_24' незалежно від
+    реального лагу — щоб не міняти список FEATURES заради A/B-тесту.
     """
     df = df_raw.copy()
     df['Datetime'] = pd.to_datetime(df['Datetime'])
@@ -217,9 +225,9 @@ def build_training_table(df_raw):
         df[f'Cloud_Lag_{lag}'] = df['Cloud_Cover'].shift(lag)
         df[f'Radiation_Lag_{lag}'] = df['Shortwave_Radiation'].shift(lag)
 
-    df['IDM_Price_Lag_24'] = df['IDM_Price'].shift(24)
-    df['DAM_IDM_Spread_Lag_24'] = df['DAM_IDM_Spread'].shift(24)
-    df['Spread_Mean_24h'] = df['DAM_IDM_Spread'].shift(24).rolling(window=24).mean()
+    df['IDM_Price_Lag_24'] = df['IDM_Price'].shift(idm_lag_hours)
+    df['DAM_IDM_Spread_Lag_24'] = df['DAM_IDM_Spread'].shift(idm_lag_hours)
+    df['Spread_Mean_24h'] = df['DAM_IDM_Spread'].shift(idm_lag_hours).rolling(window=24).mean()
 
     df['Grid_Net_Export_Lag_24'] = df['Grid_Net_Export_MW'].shift(24)
     df['Grid_Net_Export_Mean_24h'] = df['Grid_Net_Export_MW'].shift(24).rolling(window=24).mean()
@@ -308,7 +316,7 @@ def _get_price_shift_pct(forecast_date):
         db.close()
 
 
-def build_asof_feature_matrix(target_date, forecast_weather, last_prices, as_of=None, apply_manual_overrides=True):
+def build_asof_feature_matrix(target_date, forecast_weather, last_prices, as_of=None, apply_manual_overrides=True, idm_lag_hours=24):
     """
     Наступник build_forecast_feature_matrix() (до Фази B). Будує матрицю
     ознак (FEATURES) для прогнозу на 24 години наперед — спільна для
@@ -316,6 +324,10 @@ def build_asof_feature_matrix(target_date, forecast_weather, last_prices, as_of=
     (predict_price_band) І ТЕПЕР ТАКОЖ walk_forward_backtest — та сама
     логіка лагів/фічей скрізь, замість двох незалежних реалізацій
     (docs/review_ml_forecast_pipeline_2026-08-21.md).
+
+    idm_lag_hours=24 — див. build_training_table(). Лише для Фази C
+    повторної перевірки Lag_48; продовий шлях (predict_next_day/
+    predict_price_band) завжди лишає замовчування 24.
 
     as_of — коли "нібито" рахується прогноз (UTC). За замовчуванням —
     зараз (жива робота проду, поведінка не змінюється). walk_forward_backtest
@@ -437,8 +449,8 @@ def build_asof_feature_matrix(target_date, forecast_weather, last_prices, as_of=
         lag_168 = last_prices[-168 + h]
         mean_24h = np.mean(last_prices[121 + h: 145 + h])
 
-        idm_lag_24 = last_idm[-24 + h]
-        spread_lag_24 = last_spreads[-24 + h]
+        idm_lag_24 = last_idm[-idm_lag_hours + h]
+        spread_lag_24 = last_spreads[-idm_lag_hours + h]
         spread_mean_24h = np.mean(last_spreads[121 + h: 145 + h])
 
         flow_lag_24 = last_flows[-24 + h]

@@ -453,12 +453,18 @@ def _weather_slice_archived_forecast(day, day_end):
 
 def walk_forward_backtest(test_days=90, retrain_every_days=7, model_type='lightgbm',
                            weather_mode='archived_actual_approx', acknowledge_approximation=False,
-                           use_surplus_classifier=False, extra_features=None):
+                           use_surplus_classifier=False, extra_features=None, idm_lag_hours=24):
     """
     Чесна оцінка точності день-наперед прогнозу: розширюване вікно навчання,
     прогноз на наступну добу (24г), крок вперед. Модель перенавчається раз на
     retrain_every_days (як і в проді — раз на тиждень), а не одноразовий
     85/15 holdout, який не показує, як точність змінюється у часі.
+
+    idm_lag_hours=24 — Фаза C (2026-08-21): повторна перевірка старого
+    відхиленого експерименту "Lag_48 замість Lag_24" на новому as-of-
+    бектесті (застосовна лише коли asof_eligible, див. нижче — інакше
+    ігнорується, бо legacy-шлях бере лаг з df_train[features], уже
+    порахований build_training_table з тим самим idm_lag_hours).
 
     Фаза B (2026-08-21): для конфігурації, що реально відповідає проду
     (model_type='lightgbm', без use_surplus_classifier/extra_features) —
@@ -533,7 +539,7 @@ def walk_forward_backtest(test_days=90, retrain_every_days=7, model_type='lightg
         )
 
     df_raw = dm.get_combined_historical_data()
-    df = feature_pipeline.build_training_table(df_raw)
+    df = feature_pipeline.build_training_table(df_raw, idm_lag_hours=idm_lag_hours)
     df = df.sort_values('Datetime').reset_index(drop=True)
     df_raw = df_raw.copy()
     df_raw['Datetime'] = pd.to_datetime(df_raw['Datetime'])
@@ -611,6 +617,7 @@ def walk_forward_backtest(test_days=90, retrain_every_days=7, model_type='lightg
 
             X_test, _, _ = build_forecast_feature_matrix(
                 day.strftime('%Y-%m-%d'), weather_for_day, last_prices_for_day, as_of=day,
+                idm_lag_hours=idm_lag_hours,
             )
             y_pred_raw = model.predict(X_test)
             y_pred_all = clip_and_shift(y_pred_raw, shift_pct=0.0)
@@ -676,6 +683,7 @@ def walk_forward_backtest(test_days=90, retrain_every_days=7, model_type='lightg
         'methodology_version': 'phase_b_asof_unified_2026' if asof_eligible else 'phase_b_leakage_fix_only_2026',
         'weather_mode': weather_mode,
         'skipped_days_no_weather_archive': skipped_days_no_weather,
+        'idm_lag_hours': idm_lag_hours,
     }
 
     report = {'daily': daily_results, 'summary': summary}
@@ -688,15 +696,17 @@ def walk_forward_backtest(test_days=90, retrain_every_days=7, model_type='lightg
 # (Фаза B, 2026-08-21; _get_price_shift_pct лишається імпортованим вище для
 # predict_next_day/predict_price_band, які застосовують зсув ПІСЛЯ моделі).
 
-def build_forecast_feature_matrix(forecast_date, forecast_weather, last_prices, as_of=None):
+def build_forecast_feature_matrix(forecast_date, forecast_weather, last_prices, as_of=None, idm_lag_hours=24):
     """Сумісна тонка обгортка над feature_pipeline.build_asof_feature_matrix()
     (Фаза B) — та сама функція тепер обслуговує і живий прогноз
-    (predict_next_day/predict_price_band, as_of=None → зараз), і
-    walk_forward_backtest (as_of=симульований історичний момент). Стара
-    назва й сигнатура (без as_of) лишені сумісними для двох існуючих
-    викликів нижче."""
+    (predict_next_day/predict_price_band, as_of=None → зараз, idm_lag_hours=24
+    завжди), і walk_forward_backtest (as_of=симульований історичний момент,
+    idm_lag_hours=48 лише для Фази C повторної перевірки Lag_48). Стара
+    назва й сигнатура (без нових параметрів) лишені сумісними для двох
+    існуючих продових викликів нижче."""
     return feature_pipeline.build_asof_feature_matrix(
         forecast_date, forecast_weather, last_prices, as_of=as_of, apply_manual_overrides=True,
+        idm_lag_hours=idm_lag_hours,
     )
 
 def predict_next_day(forecast_date, forecast_weather, last_prices, factors=None):
