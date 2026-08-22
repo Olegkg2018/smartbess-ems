@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 from src.database.session import SessionLocal
-from src.database.models import Asset, MarketBid, BidMarginOverride, MarketPrice
+from src.database.models import Asset, MarketBid, BidMarginOverride, MarketPrice, MarketBidSocFeasibility
 from src.core.security import RoleChecker
 import src.modules.market_data_service.data_manager as dm
 from src.modules.bidding_service.services import (
@@ -94,7 +94,13 @@ async def list_bids(asset_id: str, date: str):
         ).order_by(MarketBid.timestamp).all()
         if not bids:
             raise HTTPException(status_code=404, detail="Заявок на цю дату ще не згенеровано")
-        return {"date": date, "asset_id": asset_id, "bids": [_bid_to_dict(b) for b in bids]}
+        soc_rows = db.query(MarketBidSocFeasibility).filter(
+            MarketBidSocFeasibility.asset_id == asset_id,
+            MarketBidSocFeasibility.timestamp >= target_dt,
+            MarketBidSocFeasibility.timestamp < target_dt + datetime.timedelta(days=1),
+        ).all()
+        soc_map = {r.timestamp: r.soc_feasible for r in soc_rows}
+        return {"date": date, "asset_id": asset_id, "bids": [_bid_to_dict(b, soc_feasible=soc_map.get(b.timestamp)) for b in bids]}
     finally:
         db.close()
 

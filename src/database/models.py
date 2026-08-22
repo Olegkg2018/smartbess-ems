@@ -266,6 +266,31 @@ class MarketBid(Base):
     bid_generated_at = Column(DateTime, default=datetime.datetime.utcnow)
     settled_at = Column(DateTime, nullable=True)
 
+class MarketBidSocFeasibility(Base):
+    """
+    Результат послідовного SoC-реплею settle_bids_for_date (CODE_REVIEW.md
+    п.6, 2026-08-22) — окрема таблиця, а не нова колонка в market_bids
+    (та сама аддитивна конвенція, що й ForecastRun/WeatherForecastArchive
+    у ML-ревью Фазі A: create_all() рестартом, без ALTER існуючої таблиці).
+
+    MarketBid.executed каже лише "заявка зіграла на аукціоні за ціною" —
+    незалежно по кожній годині, без пам'яті про попередні години. Ця
+    таблиця додає ФІЗИЧНУ перевірку: чи справді була в батареї потрібна
+    енергія (sell) або чи справді був запас ємності (buy) з урахуванням
+    УСІХ попередніх виконаних заявок того ж дня, а не одна ізольована
+    година. soc_feasible=False означає "заявка зіграла по ціні, але
+    фізично доставити/прийняти енергію батарея не могла" — SoC у такому
+    разі НЕ змінюється (не вигадуємо часткове виконання).
+    """
+    __tablename__ = "market_bid_soc_feasibility"
+
+    timestamp = Column(DateTime, primary_key=True, nullable=False)
+    asset_id = Column(String(36), ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True, nullable=False)
+    soc_feasible = Column(Boolean, nullable=False)
+    soc_before_mwh = Column(Float, nullable=False)
+    soc_after_mwh = Column(Float, nullable=False)
+    computed_at = Column(DateTime, default=datetime.datetime.utcnow)
+
 class InitialSocOverride(Base):
     """
     Ручне значення ємності батареї на 00:00 конкретної доби — на випадок,

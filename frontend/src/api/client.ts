@@ -294,6 +294,7 @@ export interface MarketBid {
   actual_price_uah: number | null;
   executed: boolean | null;
   realized_profit_uah: number | null;
+  soc_feasible: boolean | null;
   idm_fallback_suggested: boolean;
   idm_fallback_price_uah: number | null;
   idm_fallback_profit_uah: number | null;

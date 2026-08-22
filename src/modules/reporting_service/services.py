@@ -318,30 +318,66 @@ class ReportingService:
                         "accuracy_rate": 1.0,
                         "traded_volume_mwh": float((total_discharge_kwh + total_charge_kwh) / 1000.0)
                     }
+                # len(telemetry) >= 12 — поріг "досить реальних записів за добу, щоб
+                # довіряти цій гілці більше за симуляцію нижче" (мінімум ~12 хвилин
+                # реальних SCADA-даних; не з чогось точного, лишається як є).
                 elif telemetry and len(telemetry) >= 12:
-                    # Actual BESS execution P&L from telemetry
+                    # Actual BESS execution P&L from telemetry.
+                    #
+                    # ВАЖЛИВО (знайдено зовнішнім ревью, CODE_REVIEW.md п.5,
+                    # виправлено 2026-08-22): BessTelemetry пишеться ~раз на
+                    # хвилину (scada_service.py — цикл кожні 10с, дедуплікація
+                    # по хвилині через delete+insert), тобто один рядок — це
+                    # МИТТЄВА потужність (грн/год за станом на цю хвилину), а
+                    # НЕ енергія за годину. Раніше тут сумувався power_kw*price_kwh
+                    # напряму по кожному рядку без множення на реальний Δt між
+                    # записами — завищення енергії/виручки приблизно в 60 разів
+                    # (стільки хвилинних записів помилково рахувались як повні
+                    # години). ManualOverride-гілка вище НЕ мала цього бага —
+                    # там рівно 1 запис/годину за побудовою, тому та сама формула
+                    # там коректна.
+                    #
+                    # Інтегруємо чесно по РЕАЛЬНОМУ Δt між послідовними записами
+                    # (не по вигаданій константі 1/60год) — якщо SCADA мовчала
+                    # довше MAX_TELEMETRY_GAP_HOURS, цей пробіл НЕ екстраполюємо
+                    # (це була б вигадка потужності за час, коли її реально не
+                    # виміряно) — просто чесно недораховуємо, а не дораховуємо.
+                    MAX_TELEMETRY_GAP_HOURS = 5.0 / 60.0
+                    TYPICAL_TELEMETRY_INTERVAL_HOURS = 1.0 / 60.0
+
                     actual_profit = 0.0
                     total_discharge_kwh = 0.0
                     total_charge_kwh = 0.0
                     charge_cost = 0.0
                     discharge_rev = 0.0
+                    prev_ts = None
                     for tel in telemetry:
                         hour = tel.timestamp.hour
                         price_rows = df_day[df_day['Datetime'].dt.hour == hour]
                         price_uah = price_rows['Price'].values[0] if not price_rows.empty else 3000.0
                         price_kwh = price_uah / 1000.0
 
+                        if prev_ts is None:
+                            delta_hours = TYPICAL_TELEMETRY_INTERVAL_HOURS
+                        else:
+                            delta_hours = min(
+                                (tel.timestamp - prev_ts).total_seconds() / 3600.0,
+                                MAX_TELEMETRY_GAP_HOURS,
+                            )
+                        prev_ts = tel.timestamp
+
                         power_kw = tel.current_power_mw * 1000.0
-                        if power_kw > 0: # sell
-                            val = power_kw * price_kwh
+                        energy_kwh = power_kw * delta_hours
+                        if energy_kwh > 0: # sell
+                            val = energy_kwh * price_kwh
                             actual_profit += val
                             discharge_rev += val
-                            total_discharge_kwh += power_kw
-                        elif power_kw < 0: # buy
-                            val = abs(power_kw) * (price_kwh + total_tariffs_kwh)
+                            total_discharge_kwh += energy_kwh
+                        elif energy_kwh < 0: # buy
+                            val = abs(energy_kwh) * (price_kwh + total_tariffs_kwh)
                             actual_profit -= val
                             charge_cost += val
-                            total_charge_kwh += abs(power_kw)
+                            total_charge_kwh += abs(energy_kwh)
 
                     # Degradation cost
                     degr_cost_day = total_discharge_kwh * (deg_cost_mwh / 1000.0)

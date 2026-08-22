@@ -8,8 +8,9 @@ oree.com.ua на основі того, що показує цей модуль 
 import datetime
 import pandas as pd
 
-from src.database.models import ChargeDischargePlan, PriceForecast, MarketBid, BidMarginOverride
+from src.database.models import ChargeDischargePlan, PriceForecast, MarketBid, BidMarginOverride, MarketBidSocFeasibility
 from src.modules.optimization_service.milp_model import evaluate_schedule_profit
+from src.modules.scada_service.soc_state import get_current_soc_fraction
 import src.modules.forecast_service.ml_pipeline as mt
 
 DEFAULT_MARGIN_PCT = 2.0
@@ -125,6 +126,68 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
     }
 
 
+def _replay_soc_feasibility(db, asset, target_date: datetime.datetime, settled_bids) -> dict:
+    """
+    Послідовний SoC-реплей виконаних заявок (CODE_REVIEW.md п.6, 2026-08-22).
+
+    settle_bids_for_date вище визначає executed/realized_profit_uah ЧИСТО
+    через порівняння ціни, погодинно й незалежно — година-18 sell може
+    вважатись виконаною й прибутковою, навіть якщо година-3 buy (зарядка)
+    провалилась по ціні і фізично заряд узяти було ніде. Ця функція
+    прогановує ті самі settled_bids (вже відсортовані за timestamp) через
+    послідовний SoC, використовуючи ту саму рекурсію, що вже перевірена в
+    MILP (milp_model.py::optimize_battery_schedule, soc[t] = soc[t-1] +
+    charge*eff_charge - discharge/eff_discharge) — і пише окремо
+    MarketBidSocFeasibility на кожну годину.
+
+    Не вигадуємо штраф imbalance за фізично недоставлену енергію (немає
+    реальних даних про ціну небалансу) — soc_feasible=False просто означає
+    "SoC не дозволив, ця конкретна дія фізично не відбулась", SoC при
+    цьому НЕ змінюється (не вигадуємо часткове виконання). Що саме робити
+    з realized_profit_uah у цьому випадку — рішення викликача
+    (compute_real_profit_capture_ratio в forecast_accuracy.py).
+    """
+    date_str = target_date.strftime('%Y-%m-%d')
+    soc_fraction = get_current_soc_fraction(db, asset, target_date=date_str)
+    soc_mwh = soc_fraction * asset.capacity_mwh
+    min_soc_mwh = asset.min_soc_pct / 100.0 * asset.capacity_mwh
+    max_soc_mwh = asset.max_soc_pct / 100.0 * asset.capacity_mwh
+
+    # Ідемпотентність повторного /bids/settle — та сама delete-then-insert
+    # конвенція, що вже прийнята в проекті для PriceForecast/ChargeDischargePlan.
+    db.query(MarketBidSocFeasibility).filter(
+        MarketBidSocFeasibility.asset_id == asset.id,
+        MarketBidSocFeasibility.timestamp >= target_date,
+        MarketBidSocFeasibility.timestamp < target_date + datetime.timedelta(days=1),
+    ).delete()
+
+    EPS = 1e-9
+    soc_map = {}
+    for b in settled_bids:
+        soc_before = soc_mwh
+        feasible = True
+        if b.executed and b.bid_type == 'buy':
+            proposed = soc_mwh + (b.volume_kw / 1000.0) * asset.efficiency_charge
+            feasible = proposed <= max_soc_mwh + EPS
+            if feasible:
+                soc_mwh = proposed
+        elif b.executed and b.bid_type == 'sell':
+            proposed = soc_mwh - (b.volume_kw / 1000.0) / asset.efficiency_discharge
+            feasible = proposed >= min_soc_mwh - EPS
+            if feasible:
+                soc_mwh = proposed
+        # standby або executed=False — SoC не змінюється, feasible=True (питання неприменимо)
+
+        db.add(MarketBidSocFeasibility(
+            timestamp=b.timestamp, asset_id=asset.id,
+            soc_feasible=feasible, soc_before_mwh=soc_before, soc_after_mwh=soc_mwh,
+            computed_at=datetime.datetime.utcnow(),
+        ))
+        soc_map[b.timestamp] = feasible
+
+    return soc_map
+
+
 def settle_bids_for_date(db, asset, target_date: datetime.datetime, actual_prices_by_hour: dict) -> dict:
     """
     Звіряє вже подані заявки (MarketBid) з РЕАЛЬНОЮ ціною РДН
@@ -190,23 +253,39 @@ def settle_bids_for_date(db, asset, target_date: datetime.datetime, actual_price
         b.settled_at = datetime.datetime.utcnow()
         settled.append(b)
 
+    soc_map = _replay_soc_feasibility(db, asset, target_date, settled)
+
     db.commit()
 
-    total_realized = sum(b.realized_profit_uah or 0.0 for b in settled)
+    # Заявка, що "зіграла" по ціні, але фізично неможлива по SoC (CODE_REVIEW.md
+    # п.6) — не рахуємо в total_realized_profit_uah (енергія фізично не
+    # доставлена/прийнята). realized_profit_uah на самому MarketBid лишається
+    # як є (гіпотетична цінність за умови ідеальної доставки) — для аудиту/
+    # прозорості, лише агрегат тут і в compute_real_profit_capture_ratio
+    # (forecast_accuracy.py) чесно її виключає.
+    total_realized = sum(
+        (b.realized_profit_uah or 0.0) for b in settled
+        if soc_map.get(b.timestamp, True)
+    )
     n_executed = sum(1 for b in settled if b.executed)
     n_failed = sum(1 for b in settled if b.executed is False)
+    n_soc_infeasible = sum(1 for b in settled if b.executed and not soc_map.get(b.timestamp, True))
     return {
         'status': 'ok',
         'date': target_date.date().isoformat(),
         'n_settled': len(settled),
         'n_executed': n_executed,
         'n_failed_needs_idm': n_failed,
+        'n_soc_infeasible': n_soc_infeasible,
         'total_realized_profit_uah': float(total_realized),
-        'bids': [_bid_to_dict(b) for b in settled],
+        'bids': [_bid_to_dict(b, soc_feasible=soc_map.get(b.timestamp)) for b in settled],
     }
 
 
-def _bid_to_dict(b: MarketBid) -> dict:
+def _bid_to_dict(b: MarketBid, soc_feasible=None) -> dict:
+    """soc_feasible=None означає "не порахований" (заявка ще не проходила
+    settle, або викликач не запросив MarketBidSocFeasibility) — не плутати
+    з False ("порахований і фізично неможливий"). Див. _replay_soc_feasibility."""
     price_clamped = (
         b.bid_price_uah <= OREE_BID_PRICE_MIN_UAH + 1e-6
         or b.bid_price_uah >= OREE_BID_PRICE_MAX_UAH - 1e-6
@@ -221,6 +300,7 @@ def _bid_to_dict(b: MarketBid) -> dict:
         'actual_price_uah': b.actual_price_uah,
         'executed': b.executed,
         'realized_profit_uah': b.realized_profit_uah,
+        'soc_feasible': soc_feasible,
         'idm_fallback_suggested': b.idm_fallback_suggested,
         'idm_fallback_price_uah': b.idm_fallback_price_uah,
         'idm_fallback_profit_uah': b.idm_fallback_profit_uah,

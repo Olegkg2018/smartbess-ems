@@ -218,9 +218,21 @@ export default function OptimizationSchedule() {
                       ) : (
                         <span className="status-badge offline"><XCircle size={12} /> не виконано</span>
                       )}
+                      {b.executed && b.soc_feasible === false && (
+                        <span
+                          title="Заявка зіграла за ціною на біржі, але фізично неможлива — заряду/місця в акумуляторі не вистачало (послідовна SoC-перевірка). Ця година не враховується у фактичному P&L звіту."
+                          style={{ display: 'inline-flex', verticalAlign: 'middle', marginLeft: '4px' }}
+                        >
+                          <AlertTriangle size={13} style={{ color: 'var(--color-amber)' }} />
+                        </span>
+                      )}
                     </td>
                     <td>
-                      {b.executed ? (
+                      {b.executed && b.soc_feasible === false ? (
+                        <span style={{ color: 'var(--color-amber)' }} title="Фізично не доставлено через брак SoC — не зараховано у факт">
+                          {Math.round(b.realized_profit_uah ?? 0).toLocaleString()} грн (не зараховано)
+                        </span>
+                      ) : b.executed ? (
                         <span style={{ color: 'var(--color-emerald)' }}>{Math.round(b.realized_profit_uah ?? 0).toLocaleString()} грн</span>
                       ) : b.idm_fallback_suggested ? (
                         <span style={{ color: 'var(--color-amber)' }}>

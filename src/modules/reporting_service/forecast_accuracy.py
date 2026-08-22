@@ -156,8 +156,17 @@ def compute_real_profit_capture_ratio(db, days: int = 30) -> dict:
         урахуванням годин, де заявка НЕ зіграла (realized_profit_uah=0 для
         них — фізично не змогли зарядити/розрядити через РДН у цю годину,
         ВДР-фолбек не враховується тут, бо це лише пропозиція диспетчеру,
-        а не гарантовано виконана дія). Для діб СТАРІШИХ за появу механізму
-        заявок (до 2026-07-31, MarketBid ще не існував) — фолбек на
+        а не гарантовано виконана дія), А ТАКОЖ годин, де заявка на біржі
+        зіграла за ціною, але фізично не могла виконатись через брак/
+        переповнення SoC (CODE_REVIEW.md п.6, 2026-08-22) — такі години
+        джойняться з MarketBidSocFeasibility і чесно обнуляються тут же
+        (не виходить попереду MILP-обмежень, бо це та сама послідовна
+        SoC-перевірка, що вже пише свій результат у settle_bids_for_date).
+        Для діб, де MarketBidSocFeasibility ще не порахована (до фіксу
+        п.6) — граційний фолбек: без цієї перевірки, як і раніше (той
+        самий патерн, що вже в compute_rolling_accuracy для відсутніх
+        даних). Для діб СТАРІШИХ за появу механізму заявок (до 2026-07-31,
+        MarketBid ще не існував) — фолбек на
         попереднє спрощення: P&L ChargeDischargePlan, перерахований за
         РЕАЛЬНОЮ ціною доби (MarketPrice), що НЕЯВНО припускає 100%-не
         виконання плану (менш чесно, але єдине, що можна порахувати заднім
@@ -177,7 +186,7 @@ def compute_real_profit_capture_ratio(db, days: int = 30) -> dict:
     планувальника) — на новому/малому інстансі повних діб може бути замало,
     тоді status='insufficient_data' (як і в compute_rolling_accuracy).
     """
-    from src.database.models import ChargeDischargePlan, Asset, MarketBid
+    from src.database.models import ChargeDischargePlan, Asset, MarketBid, MarketBidSocFeasibility
     from src.modules.optimization_service.milp_model import optimize_battery_schedule, evaluate_schedule_profit
 
     cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=days)
@@ -209,6 +218,19 @@ def compute_real_profit_capture_ratio(db, days: int = 30) -> dict:
     for b in bid_rows:
         d = b.timestamp.date().isoformat()
         bids_by_day.setdefault(d, {})[b.timestamp.hour] = b
+
+    # SoC-реплей settlement (CODE_REVIEW.md п.6, 2026-08-22) — година могла
+    # "зіграти" за ціною, але фізично не виконатись через брак/переповнення
+    # SoC. Немає рядка на дату/годину -> перевірка ще не рахувалась (дата до
+    # фіксу) -> graceful fallback нижче, той самий патерн, що в
+    # compute_rolling_accuracy для відсутніх даних.
+    soc_rows = db.query(MarketBidSocFeasibility).filter(
+        MarketBidSocFeasibility.asset_id == asset.id, MarketBidSocFeasibility.timestamp >= cutoff,
+    ).order_by(MarketBidSocFeasibility.timestamp).all()
+    soc_by_day = {}
+    for s in soc_rows:
+        d = s.timestamp.date().isoformat()
+        soc_by_day.setdefault(d, {})[s.timestamp.hour] = s.soc_feasible
 
     # Тарифи — ті самі константи, що scheduler.py реально використовує щодня
     # для боєвого плану (Settings поки не підключені до battery_params там) —
@@ -244,7 +266,12 @@ def compute_real_profit_capture_ratio(db, days: int = 30) -> dict:
 
         day_bids = bids_by_day.get(d)
         if day_bids and len(day_bids) == 24 and all(day_bids[h].executed is not None for h in range(24)):
-            actual_profit = sum(day_bids[h].realized_profit_uah or 0.0 for h in range(24))
+            day_soc = soc_by_day.get(d)  # None/неповний -> fallback без SoC-перевірки
+            actual_profit = sum(
+                (day_bids[h].realized_profit_uah or 0.0)
+                for h in range(24)
+                if not day_soc or day_soc.get(h, True)
+            )
             actual_source = 'market_bid_settled'
         else:
             charge_kw = [max(0.0, -p * 1000.0) for p in target_power_mw]
