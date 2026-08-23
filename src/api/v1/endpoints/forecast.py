@@ -182,6 +182,15 @@ async def get_actual_prices(target_date: str):
     факт опублікований (зазвичай наступного дня після торгів). "Якщо є" —
     якщо доба ще не настала або оператор ринку ще не опублікував ціни,
     available=false, а не вигадане значення.
+
+    ВАЖЛИВО (звіт диспетчера 2026-08-23): раніше цей ендпоінт вимагав РІВНО
+    24 рядки в БД, інакше повертав available=false — тобто, поки триває
+    добова синхронізація (наприклад, вже є 21 з 24 годин), РЕАЛЬНІ дані, що
+    вже прийшли, ховались повністю від диспетчера аж до появи 24-ї години.
+    Тепер повертаємо ЧЕСНО ту кількість годин, яка реально є (не вигадуємо
+    відсутні), позначаючи це `partial: true` і конкретним переліком `hours`
+    (не завжди 0..23) — фронтенд індексує факт по `hours`, а не за
+    позицією в масиві.
     """
     import pandas as pd
     from src.database.models import MarketPrice
@@ -199,12 +208,13 @@ async def get_actual_prices(target_date: str):
             MarketPrice.timestamp < target_dt + datetime.timedelta(days=1)
         ).order_by(MarketPrice.timestamp).all()
 
-        if len(rows) == 24:
+        if rows:
             return {
                 "date": target_date,
                 "available": True,
+                "partial": len(rows) < 24,
                 "source": "db",
-                "hours": list(range(24)),
+                "hours": [r.timestamp.hour for r in rows],
                 "actual_prices_uah": [r.price_uah for r in rows],
             }
 
@@ -216,15 +226,16 @@ async def get_actual_prices(target_date: str):
             df_day = df_month[
                 (df_month['Datetime'] >= target_dt) & (df_month['Datetime'] < target_dt + datetime.timedelta(days=1))
             ].sort_values('Datetime')
-            if len(df_day) == 24:
+            if len(df_day) > 0:
                 return {
                     "date": target_date,
                     "available": True,
+                    "partial": len(df_day) < 24,
                     "source": "oree.com.ua (live)",
-                    "hours": list(range(24)),
+                    "hours": [dt.hour for dt in df_day['Datetime']],
                     "actual_prices_uah": df_day['Price'].tolist(),
                 }
 
-        return {"date": target_date, "available": False, "hours": [], "actual_prices_uah": []}
+        return {"date": target_date, "available": False, "partial": False, "hours": [], "actual_prices_uah": []}
     finally:
         db.close()

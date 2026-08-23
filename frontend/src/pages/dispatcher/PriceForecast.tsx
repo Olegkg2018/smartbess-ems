@@ -26,7 +26,15 @@ export default function PriceForecast() {
 
   const hasBand = !!priceBand && priceBand.lower_bound_uah.length === (forecastPrices || []).length
     && priceBand.lower_bound_uah.every((v) => v !== null);
-  const hasActual = !!actualPrices?.available && actualPrices.actual_prices_uah.length === 24;
+  const hasActual = !!actualPrices?.available && actualPrices.actual_prices_uah.length > 0;
+  // Факт РДН може прийти частково протягом доби (звіт диспетчера
+  // 2026-08-23 — 21 з 24 годин вже було в БД, але ендпоінт ховав усе через
+  // вимогу рівно 24) — індексуємо за реальною годиною з `hours`, а не за
+  // позицією в масиві, щоб не зсунути значення при частковому наборі.
+  const actualByHour = new Map<number, number>();
+  if (hasActual) {
+    actualPrices!.hours.forEach((h, idx) => actualByHour.set(h, actualPrices!.actual_prices_uah[idx]));
+  }
 
   // dispatchProfile (AppContext) — ЄДИНЕ джерело правди для заряду/розряду/
   // SoC, спільне з Optimization Schedule: реально виконана потужність з
@@ -42,7 +50,7 @@ export default function PriceForecast() {
     return {
       hour: i + 1,
       price: p,
-      actual: hasActual ? actualPrices!.actual_prices_uah[i] : undefined,
+      actual: actualByHour.has(i) ? actualByHour.get(i) : undefined,
       lower: hasBand ? (priceBand!.lower_bound_uah[i] as number) : undefined,
       bandWidth: hasBand ? (priceBand!.upper_bound_uah[i] as number) - (priceBand!.lower_bound_uah[i] as number) : undefined,
       charge: d ? d.charge : 0,
@@ -76,12 +84,15 @@ export default function PriceForecast() {
       // WAPE (сума абс. похибок / сума факту), а не MAPE — на годинах профіциту
       // (факт близько 0) MAPE ділить на майже нуль і дає сотні-тисячі
       // відсотків, що вводить в оману. Той самий підхід, що й у бекенді
-      // (calculate_mape_wape в ml_pipeline.py).
-      const sumAbsErr = chartData.reduce((s, d) => s + Math.abs(d.actual! - d.price), 0);
-      const sumAbsActual = chartData.reduce((s, d) => s + Math.abs(d.actual!), 0);
+      // (calculate_mape_wape в ml_pipeline.py). Рахуємо лише по годинах, де
+      // факт реально є (частковий день — не вигадуємо решту).
+      const withActual = chartData.filter((d) => d.actual !== undefined);
+      const sumAbsErr = withActual.reduce((s, d) => s + Math.abs(d.actual! - d.price), 0);
+      const sumAbsActual = withActual.reduce((s, d) => s + Math.abs(d.actual!), 0);
       const wape = sumAbsActual > 0 ? (sumAbsErr / sumAbsActual) * 100 : 0;
+      const partialNote = actualPrices!.partial ? ` (поки відомо ${withActual.length} з 24 годин доби)` : '';
       insights.push(
-        `Факт РДН з oree.com.ua вже опубліковано (джерело: ${actualPrices!.source}) — розбіжність із прогнозом у середньому ${wape.toFixed(1)}% (WAPE).`
+        `Факт РДН з oree.com.ua вже опубліковано (джерело: ${actualPrices!.source})${partialNote} — розбіжність із прогнозом у середньому ${wape.toFixed(1)}% (WAPE).`
       );
     }
     if (hasDispatch) {

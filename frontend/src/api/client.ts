@@ -107,6 +107,7 @@ export async function fetchLatestForecastBand(role: UserRole, targetDate: string
 export interface ActualPrices {
   date: string;
   available: boolean;
+  partial?: boolean;
   source?: string;
   hours: number[];
   actual_prices_uah: number[];
