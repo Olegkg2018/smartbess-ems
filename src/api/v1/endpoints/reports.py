@@ -11,6 +11,7 @@ from src.modules.reporting_service.forecast_accuracy import compute_rolling_accu
 from src.core.security import RoleChecker
 from src.api.v1.endpoints.optimization import get_manual_overrides
 from src.api.v1.endpoints.forecast import get_actual_prices
+from src.core.time_utils import kyiv_to_utc, utc_to_kyiv
 
 router = APIRouter()
 
@@ -132,12 +133,12 @@ async def export_day_excel(asset_id: str, date: str):
         if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
 
-        target_dt = datetime.datetime.strptime(date, '%Y-%m-%d')
+        target_dt = kyiv_to_utc(date, 0)
 
         forecasts = db.query(PriceForecast).filter(
             PriceForecast.forecast_run_at == target_dt
         ).order_by(PriceForecast.timestamp).all()
-        forecast_by_hour = {f.timestamp.hour: f.predicted_price_uah for f in forecasts}
+        forecast_by_hour = {utc_to_kyiv(f.timestamp).hour: f.predicted_price_uah for f in forecasts}
 
         dispatch = await get_manual_overrides(asset_id=asset_id, date=date)
         dispatch_by_hour = {o["hour"]: o for o in dispatch["overrides"]}

@@ -11,6 +11,7 @@ import src.modules.optimization_service.milp_model as opt
 from src.modules.scada_service.soc_state import get_current_soc_fraction, previous_day_calculated_fraction
 from src.core.redis import set_job_status, get_job_status
 from src.core.security import RoleChecker
+from src.core.time_utils import kyiv_to_utc, kyiv_day_bounds, utc_to_kyiv
 
 router = APIRouter()
 
@@ -50,8 +51,8 @@ def run_optimization_background_job(
             else get_current_soc_fraction(db, asset, target_date=target_date_str)
         )
 
-        target_dt_start = datetime.datetime.strptime(target_date_str, '%Y-%m-%d')
-        
+        target_dt_start = kyiv_to_utc(target_date_str, 0)
+
         # Load forecast prices from DB or generate mock if empty
         forecasts = db.query(PriceForecast).filter(
             PriceForecast.forecast_run_at == target_dt_start
@@ -105,7 +106,7 @@ def run_optimization_background_job(
         # Save optimal base schedule to database
         base_sched = scenarios_results['scenarios']['base']
         for t in range(24):
-            forecast_time = target_dt_start + datetime.timedelta(hours=t)
+            forecast_time = kyiv_to_utc(target_date_str, t)
             db.query(ChargeDischargePlan).filter(
                 ChargeDischargePlan.timestamp == forecast_time,
                 ChargeDischargePlan.asset_id == asset.id,
@@ -189,7 +190,7 @@ async def get_initial_soc(asset_id: str, date: str):
         if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
 
-        target_dt = datetime.datetime.strptime(date, '%Y-%m-%d')
+        target_dt = kyiv_to_utc(date, 0)
 
         override = db.query(InitialSocOverride).filter(
             InitialSocOverride.asset_id == asset_id,
@@ -234,7 +235,7 @@ async def get_initial_soc(asset_id: str, date: str):
 async def save_initial_soc(req: InitialSocOverrideModel):
     db = SessionLocal()
     try:
-        target_dt = datetime.datetime.strptime(req.date, '%Y-%m-%d')
+        target_dt = kyiv_to_utc(req.date, 0)
         row = db.query(InitialSocOverride).filter(
             InitialSocOverride.asset_id == req.asset_id,
             InitialSocOverride.date == target_dt
@@ -253,7 +254,7 @@ async def clear_initial_soc(asset_id: str, date: str):
     """Прибирає ручне значення — повертає розрахунок до автоматичного (SCADA-телеметрія / кінець попередньої доби / фолбек)."""
     db = SessionLocal()
     try:
-        target_dt = datetime.datetime.strptime(date, '%Y-%m-%d')
+        target_dt = kyiv_to_utc(date, 0)
         db.query(InitialSocOverride).filter(
             InitialSocOverride.asset_id == asset_id,
             InitialSocOverride.date == target_dt
@@ -267,7 +268,7 @@ async def clear_initial_soc(asset_id: str, date: str):
 async def get_plans(asset_id: str, date: str):
     db = SessionLocal()
     try:
-        target_dt = datetime.datetime.strptime(date, '%Y-%m-%d')
+        target_dt = kyiv_to_utc(date, 0)
         plans = db.query(ChargeDischargePlan).filter(
             ChargeDischargePlan.asset_id == asset_id,
             ChargeDischargePlan.optimized_run_at == target_dt
@@ -306,32 +307,34 @@ class SaveOverridesRequest(BaseModel):
 async def get_manual_overrides(asset_id: str, date: str):
     db = SessionLocal()
     try:
-        target_date = datetime.datetime.strptime(date, '%Y-%m-%d').date()
-        dt_start = datetime.datetime.combine(target_date, datetime.time.min)
-        dt_end = datetime.datetime.combine(target_date, datetime.time.max)
-        
+        # Реальна київська доба (CLAUDE.md п.26/27) — dt_start збігається з
+        # forecast_run_at/optimized_run_at (kyiv_to_utc(date,0)); day_start/
+        # day_end — для зрізу ManualOverride/CSV.
+        dt_start = kyiv_to_utc(date, 0)
+        day_start, day_end = kyiv_day_bounds(date)
+
         # Load overrides
         overrides = db.query(ManualOverride).filter(
             ManualOverride.asset_id == asset_id,
-            ManualOverride.timestamp >= dt_start,
-            ManualOverride.timestamp <= dt_end
+            ManualOverride.timestamp >= day_start,
+            ManualOverride.timestamp < day_end
         ).order_by(ManualOverride.timestamp).all()
-        
+
         # Also query active optimization plans for pre-filling
         plans = db.query(ChargeDischargePlan).filter(
             ChargeDischargePlan.asset_id == asset_id,
             ChargeDischargePlan.optimized_run_at == dt_start
         ).order_by(ChargeDischargePlan.timestamp).all()
-        
-        # Create map of hour -> override
+
+        # Create map of REAL Kyiv hour -> override/plan
         override_map = {}
         for o in overrides:
-            override_map[o.timestamp.hour] = o
-            
+            override_map[utc_to_kyiv(o.timestamp).hour] = o
+
         plan_map = {}
         for p in plans:
-            plan_map[p.timestamp.hour] = p
-            
+            plan_map[utc_to_kyiv(p.timestamp).hour] = p
+
         # Get base market prices: реальна ціна за факт (якщо доба вже минула),
         # інакше — реальний збережений прогноз (PriceForecast), і лише як
         # останній fallback — умовна константа (немає ні факту, ні прогнозу).
@@ -346,7 +349,7 @@ async def get_manual_overrides(asset_id: str, date: str):
             if os.path.exists(csv_path):
                 df = pd.read_csv(csv_path)
                 df['Datetime'] = pd.to_datetime(df['Datetime'])
-                df_day = df[df['Datetime'].dt.date == target_date].sort_values('Datetime')
+                df_day = df[(df['Datetime'] >= day_start) & (df['Datetime'] < day_end)].sort_values('Datetime')
                 if len(df_day) >= 24:
                     day_prices = df_day['Price'].tolist()
         except Exception:
@@ -361,10 +364,10 @@ async def get_manual_overrides(asset_id: str, date: str):
 
         if day_prices is None:
             day_prices = [3000.0] * 24
-            
+
         schedule = []
         for hour in range(24):
-            dt_hour = dt_start + datetime.timedelta(hours=hour)
+            dt_hour = kyiv_to_utc(date, hour)
             o = override_map.get(hour)
             p = plan_map.get(hour)
             
@@ -392,20 +395,19 @@ async def get_manual_overrides(asset_id: str, date: str):
 async def save_manual_overrides(req: SaveOverridesRequest):
     db = SessionLocal()
     try:
-        target_date = datetime.datetime.strptime(req.date, '%Y-%m-%d').date()
-        dt_start = datetime.datetime.combine(target_date, datetime.time.min)
-        dt_end = datetime.datetime.combine(target_date, datetime.time.max)
-        
-        # 1. Delete existing overrides for this day
+        day_start, day_end = kyiv_day_bounds(req.date)
+
+        # 1. Delete existing overrides for this day (реальна київська доба)
         db.query(ManualOverride).filter(
             ManualOverride.asset_id == req.asset_id,
-            ManualOverride.timestamp >= dt_start,
-            ManualOverride.timestamp <= dt_end
+            ManualOverride.timestamp >= day_start,
+            ManualOverride.timestamp < day_end
         ).delete()
-        
-        # 2. Insert new overrides
+
+        # 2. Insert new overrides — item.hour є реальною київською годиною
+        # (те саме, що повертає GET /manual-overrides).
         for item in req.overrides:
-            timestamp = dt_start + datetime.timedelta(hours=item.hour)
+            timestamp = kyiv_to_utc(req.date, item.hour)
             override = ManualOverride(
                 timestamp=timestamp,
                 asset_id=req.asset_id,

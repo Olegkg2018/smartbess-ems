@@ -235,9 +235,12 @@ class ReportingService:
             csv_path = "/home/oleg/agy_energo/data/historical_data_merged.csv"
             
         try:
+            from src.core.time_utils import utc_to_kyiv, kyiv_day_bounds
             df = pd.read_csv(csv_path)
             df['Datetime'] = pd.to_datetime(df['Datetime'])
-            df['Date'] = df['Datetime'].dt.date
+            # Реальна київська дата (не наївна UTC — CLAUDE.md п.26/27),
+            # інакше "доба" тут — суміш хвоста доби D і голови доби D+1.
+            df['Date'] = df['Datetime'].apply(lambda dt: utc_to_kyiv(dt).date())
         except Exception as e:
             print(f"Error loading historical CSV for reporting: {e}")
             df = pd.DataFrame(columns=['Date', 'Datetime', 'Price'])
@@ -258,22 +261,25 @@ class ReportingService:
         if dates_to_calculate and not df.empty:
             for d in dates_to_calculate:
                 d_str = d.isoformat()
-                d_start = datetime.datetime.combine(d, datetime.time.min)
-                d_end = datetime.datetime.combine(d, datetime.time.max)
+                # Реальна київська доба (kyiv_day_bounds), не наївна UTC —
+                # CLAUDE.md п.26/27. BessTelemetry/ManualOverride пишуться в
+                # справжньому UTC (SCADA, `datetime.utcnow()`), тож самі
+                # значення timestamp конвертувати не треба — лише межі зрізу.
+                d_start, d_end = kyiv_day_bounds(d_str)
                 df_day = df[df['Date'] == d].sort_values('Datetime')
                 
-                # Check manual overrides for this date
+                # Check manual overrides for this date (kyiv_day_bounds end is exclusive)
                 overrides = db.query(ManualOverride).filter(
                     ManualOverride.asset_id == asset_id,
                     ManualOverride.timestamp >= d_start,
-                    ManualOverride.timestamp <= d_end
+                    ManualOverride.timestamp < d_end
                 ).order_by(ManualOverride.timestamp).all()
 
-                # Check telemetry for this date
+                # Check telemetry for this date (kyiv_day_bounds end is exclusive)
                 telemetry = db.query(BessTelemetry).filter(
                     BessTelemetry.asset_id == asset_id,
                     BessTelemetry.timestamp >= d_start,
-                    BessTelemetry.timestamp <= d_end
+                    BessTelemetry.timestamp < d_end
                 ).order_by(BessTelemetry.timestamp).all()
 
                 # Default assumptions for Ukrainian tariffs (UAH/MWh)
@@ -352,8 +358,12 @@ class ReportingService:
                     discharge_rev = 0.0
                     prev_ts = None
                     for tel in telemetry:
-                        hour = tel.timestamp.hour
-                        price_rows = df_day[df_day['Datetime'].dt.hour == hour]
+                        # Реальна київська година (CLAUDE.md п.26/27) — і
+                        # телеметрія, і df_day['Datetime'] тепер справжній
+                        # UTC, тож звичайна `.dt.hour` не збігається з
+                        # київською годиною ціни РДН.
+                        hour = utc_to_kyiv(tel.timestamp).hour
+                        price_rows = df_day[df_day['Datetime'].apply(lambda dt: utc_to_kyiv(dt).hour == hour)]
                         price_uah = price_rows['Price'].values[0] if not price_rows.empty else 3000.0
                         price_kwh = price_uah / 1000.0
 

@@ -11,6 +11,7 @@ from src.modules.bidding_service.services import (
     generate_bids_for_date, settle_bids_for_date, get_margin_pct, DEFAULT_MARGIN_PCT, _bid_to_dict,
     build_daily_action_summary,
 )
+from src.core.time_utils import kyiv_to_utc, kyiv_day_bounds, utc_to_kyiv
 
 router = APIRouter()
 
@@ -37,7 +38,7 @@ async def get_margin(asset_id: str, date: str):
     """Ручна маржа диспетчера на добу (bid_margin_overrides), або дефолт, якщо не збережено."""
     db = SessionLocal()
     try:
-        target_dt = datetime.datetime.strptime(date, '%Y-%m-%d')
+        target_dt = kyiv_to_utc(date, 0)
         override = db.query(BidMarginOverride).filter(
             BidMarginOverride.asset_id == asset_id, BidMarginOverride.date == target_dt,
         ).first()
@@ -53,7 +54,7 @@ async def get_margin(asset_id: str, date: str):
 async def save_margin(req: MarginOverrideModel):
     db = SessionLocal()
     try:
-        target_dt = datetime.datetime.strptime(req.date, '%Y-%m-%d')
+        target_dt = kyiv_to_utc(req.date, 0)
         row = db.query(BidMarginOverride).filter(
             BidMarginOverride.asset_id == req.asset_id, BidMarginOverride.date == target_dt,
         ).first()
@@ -71,7 +72,7 @@ async def save_margin(req: MarginOverrideModel):
 async def clear_margin(asset_id: str, date: str):
     db = SessionLocal()
     try:
-        target_dt = datetime.datetime.strptime(date, '%Y-%m-%d')
+        target_dt = kyiv_to_utc(date, 0)
         db.query(BidMarginOverride).filter(
             BidMarginOverride.asset_id == asset_id, BidMarginOverride.date == target_dt,
         ).delete()
@@ -86,18 +87,18 @@ async def list_bids(asset_id: str, date: str):
     """Список заявок (поданих і, якщо вже звірені, з фактом виконання) на добу."""
     db = SessionLocal()
     try:
-        target_dt = datetime.datetime.strptime(date, '%Y-%m-%d')
+        day_start, day_end = kyiv_day_bounds(date)
         bids = db.query(MarketBid).filter(
             MarketBid.asset_id == asset_id,
-            MarketBid.timestamp >= target_dt,
-            MarketBid.timestamp < target_dt + datetime.timedelta(days=1),
+            MarketBid.timestamp >= day_start,
+            MarketBid.timestamp < day_end,
         ).order_by(MarketBid.timestamp).all()
         if not bids:
             raise HTTPException(status_code=404, detail="Заявок на цю дату ще не згенеровано")
         soc_rows = db.query(MarketBidSocFeasibility).filter(
             MarketBidSocFeasibility.asset_id == asset_id,
-            MarketBidSocFeasibility.timestamp >= target_dt,
-            MarketBidSocFeasibility.timestamp < target_dt + datetime.timedelta(days=1),
+            MarketBidSocFeasibility.timestamp >= day_start,
+            MarketBidSocFeasibility.timestamp < day_end,
         ).all()
         soc_map = {r.timestamp: r.soc_feasible for r in soc_rows}
         return {"date": date, "asset_id": asset_id, "bids": [_bid_to_dict(b, soc_feasible=soc_map.get(b.timestamp)) for b in bids]}
@@ -113,7 +114,7 @@ async def get_action_summary(asset_id: str, date: str):
         asset = db.query(Asset).filter(Asset.id == asset_id).first()
         if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
-        target_dt = datetime.datetime.strptime(date, '%Y-%m-%d')
+        target_dt = kyiv_to_utc(date, 0)
         return build_daily_action_summary(db, asset, target_dt)
     finally:
         db.close()
@@ -132,7 +133,7 @@ async def generate_bids(req: GenerateBidsRequest):
         asset = db.query(Asset).filter(Asset.id == req.asset_id).first()
         if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
-        target_dt = datetime.datetime.strptime(req.date, '%Y-%m-%d')
+        target_dt = kyiv_to_utc(req.date, 0)
         result = generate_bids_for_date(db, asset, target_dt, margin_pct=req.margin_pct)
         if result['status'] != 'ok':
             raise HTTPException(status_code=400, detail=result['message'])
@@ -154,23 +155,31 @@ async def settle_bids(req: SettleBidsRequest):
         asset = db.query(Asset).filter(Asset.id == req.asset_id).first()
         if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
-        target_dt = datetime.datetime.strptime(req.date, '%Y-%m-%d')
+        target_dt = kyiv_to_utc(req.date, 0)
+        day_start, day_end = kyiv_day_bounds(req.date)
 
+        # Реальна київська доба (не наївна UTC) — CLAUDE.md п.26/27: старе
+        # вікно `[target_dt, target_dt+1day)` різало суміш хвоста доби D і
+        # голови доби D+1, тож заявки звірялись проти ціни ІНШОЇ реальної
+        # години/доби. Ключуємо за реальною київською годиною скрізь.
         rows = db.query(MarketPrice).filter(
-            MarketPrice.timestamp >= target_dt,
-            MarketPrice.timestamp < target_dt + datetime.timedelta(days=1),
+            MarketPrice.timestamp >= day_start,
+            MarketPrice.timestamp < day_end,
         ).order_by(MarketPrice.timestamp).all()
-        actual_by_hour = {r.timestamp.hour: r.price_uah for r in rows}
+        actual_by_hour = {utc_to_kyiv(r.timestamp).hour: r.price_uah for r in rows}
 
         if len(actual_by_hour) != 24:
-            df_month = dm.fetch_oree_prices_for_month(target_dt.month, target_dt.year)
+            df_month = dm.fetch_oree_prices_for_month(day_start.month, day_start.year)
+            df_month_next = dm.fetch_oree_prices_for_month(day_end.month, day_end.year)
+            import pandas as pd
+            if not df_month_next.empty:
+                df_month = pd.concat([df_month, df_month_next]).drop_duplicates(subset=['Datetime']) if not df_month.empty else df_month_next
             if not df_month.empty:
-                import pandas as pd
                 df_month['Datetime'] = pd.to_datetime(df_month['Datetime'])
                 df_day = df_month[
-                    (df_month['Datetime'] >= target_dt) & (df_month['Datetime'] < target_dt + datetime.timedelta(days=1))
+                    (df_month['Datetime'] >= day_start) & (df_month['Datetime'] < day_end)
                 ]
-                actual_by_hour = {dt.hour: price for dt, price in zip(df_day['Datetime'], df_day['Price'])}
+                actual_by_hour = {utc_to_kyiv(dt.to_pydatetime()).hour: price for dt, price in zip(df_day['Datetime'], df_day['Price'])}
 
         if len(actual_by_hour) != 24:
             raise HTTPException(status_code=404, detail=f"Реальна ціна РДН на {req.date} ще не опублікована (є {len(actual_by_hour)}/24 годин)")

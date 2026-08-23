@@ -49,26 +49,37 @@ def sync_market_prices_to_db(db, csv_path=None):
 
 def sync_today_market_prices_from_oree(db):
     """
-    Легкий інтрадей-досинк лише СЬОГОДНІШНІХ реальних цін РДН напряму з
-    oree.com.ua у MarketPrice (звіт диспетчера 2026-08-23, CLAUDE.md
-    хронологія п.24-25): раніше `market_prices` поповнювалась лише
-    важким `sync_realtime_data` раз на добу о 06:00 — якщо oree публікує
-    решту годин доби пізніше (напр. останні 3 години), диспетчер бачив
-    старі часткові дані аж до наступного ранку. Ця функція НЕ чіпає
-    `historical_data_merged.csv`/погоду/gas/Telegram (та важка
-    синхронізація й далі лише раз на добу для навчання моделі) — лише
-    один легкий POST-запит до oree.com.ua (`fetch_oree_prices_for_month`,
-    завжди живий для поточного місяця) і точковий інсерт РЕАЛЬНО нових
-    годин сьогодні, яких ще нема в БД. Викликається періодично зі
-    scheduler.py. Повертає кількість доданих рядків.
+    Легкий інтрадей-досинк лише СЬОГОДНІШНІХ (за київським календарем)
+    реальних цін РДН напряму з oree.com.ua у MarketPrice (звіт диспетчера
+    2026-08-23, CLAUDE.md хронологія п.24-25, межі виправлено в п.26-27):
+    раніше `market_prices` поповнювалась лише важким `sync_realtime_data`
+    раз на добу о 06:00 — якщо oree публікує решту годин доби пізніше
+    (напр. останні 3 години), диспетчер бачив старі часткові дані аж до
+    наступного ранку. Ця функція НЕ чіпає `historical_data_merged.csv`/
+    погоду/gas/Telegram (та важка синхронізація й далі лише раз на добу
+    для навчання моделі) — лише один легкий POST-запит до oree.com.ua
+    (`fetch_oree_prices_for_month`, завжди живий для поточного місяця) і
+    точковий інсерт РЕАЛЬНО нових годин сьогодні, яких ще нема в БД.
+    Викликається періодично зі scheduler.py. Повертає кількість доданих
+    рядків.
+
+    ВАЖЛИВО: "сьогодні" тут — це РЕАЛЬНА київська календарна доба
+    (`kyiv_day_bounds`), а не наївна UTC-доба контейнера — інакше перші
+    ~3 київські години доби (які фізично зберігаються під UTC-міткою
+    ПОПЕРЕДНЬОГО календарного дня) ніколи не потраплять у вікно фільтра
+    і назавжди лишаться недосинканими (саме це сталось 2026-08-23, див.
+    CLAUDE.md п.26).
     """
     import src.modules.market_data_service.data_manager as dm
+    from src.core.time_utils import utc_to_kyiv, kyiv_day_bounds
 
-    today = datetime.datetime.utcnow().date()
-    day_start = datetime.datetime.combine(today, datetime.time.min)
-    day_end = day_start + datetime.timedelta(days=1)
+    today_kyiv_str = utc_to_kyiv(datetime.datetime.utcnow()).strftime('%Y-%m-%d')
+    day_start, day_end = kyiv_day_bounds(today_kyiv_str)
 
-    df = dm.fetch_oree_prices_for_month(today.month, today.year)
+    df = dm.fetch_oree_prices_for_month(day_start.month, day_start.year)
+    df_month_next = dm.fetch_oree_prices_for_month(day_end.month, day_end.year)
+    if not df_month_next.empty:
+        df = pd.concat([df, df_month_next]).drop_duplicates(subset=['Datetime'])
     if df.empty:
         return 0
     df['Datetime'] = pd.to_datetime(df['Datetime'])
@@ -236,6 +247,7 @@ def compute_real_profit_capture_ratio(db, days: int = 30) -> dict:
     """
     from src.database.models import ChargeDischargePlan, Asset, MarketBid, MarketBidSocFeasibility
     from src.modules.optimization_service.milp_model import optimize_battery_schedule, evaluate_schedule_profit
+    from src.core.time_utils import utc_to_kyiv
 
     cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=days)
 
@@ -243,6 +255,9 @@ def compute_real_profit_capture_ratio(db, days: int = 30) -> dict:
     if not asset:
         return {'status': 'insufficient_data', 'message': 'Немає жодного BESS-активу в БД.', 'n_days': 0}
 
+    # Групуємо за РЕАЛЬНОЮ київською добою/годиною (не наївною UTC —
+    # CLAUDE.md п.26/27), інакше "доба" тут — суміш хвоста доби D і голови
+    # доби D+1, а порівняння actual/perfect_foresight втрачає сенс.
     plans = db.query(ChargeDischargePlan).filter(
         ChargeDischargePlan.asset_id == asset.id,
         ChargeDischargePlan.timestamp >= cutoff,
@@ -250,22 +265,22 @@ def compute_real_profit_capture_ratio(db, days: int = 30) -> dict:
 
     by_day = {}
     for p in plans:
-        d = p.timestamp.date().isoformat()
-        by_day.setdefault(d, {})[p.timestamp.hour] = p.target_power_mw
+        kyiv_ts = utc_to_kyiv(p.timestamp)
+        by_day.setdefault(kyiv_ts.strftime('%Y-%m-%d'), {})[kyiv_ts.hour] = p.target_power_mw
 
     prices = db.query(MarketPrice).filter(MarketPrice.timestamp >= cutoff).order_by(MarketPrice.timestamp).all()
     price_by_day = {}
     for pr in prices:
-        d = pr.timestamp.date().isoformat()
-        price_by_day.setdefault(d, {})[pr.timestamp.hour] = pr.price_uah
+        kyiv_ts = utc_to_kyiv(pr.timestamp)
+        price_by_day.setdefault(kyiv_ts.strftime('%Y-%m-%d'), {})[kyiv_ts.hour] = pr.price_uah
 
     bid_rows = db.query(MarketBid).filter(
         MarketBid.asset_id == asset.id, MarketBid.timestamp >= cutoff,
     ).order_by(MarketBid.timestamp).all()
     bids_by_day = {}
     for b in bid_rows:
-        d = b.timestamp.date().isoformat()
-        bids_by_day.setdefault(d, {})[b.timestamp.hour] = b
+        kyiv_ts = utc_to_kyiv(b.timestamp)
+        bids_by_day.setdefault(kyiv_ts.strftime('%Y-%m-%d'), {})[kyiv_ts.hour] = b
 
     # SoC-реплей settlement (CODE_REVIEW.md п.6, 2026-08-22) — година могла
     # "зіграти" за ціною, але фізично не виконатись через брак/переповнення
@@ -277,8 +292,8 @@ def compute_real_profit_capture_ratio(db, days: int = 30) -> dict:
     ).order_by(MarketBidSocFeasibility.timestamp).all()
     soc_by_day = {}
     for s in soc_rows:
-        d = s.timestamp.date().isoformat()
-        soc_by_day.setdefault(d, {})[s.timestamp.hour] = s.soc_feasible
+        kyiv_ts = utc_to_kyiv(s.timestamp)
+        soc_by_day.setdefault(kyiv_ts.strftime('%Y-%m-%d'), {})[kyiv_ts.hour] = s.soc_feasible
 
     # Тарифи — ті самі константи, що scheduler.py реально використовує щодня
     # для боєвого плану (Settings поки не підключені до battery_params там) —

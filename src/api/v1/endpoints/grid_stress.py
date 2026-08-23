@@ -8,6 +8,7 @@ from src.database.models import GridStressOverride
 from src.core.security import RoleChecker
 from fastapi import Depends
 import src.modules.external_data_service.telegram_public as ext_tg
+from src.core.time_utils import kyiv_to_utc
 
 router = APIRouter()
 
@@ -30,7 +31,7 @@ async def get_grid_stress(date: str):
 
     db = SessionLocal()
     try:
-        target_dt = datetime.datetime.strptime(date, '%Y-%m-%d')
+        target_dt = kyiv_to_utc(date, 0)
         override = db.query(GridStressOverride).filter(GridStressOverride.date == target_dt).first()
 
         if auto_queues is not None:
@@ -64,7 +65,7 @@ async def get_grid_stress(date: str):
 async def save_grid_stress(req: GridStressOverrideModel):
     db = SessionLocal()
     try:
-        target_dt = datetime.datetime.strptime(req.date, '%Y-%m-%d')
+        target_dt = kyiv_to_utc(req.date, 0)
         row = db.query(GridStressOverride).filter(GridStressOverride.date == target_dt).first()
         if not row:
             row = GridStressOverride(date=target_dt)
@@ -80,7 +81,7 @@ async def save_grid_stress(req: GridStressOverrideModel):
 async def clear_grid_stress(date: str):
     db = SessionLocal()
     try:
-        target_dt = datetime.datetime.strptime(date, '%Y-%m-%d')
+        target_dt = kyiv_to_utc(date, 0)
         row = db.query(GridStressOverride).filter(GridStressOverride.date == target_dt).first()
         if row:
             db.delete(row)

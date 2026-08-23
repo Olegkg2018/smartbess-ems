@@ -12,6 +12,7 @@ from src.database.models import ChargeDischargePlan, PriceForecast, MarketBid, B
 from src.modules.optimization_service.milp_model import evaluate_schedule_profit
 from src.modules.scada_service.soc_state import get_current_soc_fraction
 import src.modules.forecast_service.ml_pipeline as mt
+from src.core.time_utils import kyiv_day_bounds, utc_to_kyiv
 
 DEFAULT_MARGIN_PCT = 2.0
 
@@ -66,13 +67,16 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
     forecasts = db.query(PriceForecast).filter(
         PriceForecast.forecast_run_at == target_date,
     ).order_by(PriceForecast.timestamp).all()
-    forecast_by_hour = {f.timestamp.hour: f.predicted_price_uah for f in forecasts}
+    # Ключуємо за реальною київською годиною (не сирою UTC .hour) — коректно
+    # й на добу переходу DST (CLAUDE.md п.26/27), а не лише "випадково
+    # правильно" через ідентичну логіку генерації по обидва боки.
+    forecast_by_hour = {utc_to_kyiv(f.timestamp).hour: f.predicted_price_uah for f in forecasts}
     if len(forecast_by_hour) != 24:
         return {'status': 'no_forecast', 'message': f'Немає повного прогнозу цін на {target_date.date()} (є {len(forecast_by_hour)}/24 годин).'}
 
     bids = []
     for p in plans:
-        hour = p.timestamp.hour
+        hour = utc_to_kyiv(p.timestamp).hour
         forecast_price = forecast_by_hour.get(hour)
         if forecast_price is None:
             continue
@@ -147,7 +151,8 @@ def _replay_soc_feasibility(db, asset, target_date: datetime.datetime, settled_b
     з realized_profit_uah у цьому випадку — рішення викликача
     (compute_real_profit_capture_ratio в forecast_accuracy.py).
     """
-    date_str = target_date.strftime('%Y-%m-%d')
+    date_str = utc_to_kyiv(target_date).strftime('%Y-%m-%d')
+    day_start, day_end = kyiv_day_bounds(date_str)
     soc_fraction = get_current_soc_fraction(db, asset, target_date=date_str)
     soc_mwh = soc_fraction * asset.capacity_mwh
     min_soc_mwh = asset.min_soc_pct / 100.0 * asset.capacity_mwh
@@ -155,10 +160,11 @@ def _replay_soc_feasibility(db, asset, target_date: datetime.datetime, settled_b
 
     # Ідемпотентність повторного /bids/settle — та сама delete-then-insert
     # конвенція, що вже прийнята в проекті для PriceForecast/ChargeDischargePlan.
+    # Межі — реальна київська доба (kyiv_day_bounds), не наївна UTC (CLAUDE.md п.26/27).
     db.query(MarketBidSocFeasibility).filter(
         MarketBidSocFeasibility.asset_id == asset.id,
-        MarketBidSocFeasibility.timestamp >= target_date,
-        MarketBidSocFeasibility.timestamp < target_date + datetime.timedelta(days=1),
+        MarketBidSocFeasibility.timestamp >= day_start,
+        MarketBidSocFeasibility.timestamp < day_end,
     ).delete()
 
     EPS = 1e-9
@@ -198,10 +204,12 @@ def settle_bids_for_date(db, asset, target_date: datetime.datetime, actual_price
     ml_pipeline.estimate_idm_price_for_hour, бо реальної ціни ВДР на цю
     годину ще нема — ВДР ще не відбувся).
     """
+    date_str = utc_to_kyiv(target_date).strftime('%Y-%m-%d')
+    day_start, day_end = kyiv_day_bounds(date_str)
     bids = db.query(MarketBid).filter(
         MarketBid.asset_id == asset.id,
-        MarketBid.timestamp >= target_date,
-        MarketBid.timestamp < target_date + datetime.timedelta(days=1),
+        MarketBid.timestamp >= day_start,
+        MarketBid.timestamp < day_end,
     ).order_by(MarketBid.timestamp).all()
     if not bids:
         return {'status': 'no_bids', 'message': f'Немає поданих заявок на {target_date.date()} — спочатку згенеруйте їх.'}
@@ -209,7 +217,9 @@ def settle_bids_for_date(db, asset, target_date: datetime.datetime, actual_price
     deg_cost_kwh = asset.deg_cost_per_mwh / 1000.0
     settled = []
     for b in bids:
-        hour = b.timestamp.hour
+        # Реальна київська година (не сира UTC .hour) — actual_prices_by_hour
+        # ключується так само (bids.py) з 2026-08-23 (CLAUDE.md п.26/27).
+        hour = utc_to_kyiv(b.timestamp).hour
         actual = actual_prices_by_hour.get(hour)
         if actual is None:
             continue
@@ -291,7 +301,9 @@ def _bid_to_dict(b: MarketBid, soc_feasible=None) -> dict:
         or b.bid_price_uah >= OREE_BID_PRICE_MAX_UAH - 1e-6
     )
     return {
-        'hour': b.timestamp.hour,
+        # Реальна київська година (CLAUDE.md п.26/27) — саме та, яку
+        # диспетчер має ввести в кабінет oree.com.ua, а не сира UTC .hour.
+        'hour': utc_to_kyiv(b.timestamp).hour,
         'bid_type': b.bid_type,
         'volume_kw': b.volume_kw,
         'forecast_price_uah': b.forecast_price_uah,
@@ -315,13 +327,14 @@ def build_daily_action_summary(db, asset, target_date: datetime.datetime) -> dic
     Тільки ЧИТАЄ — нічого не генерує й не звіряє сама (щоб не перетворитись
     на приховану автоматизацію подачі заявок, явно відкладену користувачем).
     """
+    date_str = utc_to_kyiv(target_date).strftime('%Y-%m-%d')
+    day_start, day_end = kyiv_day_bounds(date_str)
     bids = db.query(MarketBid).filter(
         MarketBid.asset_id == asset.id,
-        MarketBid.timestamp >= target_date,
-        MarketBid.timestamp < target_date + datetime.timedelta(days=1),
+        MarketBid.timestamp >= day_start,
+        MarketBid.timestamp < day_end,
     ).order_by(MarketBid.timestamp).all()
 
-    date_str = target_date.date().isoformat()
     actions = []
 
     if not bids:

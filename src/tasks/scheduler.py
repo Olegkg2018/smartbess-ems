@@ -13,13 +13,18 @@ import src.modules.external_data_service.telegram_bot as telegram_bot
 from src.modules.scada_service.soc_state import get_current_soc_fraction
 from src.database.session import SessionLocal
 from src.database.models import Asset, PriceForecast, ChargeDischargePlan
+from src.core.time_utils import kyiv_to_utc, utc_to_kyiv
 
 def run_daily_forecast_and_optimization():
     print(f"[{datetime.datetime.now()}] Background Scheduler: Starting daily forecast and optimization job...")
     db = SessionLocal()
     try:
-        # Determine target date: tomorrow
-        tomorrow = datetime.date.today() + datetime.timedelta(days=1)
+        # Determine target date: tomorrow — за РЕАЛЬНОЮ київською датою
+        # (CLAUDE.md хронологія п.26/27), а не `date.today()` контейнера
+        # (UTC) — інакше біля півночі Kyiv "завтра" вважалось би на добу
+        # пізніше/раніше реальної торгової дати.
+        today_kyiv = utc_to_kyiv(datetime.datetime.utcnow()).date()
+        tomorrow = today_kyiv + datetime.timedelta(days=1)
         tomorrow_str = tomorrow.strftime('%Y-%m-%d')
         print(f"Target date for optimization: {tomorrow_str}")
         
@@ -48,7 +53,11 @@ def run_daily_forecast_and_optimization():
         # 3. Get last 168 hours of prices for lags
         df_hist = pd.read_csv(dm.MERGED_DATA_PATH)
         df_hist['Datetime'] = pd.to_datetime(df_hist['Datetime'])
-        target_dt_start = pd.to_datetime(tomorrow_str)
+        # Справжня UTC-мить київської півночі цільової дати (CLAUDE.md
+        # п.26/27) — заміна наївного `pd.to_datetime(tomorrow_str)`, який
+        # раніше давав UTC-північ (тобто фактично вже ~3г КИЇВСЬКОГО ранку
+        # цільової доби) замість справжньої київської півночі.
+        target_dt_start = kyiv_to_utc(tomorrow_str, 0)
         hist_before_target = df_hist[df_hist['Datetime'] < target_dt_start].sort_values('Datetime')
         
         if len(hist_before_target) >= 168:
@@ -105,7 +114,9 @@ def run_daily_forecast_and_optimization():
         
         # 6. Persist results in DB
         for t in range(24):
-            forecast_time = target_dt_start + datetime.timedelta(hours=t)
+            # Справжня UTC-мить КИЇВСЬКОЇ години t (не наївна арифметика
+            # від UTC-півночі — CLAUDE.md п.26/27, DST-aware).
+            forecast_time = kyiv_to_utc(tomorrow_str, t)
             
             # Save forecast
             db.query(PriceForecast).filter(

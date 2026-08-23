@@ -3,6 +3,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from src.database.models import Asset, BessTelemetry, InitialSocOverride, ChargeDischargePlan
+from src.core.time_utils import kyiv_to_utc, utc_to_kyiv
 
 
 def previous_day_calculated_fraction(db: Session, asset: Asset, target_dt: datetime.datetime) -> Optional[float]:
@@ -10,8 +11,14 @@ def previous_day_calculated_fraction(db: Session, asset: Asset, target_dt: datet
     (ChargeDischargePlan.expected_soc_mwh останньої години попередньої доби,
     optimized_run_at == та доба). Це розрахункове значення (яким план ЗАДУМАВ
     завершити добу), а не факт реального ручного диспетчингу — але значно
-    точніше за сліпий фолбек 0.20, і не залежить від того, чи є SCADA."""
-    prev_dt = target_dt - datetime.timedelta(days=1)
+    точніше за сліпий фолбек 0.20, і не залежить від того, чи є SCADA.
+
+    `target_dt` — вже kyiv_to_utc(date_str, 0) (рахує викликач). Попередню
+    добу рахуємо через дату-рядок, а не простим `-timedelta(days=1)` — на
+    добу переходу DST різниця в UTC між двома північчами не рівно 24г
+    (CLAUDE.md п.26/27)."""
+    prev_date_str = (utc_to_kyiv(target_dt).date() - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+    prev_dt = kyiv_to_utc(prev_date_str, 0)
     prev_last = (
         db.query(ChargeDischargePlan)
         .filter(ChargeDischargePlan.asset_id == asset.id, ChargeDischargePlan.optimized_run_at == prev_dt)
@@ -49,7 +56,10 @@ def get_current_soc_fraction(db: Session, asset: Asset, target_date: Optional[st
     target_dt = None
     if target_date and asset.capacity_mwh > 0:
         try:
-            target_dt = datetime.datetime.strptime(target_date, '%Y-%m-%d')
+            # kyiv_to_utc, не наївний strptime (CLAUDE.md п.26/27) — має
+            # збігатися з ChargeDischargePlan.optimized_run_at, який тепер
+            # теж kyiv_to_utc(date_str, 0).
+            target_dt = kyiv_to_utc(target_date, 0)
         except (TypeError, ValueError):
             target_dt = None
 

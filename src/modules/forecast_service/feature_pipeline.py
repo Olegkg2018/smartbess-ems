@@ -25,6 +25,7 @@ from src.modules.tariff_service.services import TariffService
 from src.database.session import SessionLocal
 from src.database.models import GenerationAdjustment, PriceShiftOverride
 import src.modules.market_data_service.data_manager as dm
+from src.core.time_utils import utc_to_kyiv, kyiv_to_utc
 
 DATA_DIR = settings.DATA_DIR
 
@@ -194,11 +195,17 @@ def build_training_table(df_raw, idm_lag_hours=24):
 
     df = df.reset_index()
 
-    df['Hour'] = df['Datetime'].dt.hour
-    df['Month'] = df['Datetime'].dt.month
-    df['DayOfWeek'] = df['Datetime'].dt.dayofweek
+    # Реальний київський час (CLAUDE.md п.26/27) — `Datetime` тепер справжній
+    # UTC по всій історії (після міграції), тож усі "час доби"/"день тижня"
+    # ознаки рахуємо з київського еквіваленту, а не з сирого UTC — інакше
+    # `Hour`/`Is_Evening_Peak`/`Is_Holiday` тощо систематично зсунуті на
+    # 2-3г від реального часу доби, який вони мають описувати.
+    datetime_kyiv = df['Datetime'].apply(utc_to_kyiv)
+    df['Hour'] = datetime_kyiv.dt.hour
+    df['Month'] = datetime_kyiv.dt.month
+    df['DayOfWeek'] = datetime_kyiv.dt.dayofweek
     df['Is_Weekend'] = df['DayOfWeek'].isin([5, 6]).astype(int)
-    df['Is_Holiday'] = df['Datetime'].apply(is_ukrainian_holiday)
+    df['Is_Holiday'] = datetime_kyiv.apply(is_ukrainian_holiday)
     df['Is_Weekend_Or_Holiday'] = ((df['Is_Weekend'] == 1) | (df['Is_Holiday'] == 1)).astype(int)
 
     df['Hour_Sin'] = np.sin(2 * np.pi * df['Hour'] / 24.0)
@@ -206,7 +213,7 @@ def build_training_table(df_raw, idm_lag_hours=24):
     df['Month_Sin'] = np.sin(2 * np.pi * df['Month'] / 12.0)
     df['Month_Cos'] = np.cos(2 * np.pi * df['Month'] / 12.0)
 
-    df['DayOfYear'] = df['Datetime'].dt.dayofyear
+    df['DayOfYear'] = datetime_kyiv.dt.dayofyear
     df['DayOfYear_Sin'] = np.sin(2 * np.pi * df['DayOfYear'] / 365.25)
     df['DayOfYear_Cos'] = np.cos(2 * np.pi * df['DayOfYear'] / 365.25)
 
@@ -252,7 +259,7 @@ def _get_generation_adjustment(forecast_date):
     нейтральні 100%/без нотатки, якщо нічого не збережено."""
     db = SessionLocal()
     try:
-        target_dt = pd.to_datetime(forecast_date).to_pydatetime()
+        target_dt = kyiv_to_utc(str(forecast_date)[:10], 0)
         row = db.query(GenerationAdjustment).filter(GenerationAdjustment.date == target_dt).first()
         if not row:
             return {'nuclear_pct': 100.0, 'hydro_pct': 100.0, 'solar_pct': 100.0, 'wind_pct': 100.0, 'note': None}
@@ -307,7 +314,7 @@ def _get_price_shift_pct(forecast_date):
     0.0 (нейтрально), якщо нічого не збережено."""
     db = SessionLocal()
     try:
-        target_dt = pd.to_datetime(forecast_date).to_pydatetime()
+        target_dt = kyiv_to_utc(str(forecast_date)[:10], 0)
         row = db.query(PriceShiftOverride).filter(PriceShiftOverride.date == target_dt).first()
         return row.shift_pct if row else 0.0
     except Exception:
@@ -376,7 +383,11 @@ def build_asof_feature_matrix(target_date, forecast_weather, last_prices, as_of=
     df_hist['Datetime'] = pd.to_datetime(df_hist['Datetime'])
     df_hist = df_hist.sort_values('Datetime')
 
-    forecast_dt_start = pd.to_datetime(target_date)
+    # Справжня UTC-мить київської півночі target_date (CLAUDE.md п.26/27) —
+    # наївний pd.to_datetime тут раніше давав ~3г ЗАЙВОГО хвоста в
+    # hist_before_target (сягав у ще неопубліковані/невиміряні години),
+    # що псувало Temp_Lag_3/6 та інші "останні N годин" ознаки NaN.
+    forecast_dt_start = kyiv_to_utc(str(target_date)[:10], 0)
 
     lookback_start = forecast_dt_start - pd.Timedelta(days=BASELOAD_DELTA_CLIP_LOOKBACK_DAYS)
     recent_export = df_hist.loc[df_hist['Datetime'] >= lookback_start, 'Grid_Net_Export_MW'].dropna()

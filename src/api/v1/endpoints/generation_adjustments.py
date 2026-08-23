@@ -6,6 +6,7 @@ from typing import Optional
 from src.database.session import SessionLocal
 from src.database.models import GenerationAdjustment
 from src.core.security import RoleChecker
+from src.core.time_utils import kyiv_to_utc
 
 router = APIRouter()
 
@@ -26,7 +27,7 @@ async def get_generation_adjustment(date: str):
     """
     db = SessionLocal()
     try:
-        target_dt = datetime.datetime.strptime(date, '%Y-%m-%d')
+        target_dt = kyiv_to_utc(date, 0)
         row = db.query(GenerationAdjustment).filter(GenerationAdjustment.date == target_dt).first()
         if not row:
             return {
@@ -45,7 +46,7 @@ async def get_generation_adjustment(date: str):
 async def save_generation_adjustment(req: GenerationAdjustmentModel, background_tasks: BackgroundTasks):
     db = SessionLocal()
     try:
-        target_dt = datetime.datetime.strptime(req.date, '%Y-%m-%d')
+        target_dt = kyiv_to_utc(req.date, 0)
         row = db.query(GenerationAdjustment).filter(GenerationAdjustment.date == target_dt).first()
         if not row:
             row = GenerationAdjustment(date=target_dt)

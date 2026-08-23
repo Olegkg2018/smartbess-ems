@@ -8,6 +8,7 @@ from src.core.security import RoleChecker
 from src.database.session import SessionLocal
 from src.database.models import GridStressOverride, GenerationAdjustment, InitialSocOverride, PriceShiftOverride
 import src.modules.external_data_service.telegram_public as ext_tg
+from src.core.time_utils import kyiv_to_utc, kyiv_day_bounds
 
 router = APIRouter()
 
@@ -76,9 +77,10 @@ async def get_data_audit(date: str):
 
         df = pd.read_csv(csv_path, usecols=["Datetime"] + present_cols)
         df["Datetime"] = pd.to_datetime(df["Datetime"])
-        day_df = df[df["Datetime"].dt.date == target_date].sort_values("Datetime")
+        day_start, day_end = kyiv_day_bounds(date)
+        day_df = df[(df["Datetime"] >= day_start) & (df["Datetime"] < day_end)].sort_values("Datetime")
 
-        result["csv_covers_date"] = not df.empty and df["Datetime"].min().date() <= target_date <= df["Datetime"].max().date()
+        result["csv_covers_date"] = not df.empty and df["Datetime"].min() <= day_start and day_end <= df["Datetime"].max() + datetime.timedelta(hours=1)
         result["hours_found"] = len(day_df)
         if missing_cols:
             result["columns_missing_from_csv"] = missing_cols
@@ -134,7 +136,7 @@ async def get_data_audit(date: str):
     # --- Ручні поправки диспетчера за цю дату ---
     db = SessionLocal()
     try:
-        target_dt = datetime.datetime.combine(target_date, datetime.time())
+        target_dt = kyiv_to_utc(date, 0)
 
         gso = db.query(GridStressOverride).filter(GridStressOverride.date == target_dt).first()
         result["manual_overrides"]["grid_stress"] = (

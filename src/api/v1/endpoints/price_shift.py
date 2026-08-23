@@ -6,6 +6,7 @@ from typing import Optional
 from src.database.session import SessionLocal
 from src.database.models import PriceShiftOverride
 from src.core.security import RoleChecker
+from src.core.time_utils import kyiv_to_utc
 
 router = APIRouter()
 
@@ -22,7 +23,7 @@ async def get_price_shift(date: str):
     """
     db = SessionLocal()
     try:
-        target_dt = datetime.datetime.strptime(date, '%Y-%m-%d')
+        target_dt = kyiv_to_utc(date, 0)
         row = db.query(PriceShiftOverride).filter(PriceShiftOverride.date == target_dt).first()
         if not row:
             return {"date": date, "shift_pct": 0.0, "note": None, "is_default": True}
@@ -34,7 +35,7 @@ async def get_price_shift(date: str):
 async def save_price_shift(req: PriceShiftModel, background_tasks: BackgroundTasks):
     db = SessionLocal()
     try:
-        target_dt = datetime.datetime.strptime(req.date, '%Y-%m-%d')
+        target_dt = kyiv_to_utc(req.date, 0)
         row = db.query(PriceShiftOverride).filter(PriceShiftOverride.date == target_dt).first()
         if not row:
             row = PriceShiftOverride(date=target_dt)

@@ -28,9 +28,12 @@ def run_forecast_background_job(job_id: str, target_date_str: str, selected_mode
 
         # Load history
         import pandas as pd
+        from src.core.time_utils import kyiv_to_utc
         df_hist = pd.read_csv(dm.MERGED_DATA_PATH)
         df_hist['Datetime'] = pd.to_datetime(df_hist['Datetime'])
-        target_dt_start = pd.to_datetime(target_date_str)
+        # Справжня UTC-мить київської півночі target_date_str (CLAUDE.md
+        # п.26/27), не наївна `pd.to_datetime`.
+        target_dt_start = kyiv_to_utc(target_date_str, 0)
         hist_before_target = df_hist[df_hist['Datetime'] < target_dt_start].sort_values('Datetime')
 
         if len(hist_before_target) >= 168:
@@ -60,7 +63,7 @@ def run_forecast_background_job(job_id: str, target_date_str: str, selected_mode
         db = SessionLocal()
         try:
             for t in range(24):
-                forecast_time = target_dt_start + datetime.timedelta(hours=t)
+                forecast_time = kyiv_to_utc(target_date_str, t)
                 db.query(PriceForecast).filter(
                     PriceForecast.timestamp == forecast_time,
                     PriceForecast.forecast_run_at == target_dt_start
@@ -158,7 +161,8 @@ async def get_latest_forecast(target_date: Optional[str] = None):
     try:
         query = db.query(PriceForecast)
         if target_date:
-            target_dt_start = datetime.datetime.strptime(target_date, '%Y-%m-%d')
+            from src.core.time_utils import kyiv_to_utc
+            target_dt_start = kyiv_to_utc(target_date, 0)
             query = query.filter(PriceForecast.forecast_run_at == target_dt_start)
         latest = query.order_by(PriceForecast.forecast_run_at.desc(), PriceForecast.timestamp).limit(24).all()
         if not latest:
@@ -191,21 +195,31 @@ async def get_actual_prices(target_date: str):
     відсутні), позначаючи це `partial: true` і конкретним переліком `hours`
     (не завжди 0..23) — фронтенд індексує факт по `hours`, а не за
     позицією в масиві.
+
+    ВАЖЛИВО (CLAUDE.md хронологія п.26/27): "доба" тут — РЕАЛЬНА київська
+    календарна доба (`kyiv_day_bounds`), а не наївна UTC-доба — інакше
+    вікно фактично різало суміш хвоста доби D і голови доби D+1 (перші ~3
+    київські години опинялись під міткою ПОПЕРЕДНЬОЇ дати). `hours` —
+    реальна київська година (`utc_to_kyiv(...).hour`), а не сира UTC
+    година зі стовпця timestamp.
     """
     import pandas as pd
     from src.database.models import MarketPrice
+    from src.core.time_utils import kyiv_day_bounds, utc_to_kyiv
 
     try:
-        target_dt = datetime.datetime.strptime(target_date, '%Y-%m-%d')
+        datetime.datetime.strptime(target_date, '%Y-%m-%d')
     except ValueError:
         raise HTTPException(status_code=400, detail="target_date має бути у форматі YYYY-MM-DD")
+
+    day_start, day_end = kyiv_day_bounds(target_date)
 
     db = SessionLocal()
     try:
         # 1. Спершу локальна БД (щодня поповнюється sync_market_prices_to_db)
         rows = db.query(MarketPrice).filter(
-            MarketPrice.timestamp >= target_dt,
-            MarketPrice.timestamp < target_dt + datetime.timedelta(days=1)
+            MarketPrice.timestamp >= day_start,
+            MarketPrice.timestamp < day_end,
         ).order_by(MarketPrice.timestamp).all()
 
         if rows:
@@ -214,17 +228,20 @@ async def get_actual_prices(target_date: str):
                 "available": True,
                 "partial": len(rows) < 24,
                 "source": "db",
-                "hours": [r.timestamp.hour for r in rows],
+                "hours": [utc_to_kyiv(r.timestamp).hour for r in rows],
                 "actual_prices_uah": [r.price_uah for r in rows],
             }
 
         # 2. "Якщо є" на oree.com.ua, але ще не потрапило в локальну БД —
         # живий запит до того самого джерела, яким тренується модель.
-        df_month = dm.fetch_oree_prices_for_month(target_dt.month, target_dt.year)
+        df_month = dm.fetch_oree_prices_for_month(day_start.month, day_start.year)
+        df_month_next = dm.fetch_oree_prices_for_month(day_end.month, day_end.year)
+        if not df_month_next.empty:
+            df_month = pd.concat([df_month, df_month_next]).drop_duplicates(subset=['Datetime'])
         if not df_month.empty:
             df_month['Datetime'] = pd.to_datetime(df_month['Datetime'])
             df_day = df_month[
-                (df_month['Datetime'] >= target_dt) & (df_month['Datetime'] < target_dt + datetime.timedelta(days=1))
+                (df_month['Datetime'] >= day_start) & (df_month['Datetime'] < day_end)
             ].sort_values('Datetime')
             if len(df_day) > 0:
                 return {
@@ -232,7 +249,7 @@ async def get_actual_prices(target_date: str):
                     "available": True,
                     "partial": len(df_day) < 24,
                     "source": "oree.com.ua (live)",
-                    "hours": [dt.hour for dt in df_day['Datetime']],
+                    "hours": [utc_to_kyiv(dt.to_pydatetime()).hour for dt in df_day['Datetime']],
                     "actual_prices_uah": df_day['Price'].tolist(),
                 }
 

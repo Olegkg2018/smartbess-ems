@@ -9,7 +9,7 @@ import numpy as np
 from bs4 import BeautifulSoup
 
 from src.core.config import settings
-from src.core.time_utils import assert_naive_utc
+from src.core.time_utils import assert_naive_utc, kyiv_day_bounds, kyiv_to_utc, utc_to_kyiv
 import src.modules.external_data_service.gas_price as ext_gas
 import src.modules.external_data_service.telegram_public as ext_tg
 import src.modules.external_data_service.entsoe as ext_entsoe
@@ -107,14 +107,20 @@ def fetch_oree_market_month(month, year, market='DAM', value_col='Price', cache_
                         # oree.com.ua віддає час доби у київському часі — раніше це
                         # трактувалось як наївний час без явної конвертації, що
                         # могло давати зсув 2-3г відносно ENTSO-E/Open-Meteo (обидва
-                        # фактично UTC). Виправлено ТІЛЬКИ вперед (2026-08-21) — вже
-                        # закешовані місяці (is_current_month guard вище) не
-                        # перечитуються і залишаються у старому (можливо зсунутому)
-                        # вигляді; історію свідомо не перераховуємо, див.
-                        # docs/review_ml_forecast_pipeline_2026-08-21.md.
+                        # фактично UTC). Виправлено ТІЛЬКИ вперед (2026-08-21).
+                        # `ambiguous='infer'` реально ПАДАВ на кожному жовтні
+                        # (fall-back EEST->EET) з "Cannot infer dst time... no
+                        # repeated times" — таблиця oree завжди рівно 24 колонки
+                        # (h=0..23, `for h in range(24)` вище), без фізичного
+                        # дубля повторної години, тож pandas нема з чого
+                        # "інферити". Знайдено й виправлено 2026-08-23 (CLAUDE.md
+                        # п.26/27) — `ambiguous=False` (пізніший/std-time варіант
+                        # повторної години) детерміновано, без падіння; той самий
+                        # "best-effort" підхід, що вже прийнятий для
+                        # `nonexistent='shift_forward'` навесні.
                         df['Datetime'] = (
                             df['Datetime']
-                            .dt.tz_localize('Europe/Kyiv', ambiguous='infer', nonexistent='shift_forward')
+                            .dt.tz_localize('Europe/Kyiv', ambiguous=False, nonexistent='shift_forward')
                             .dt.tz_convert('UTC')
                             .dt.tz_localize(None)
                         )
@@ -574,10 +580,13 @@ def fetch_weather_forecast(lat=LAT, lon=LON, api_key=OPENWEATHER_KEY):
                 df_3h = pd.DataFrame(records).sort_values('Datetime').reset_index(drop=True)
                 df_3h = df_3h.set_index('Datetime')
                 df_1h = df_3h.resample('1h').interpolate(method='linear').reset_index()
-                
-                now = datetime.datetime.now()
-                tomorrow = (now + datetime.timedelta(days=1)).date()
-                df_tomorrow = df_1h[df_1h['Datetime'].dt.date == tomorrow].copy()
+
+                # Реальна київська "завтра" (CLAUDE.md п.26/27) — Datetime тут
+                # справжній UTC (OpenWeatherMap dt_txt), фільтруємо межами
+                # kyiv_day_bounds, а не наївною UTC-датою.
+                tomorrow_kyiv_str = (utc_to_kyiv(datetime.datetime.utcnow()).date() + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+                day_start, day_end = kyiv_day_bounds(tomorrow_kyiv_str)
+                df_tomorrow = df_1h[(df_1h['Datetime'] >= day_start) & (df_1h['Datetime'] < day_end)].copy()
                 if len(df_tomorrow) < 24:
                     df_tomorrow = df_1h.iloc[:24].copy()
                 # OpenWeatherMap dt_txt документовано як UTC — уже naive-UTC,
@@ -611,9 +620,10 @@ def fetch_weather_forecast(lat=LAT, lon=LON, api_key=OPENWEATHER_KEY):
                     'Shortwave_Radiation': rads[i]
                 })
             df = pd.DataFrame(records).sort_values('Datetime').reset_index(drop=True)
-            now = datetime.datetime.now()
-            tomorrow = (now + datetime.timedelta(days=1)).date()
-            df_tomorrow = df[df['Datetime'].dt.date == tomorrow].copy()
+            # Реальна київська "завтра" (CLAUDE.md п.26/27) — те саме, що вище.
+            tomorrow_kyiv_str = (utc_to_kyiv(datetime.datetime.utcnow()).date() + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+            day_start, day_end = kyiv_day_bounds(tomorrow_kyiv_str)
+            df_tomorrow = df[(df['Datetime'] >= day_start) & (df['Datetime'] < day_end)].copy()
             assert_naive_utc(df, source='fetch_weather_forecast(open-meteo)')
             if len(df_tomorrow) == 24:
                 _archive_weather_forecast(df_tomorrow, source='open-meteo')
@@ -624,11 +634,14 @@ def fetch_weather_forecast(lat=LAT, lon=LON, api_key=OPENWEATHER_KEY):
     except:
         pass
         
-    now = datetime.datetime.now()
-    tomorrow = (now + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    # Синтетична крива (сонце/ніч) фізично прив'язана до KИЇВСЬКОЇ
+    # місцевої години `h`, тож і `Datetime` мусить бути справжнім
+    # UTC-еквівалентом київської години `h` цієї дати (CLAUDE.md п.26/27),
+    # а не наївним зсувом від UTC-"завтра".
+    tomorrow_kyiv_str = (utc_to_kyiv(datetime.datetime.utcnow()).date() + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
     records = []
     for h in range(24):
-        dt = tomorrow + datetime.timedelta(hours=h)
+        dt = kyiv_to_utc(tomorrow_kyiv_str, h)
         temp = 16.0 + 8.0 * np.sin(np.pi * (h - 6) / 12) if 6 <= h <= 18 else 11.0
         clouds = 30.0
         wind = 12.0

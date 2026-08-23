@@ -156,8 +156,11 @@ def check_and_send_bid_reminder() -> dict:
         asset = db.query(Asset).first()
         if not asset:
             return {"sent": False, "reason": "Немає жодного активу (Asset) у системі"}
-        today = datetime.datetime.combine(datetime.date.today(), datetime.time.min)
-        tomorrow = today + datetime.timedelta(days=1)
+        from src.core.time_utils import kyiv_to_utc, utc_to_kyiv
+        today_kyiv_str = utc_to_kyiv(datetime.datetime.utcnow()).strftime('%Y-%m-%d')
+        tomorrow_kyiv_str = (utc_to_kyiv(datetime.datetime.utcnow()).date() + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+        today = kyiv_to_utc(today_kyiv_str, 0)
+        tomorrow = kyiv_to_utc(tomorrow_kyiv_str, 0)
         summary_tomorrow = bidding.build_daily_action_summary(db, asset, tomorrow)
         summary_today = bidding.build_daily_action_summary(db, asset, today)
     finally:
