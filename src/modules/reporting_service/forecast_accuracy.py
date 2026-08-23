@@ -47,6 +47,54 @@ def sync_market_prices_to_db(db, csv_path=None):
     return len(objects)
 
 
+def sync_today_market_prices_from_oree(db):
+    """
+    Легкий інтрадей-досинк лише СЬОГОДНІШНІХ реальних цін РДН напряму з
+    oree.com.ua у MarketPrice (звіт диспетчера 2026-08-23, CLAUDE.md
+    хронологія п.24-25): раніше `market_prices` поповнювалась лише
+    важким `sync_realtime_data` раз на добу о 06:00 — якщо oree публікує
+    решту годин доби пізніше (напр. останні 3 години), диспетчер бачив
+    старі часткові дані аж до наступного ранку. Ця функція НЕ чіпає
+    `historical_data_merged.csv`/погоду/gas/Telegram (та важка
+    синхронізація й далі лише раз на добу для навчання моделі) — лише
+    один легкий POST-запит до oree.com.ua (`fetch_oree_prices_for_month`,
+    завжди живий для поточного місяця) і точковий інсерт РЕАЛЬНО нових
+    годин сьогодні, яких ще нема в БД. Викликається періодично зі
+    scheduler.py. Повертає кількість доданих рядків.
+    """
+    import src.modules.market_data_service.data_manager as dm
+
+    today = datetime.datetime.utcnow().date()
+    day_start = datetime.datetime.combine(today, datetime.time.min)
+    day_end = day_start + datetime.timedelta(days=1)
+
+    df = dm.fetch_oree_prices_for_month(today.month, today.year)
+    if df.empty:
+        return 0
+    df['Datetime'] = pd.to_datetime(df['Datetime'])
+    df_day = df[(df['Datetime'] >= day_start) & (df['Datetime'] < day_end)].dropna(subset=['Price'])
+    if df_day.empty:
+        return 0
+
+    existing_hours = {
+        r[0] for r in db.query(MarketPrice.timestamp).filter(
+            MarketPrice.timestamp >= day_start, MarketPrice.timestamp < day_end,
+        ).all()
+    }
+
+    objects = [
+        MarketPrice(timestamp=row.Datetime.to_pydatetime(), price_uah=float(row.Price), area="UA_IPS")
+        for row in df_day.itertuples()
+        if row.Datetime.to_pydatetime() not in existing_hours
+    ]
+    if not objects:
+        return 0
+
+    db.bulk_save_objects(objects)
+    db.commit()
+    return len(objects)
+
+
 def _calc_mape_wape(y_true, y_pred):
     import numpy as np
     y_true = np.array(y_true)

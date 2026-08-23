@@ -8,7 +8,7 @@ import src.modules.market_data_service.data_manager as dm
 import src.modules.forecast_service.ml_pipeline as mt
 from src.modules.forecast_service.forecast_persistence import persist_forecast_run
 import src.modules.optimization_service.milp_model as opt
-from src.modules.reporting_service.forecast_accuracy import sync_market_prices_to_db
+from src.modules.reporting_service.forecast_accuracy import sync_market_prices_to_db, sync_today_market_prices_from_oree
 import src.modules.external_data_service.telegram_bot as telegram_bot
 from src.modules.scada_service.soc_state import get_current_soc_fraction
 from src.database.session import SessionLocal
@@ -182,6 +182,26 @@ def run_nightly_model_retrain():
     except Exception as e:
         print(f"Error in nightly model retrain job: {e}")
 
+def run_intraday_price_sync():
+    """
+    Легкий інтрадей-досинк market_prices за СЬОГОДНІ (CLAUDE.md хронологія
+    п.24-25) — на відміну від run_daily_forecast_and_optimization (важкий,
+    раз на добу о 06:00, і рахує на ЗАВТРА), ця джоба лише перевіряє, чи
+    oree.com.ua вже опублікував ще не засинхронізовані години СЬОГОДНІШНЬОЇ
+    доби (напр. якщо публікація відбулась частинами), і одразу дописує їх —
+    без важкої погоди/gas/Telegram синхронізації. Best-effort: помилка мережі
+    не валить процес, наступна спроба через INTRADAY_PRICE_SYNC_MINUTES.
+    """
+    db = SessionLocal()
+    try:
+        n = sync_today_market_prices_from_oree(db)
+        if n:
+            print(f"[{datetime.datetime.now()}] Intraday price sync: {n} new MarketPrice rows for today.")
+    except Exception as e:
+        print(f"Warning: intraday price sync failed: {e}")
+    finally:
+        db.close()
+
 def run_bid_reminder_check():
     """
     Читає ІСНУЮЧИЙ стан заявок (сьогодні/завтра) і шле Telegram-нагадування
@@ -222,6 +242,12 @@ def start_scheduler():
         # застереження, що в CLAUDE.md п.17) — якщо контейнер працює не в
         # Europe/Kyiv, скоригувати hour вручну.
         scheduler.add_job(run_bid_reminder_check, 'cron', hour=10, minute=0, id='bid_reminder_check')
+        # Кожні 30 хв — легкий одиночний POST до oree.com.ua (не важкий
+        # sync_realtime_data), щоб дописувати ще не засинхронізовані
+        # години СЬОГОДНІШНЬОЇ доби одразу, як оператор ринку їх публікує
+        # (звіт диспетчера 2026-08-23, CLAUDE.md п.24-25) — раніше це
+        # чекало наступного 06:00 job.
+        scheduler.add_job(run_intraday_price_sync, 'interval', minutes=30, id='intraday_price_sync')
         scheduler.start()
         print("Background Scheduler started successfully.")
 
