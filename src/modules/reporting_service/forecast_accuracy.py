@@ -204,6 +204,60 @@ def compute_rolling_accuracy(db, days: int = 30, model_version: str = None) -> d
     }
 
 
+def check_forecast_drift(
+    db,
+    short_days: int = 7,
+    long_days: int = 60,
+    degradation_threshold_pct: float = 25.0,
+    min_hours_short: int = 48,
+) -> dict:
+    """
+    Легкий drift-monitoring поверх уже існуючого `compute_rolling_accuracy` —
+    не MLflow/Evidently (надлишково для VPS з лімітом 2GB RAM, див. CLAUDE.md
+    "Деплой / VPS"), а порівняння короткого вікна (останні `short_days`) з
+    довшим вікном-базою (`long_days`) тим самим WAPE, який вже рахується для
+    Data Audit/ForecastAccuracy.
+
+    Навмисно НЕ порівнюється з захардкодженим "здоровим" діапазоном 22-26%
+    з CLAUDE.md/MEMORY.md — та цифра застаріє і буде тихо вводити в оману.
+    Замість цього — відносне порівняння короткого вікна із власною недавньою
+    базою: якщо останні `short_days` реально гірші за `long_days` більш ніж
+    на `degradation_threshold_pct` відсотків (відносно, не абсолютно) — це
+    сигнал drift (концепт змінився: інша сезонність цін, зміна режиму ринку,
+    оновлення без переперевірки тощо), а не проста випадковість.
+
+    `degradation_threshold_pct=25.0` — стартова евристика, не звалідована
+    статистично (напр. довірчим інтервалом на реальному розкиді WAPE
+    день-до-дня) — якщо на практиці буде забагато хибних спрацювань, знизити
+    точність порогу за реальними даними, а не вгадувати наново.
+    """
+    short = compute_rolling_accuracy(db, days=short_days)
+    long = compute_rolling_accuracy(db, days=long_days)
+
+    if short.get('status') != 'ok' or long.get('status') != 'ok':
+        return {'status': 'insufficient_data', 'short': short, 'long': long}
+    if short['n_hours'] < min_hours_short:
+        return {'status': 'insufficient_data', 'reason': f"тільки {short['n_hours']} годин у короткому вікні (потрібно >= {min_hours_short})", 'short': short, 'long': long}
+    if not long['wape']:
+        return {'status': 'insufficient_data', 'reason': 'довге вікно має нульовий WAPE — не з чим порівнювати', 'short': short, 'long': long}
+
+    relative_degradation_pct = (short['wape'] - long['wape']) / long['wape'] * 100.0
+    drift_detected = relative_degradation_pct > degradation_threshold_pct
+
+    return {
+        'status': 'ok',
+        'drift_detected': drift_detected,
+        'short_wape': short['wape'],
+        'long_wape': long['wape'],
+        'relative_degradation_pct': round(relative_degradation_pct, 2),
+        'threshold_pct': degradation_threshold_pct,
+        'short_days': short_days,
+        'long_days': long_days,
+        'short_n_hours': short['n_hours'],
+        'long_n_hours': long['n_hours'],
+    }
+
+
 def compute_real_profit_capture_ratio(db, days: int = 30) -> dict:
     """
     Чесний "% захопленого прибутку від ідеального прогнозу" (perfect

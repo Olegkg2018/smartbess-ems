@@ -227,6 +227,21 @@ def run_bid_reminder_check():
     except Exception as e:
         print(f"Warning: bid reminder check failed: {e}")
 
+def run_drift_check():
+    """
+    Легкий drift-monitoring (CLAUDE.md п.31, MEMORY.md §6a) — раз на добу
+    порівнює тижневий WAPE із власною 60-денною базою через
+    forecast_accuracy.check_forecast_drift і шле Telegram-алерт, якщо
+    погіршення суттєве. Дешева перевірка (лише SQL-агрегація по вже
+    накопичених MarketPrice/PriceForecast, без перенавчання моделі).
+    """
+    print(f"[{datetime.datetime.now()}] Background Scheduler: Checking forecast drift...")
+    try:
+        result = telegram_bot.check_and_send_drift_alert()
+        print(f"[{datetime.datetime.now()}] Drift check result: {result}")
+    except Exception as e:
+        print(f"Warning: drift check failed: {e}")
+
 scheduler = BackgroundScheduler()
 
 def start_scheduler():
@@ -253,6 +268,11 @@ def start_scheduler():
         # застереження, що в CLAUDE.md п.17) — якщо контейнер працює не в
         # Europe/Kyiv, скоригувати hour вручну.
         scheduler.add_job(run_bid_reminder_check, 'cron', hour=10, minute=0, id='bid_reminder_check')
+        # 07:30 — через годину після ранкового прогнозу (06:00), достатньо
+        # часу, щоб свіжий PriceForecast уже був у БД. Дешева перевірка —
+        # не потребує окремого "вікна", час обрано щоб не накладатись на
+        # інші джоби.
+        scheduler.add_job(run_drift_check, 'cron', hour=7, minute=30, id='forecast_drift_check')
         # Кожні 30 хв — легкий одиночний POST до oree.com.ua (не важкий
         # sync_realtime_data), щоб дописувати ще не засинхронізовані
         # години СЬОГОДНІШНЬОЇ доби одразу, як оператор ринку їх публікує

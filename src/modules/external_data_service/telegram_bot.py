@@ -196,3 +196,47 @@ def check_and_send_bid_reminder() -> dict:
         sent_state[dedup_key] = content_signature
         _save_sent_state(sent_state)
     return {"sent": bool(result.get("ok")), "detail": result}
+
+
+def check_and_send_drift_alert() -> dict:
+    """
+    Легкий drift-monitoring (CLAUDE.md, MEMORY.md §6a — рекомендація
+    зовнішнього ревью 2026-08-24, без важкого MLflow/Evidently): якщо WAPE
+    прогнозу за останній тиждень суттєво гірший за власну недавню базу
+    (forecast_accuracy.check_forecast_drift), надсилає одне сповіщення на
+    добу диспетчеру. Дедуп — той самий патерн, що й check_and_send_bid_reminder.
+    """
+    if not CHAT_ID:
+        return {"sent": False, "reason": "TELEGRAM_CHAT_ID не налаштований"}
+
+    from src.database.session import SessionLocal
+    import src.modules.reporting_service.forecast_accuracy as fa
+
+    db = SessionLocal()
+    try:
+        drift = fa.check_forecast_drift(db)
+    finally:
+        db.close()
+
+    if drift.get('status') != 'ok' or not drift.get('drift_detected'):
+        return {"sent": False, "reason": "Дрейфу не виявлено або недостатньо даних", "drift": drift}
+
+    today_str = datetime.date.today().isoformat()
+    sent_state = _load_sent_state()
+    dedup_key = f"drift_alert_{today_str}"
+    if sent_state.get(dedup_key):
+        return {"sent": False, "reason": "Вже сповіщали про дрейф сьогодні", "drift": drift}
+
+    text = (
+        f"📉 SmartBESS EMS — можливий дрейф точності прогнозу\n\n"
+        f"WAPE за останні {drift['short_days']} днів: {drift['short_wape']:.1f}%\n"
+        f"WAPE за останні {drift['long_days']} днів (база): {drift['long_wape']:.1f}%\n"
+        f"Погіршення: {drift['relative_degradation_pct']:.1f}% (поріг {drift['threshold_pct']:.0f}%)\n\n"
+        f"Перевірте Data Audit / ForecastAccuracy — можлива зміна режиму ринку "
+        f"або потреба в позаплановому перенавчанні моделі."
+    )
+    result = send_notification(CHAT_ID, text)
+    if result.get("ok"):
+        sent_state[dedup_key] = True
+        _save_sent_state(sent_state)
+    return {"sent": bool(result.get("ok")), "drift": drift, "detail": result}
