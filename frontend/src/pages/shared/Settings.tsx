@@ -6,6 +6,7 @@ export default function Settings() {
     capacity, setCapacity, power, setPower, efficiency, setEfficiency,
     maxCyclesPerDay, setMaxCyclesPerDay,
     bidReminderTelegramEnabled, setBidReminderTelegramEnabled,
+    exciseDutyPct, setExciseDutyPct, transformerLossPct, setTransformerLossPct,
     launchDate, setLaunchDate, saveSettings,
   } = useApp();
 
@@ -95,6 +96,42 @@ export default function Settings() {
           Ручні "ринкові фактори" (ціна газу, виведення АЕС тощо) прибрано з цього екрану — модель прогнозування
           тепер бере ці дані з реальних джерел автоматично. Поточний стан див. на екрані
           «Стан енергосистеми» (Dispatcher Console).
+        </p>
+      </div>
+
+      <div className="glass-card">
+        <h3 className="card-title" style={{ marginBottom: '16px' }}>Незавершені пункти (2026-08-24 ревью)</h3>
+        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '16px', lineHeight: 1.5 }}>
+          Нижче — параметри, застосовність яких до цього активу ще НЕ підтверджена (юрист/бухгалтер) і дані,
+          доступ до яких ще не отримано. Значення зберігаються тут, щоб не загубити, коли з'являться, але{' '}
+          <strong>поки НЕ впливають на жоден розрахунок P&L</strong> — підключення розрахунку до цих чисел
+          робиться окремо, після підтвердження.
+        </p>
+
+        <div className="form-group">
+          <label className="form-label">Акцизний збір (%, ще не підтверджено)</label>
+          <input
+            type="number" min={0} max={100} step={0.1} className="form-input"
+            value={exciseDutyPct}
+            onChange={(e) => setExciseDutyPct(Number(e.target.value))}
+          />
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Втрати трансформаторного обладнання (%, ще не підтверджено)</label>
+          <input
+            type="number" min={0} max={100} step={0.1} className="form-input"
+            value={transformerLossPct}
+            onChange={(e) => setTransformerLossPct(Number(e.target.value))}
+          />
+        </div>
+
+        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '12px', lineHeight: 1.5 }}>
+          <strong>Штраф за небаланс (Балансуючий ринок):</strong> реальні погодинні ціни небалансу не мають
+          підтвердженого джерела — публічні сторінки Укренерго блокують автоматичний доступ, а знайдений
+          сторонній каталог (energy-map.info) для цього конкретного датасету застарілий. Доступ можливий лише
+          через особистий кабінет учасника ринку (MMS). Поки реального джерела немає — параметра тут навмисно
+          немає (вигадане число порушило б головний принцип проєкту "не вигадувати").
         </p>
       </div>
     </div>

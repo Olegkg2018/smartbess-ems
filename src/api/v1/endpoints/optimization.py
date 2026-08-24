@@ -463,6 +463,8 @@ class SystemSettingsModel(BaseModel):
     baseload_passthrough_ratio: Optional[float] = None
     max_cycles_per_day: Optional[float] = None
     bid_reminder_telegram_enabled: Optional[bool] = None
+    excise_duty_pct: Optional[float] = None
+    transformer_loss_pct: Optional[float] = None
 
 # Довідкові потужності для перетворення "% робочих АЕС/ГЕС" у МВт-дельту
 # (generation_adjustments.py). Це НЕ вигадка — реальні опубліковані дані:
@@ -488,6 +490,17 @@ DEFAULT_BASELOAD_PASSTHROUGH_RATIO = 0.3
 # — за замовчуванням True (нагадування вимкнене лише якщо диспетчер сам вимкнув).
 DEFAULT_BID_REMINDER_TELEGRAM_ENABLED = True
 
+# Акциз (3.2%) і втрати трансформаторного обладнання (1.5-2.5%) — з
+# зовнішнього ревью 2026-08-24 (CLAUDE.md п.32). Застосовність до цієї
+# комерційної схеми (учасник ринку РДН, FTM-арбітраж) НЕ підтверджена —
+# користувач сам не впевнений, потрібна консультація юриста/бухгалтера.
+# Поля лише ЗБЕРІГАЮТЬСЯ в Settings (щоб не втратити число, коли воно
+# з'явиться) — 0.0 за замовчуванням, і жоден розрахунок P&L (TariffService/
+# milp_model/reporting) їх поки НЕ читає й НЕ застосовує. Підключити
+# розрахунок — окрема майбутня задача, після підтвердження застосовності.
+DEFAULT_EXCISE_DUTY_PCT = 0.0
+DEFAULT_TRANSFORMER_LOSS_PCT = 0.0
+
 @router.get("/settings", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
 async def get_system_settings():
     """
@@ -512,13 +525,15 @@ async def get_system_settings():
         "hydro_reference_capacity_mw": DEFAULT_HYDRO_REFERENCE_CAPACITY_MW,
         "baseload_passthrough_ratio": DEFAULT_BASELOAD_PASSTHROUGH_RATIO,
         "bid_reminder_telegram_enabled": DEFAULT_BID_REMINDER_TELEGRAM_ENABLED,
+        "excise_duty_pct": DEFAULT_EXCISE_DUTY_PCT,
+        "transformer_loss_pct": DEFAULT_TRANSFORMER_LOSS_PCT,
     }
 
     if os.path.exists(path):
         try:
             with open(path, "r") as f:
                 saved = json.load(f)
-                for key in ("launch_date", "osr", "voltage_class", "margin", "nuclear_reference_capacity_mw", "hydro_reference_capacity_mw", "baseload_passthrough_ratio", "bid_reminder_telegram_enabled"):
+                for key in ("launch_date", "osr", "voltage_class", "margin", "nuclear_reference_capacity_mw", "hydro_reference_capacity_mw", "baseload_passthrough_ratio", "bid_reminder_telegram_enabled", "excise_duty_pct", "transformer_loss_pct"):
                     if key in saved:
                         data[key] = saved[key]
         except Exception:
@@ -559,6 +574,8 @@ async def save_system_settings(req: SystemSettingsModel):
             "hydro_reference_capacity_mw": req.hydro_reference_capacity_mw if req.hydro_reference_capacity_mw is not None else DEFAULT_HYDRO_REFERENCE_CAPACITY_MW,
             "baseload_passthrough_ratio": req.baseload_passthrough_ratio if req.baseload_passthrough_ratio is not None else DEFAULT_BASELOAD_PASSTHROUGH_RATIO,
             "bid_reminder_telegram_enabled": req.bid_reminder_telegram_enabled if req.bid_reminder_telegram_enabled is not None else DEFAULT_BID_REMINDER_TELEGRAM_ENABLED,
+            "excise_duty_pct": req.excise_duty_pct if req.excise_duty_pct is not None else DEFAULT_EXCISE_DUTY_PCT,
+            "transformer_loss_pct": req.transformer_loss_pct if req.transformer_loss_pct is not None else DEFAULT_TRANSFORMER_LOSS_PCT,
         }
 
         os.makedirs(os.path.dirname(path), exist_ok=True)

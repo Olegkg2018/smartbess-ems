@@ -105,6 +105,8 @@ interface AppState {
   efficiency: number; setEfficiency: (v: number) => void;
   maxCyclesPerDay: number; setMaxCyclesPerDay: (v: number) => void;
   bidReminderTelegramEnabled: boolean; setBidReminderTelegramEnabled: (v: boolean) => void;
+  exciseDutyPct: number; setExciseDutyPct: (v: number) => void;
+  transformerLossPct: number; setTransformerLossPct: (v: number) => void;
   launchDate: string; setLaunchDate: (v: string) => void;
   saveSettings: () => Promise<void>;
 
@@ -172,6 +174,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [efficiency, setEfficiency] = useState(95);
   const [maxCyclesPerDay, setMaxCyclesPerDay] = useState(1.5);
   const [bidReminderTelegramEnabled, setBidReminderTelegramEnabled] = useState(true);
+  const [exciseDutyPct, setExciseDutyPct] = useState(0);
+  const [transformerLossPct, setTransformerLossPct] = useState(0);
   const [launchDate, setLaunchDate] = useState('2026-01-01');
 
   const [capex, setCapex] = useState(15200000);
@@ -229,6 +233,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setEfficiency(data.efficiency_pct);
       if (data.max_cycles_per_day != null) setMaxCyclesPerDay(data.max_cycles_per_day);
       if (data.bid_reminder_telegram_enabled != null) setBidReminderTelegramEnabled(data.bid_reminder_telegram_enabled);
+      if (data.excise_duty_pct != null) setExciseDutyPct(data.excise_duty_pct);
+      if (data.transformer_loss_pct != null) setTransformerLossPct(data.transformer_loss_pct);
     }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeAssetId]);
@@ -304,12 +310,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         capacity_kw: capacity, power_kw: power, efficiency_pct: efficiency,
         max_cycles_per_day: maxCyclesPerDay,
         bid_reminder_telegram_enabled: bidReminderTelegramEnabled,
+        excise_duty_pct: exciseDutyPct,
+        transformer_loss_pct: transformerLossPct,
       });
       addLog('SETTINGS', `Параметри системи збережено. Дата запуску: ${launchDate}.`, 'success');
     } catch (e: any) {
       addLog('API', `Помилка збереження налаштувань: ${e.message}`, 'error');
     }
-  }, [activeRole, launchDate, osr, voltageClass, margin, capacity, power, efficiency, maxCyclesPerDay, bidReminderTelegramEnabled, addLog]);
+  }, [activeRole, launchDate, osr, voltageClass, margin, capacity, power, efficiency, maxCyclesPerDay, bidReminderTelegramEnabled, exciseDutyPct, transformerLossPct, addLog]);
 
   useEffect(() => {
     if (!activeAssetId) return;
@@ -657,6 +665,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     osr, setOsr, voltageClass, setVoltageClass, margin, setMargin,
     capacity, setCapacity, power, setPower, efficiency, setEfficiency,
     maxCyclesPerDay, setMaxCyclesPerDay, bidReminderTelegramEnabled, setBidReminderTelegramEnabled,
+    exciseDutyPct, setExciseDutyPct, transformerLossPct, setTransformerLossPct,
     launchDate, setLaunchDate, saveSettings,
     capex, setCapex, discountRate, setDiscountRate, lifetime, setLifetime,
     systemLogs, addLog, auditLogs,
