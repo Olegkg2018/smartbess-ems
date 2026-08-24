@@ -13,6 +13,7 @@ from src.modules.bidding_service.services import (
 )
 from src.database.session import SessionLocal
 from src.database.models import Asset, MarketBid
+from src.core.time_utils import kyiv_to_utc, kyiv_day_bounds
 
 
 def test_clamp_below_floor():
@@ -45,11 +46,14 @@ def test_action_summary_no_bids():
     try:
         asset = db.query(Asset).first()
         assert asset is not None, "потрібен хоча б один Asset у тестовій БД"
-        target = datetime.datetime(2099, 1, 1)
+        # kyiv_to_utc/kyiv_day_bounds — не наївна дата (CLAUDE.md п.26/27):
+        # build_daily_action_summary тепер сам ріже реальну київську добу.
+        target = kyiv_to_utc('2099-01-01', 0)
+        day_start, day_end = kyiv_day_bounds('2099-01-01')
         db.query(MarketBid).filter(
             MarketBid.asset_id == asset.id,
-            MarketBid.timestamp >= target,
-            MarketBid.timestamp < target + datetime.timedelta(days=1),
+            MarketBid.timestamp >= day_start,
+            MarketBid.timestamp < day_end,
         ).delete()
         db.commit()
 
@@ -67,16 +71,19 @@ def test_action_summary_needs_idm():
     try:
         asset = db.query(Asset).first()
         assert asset is not None, "потрібен хоча б один Asset у тестовій БД"
-        target = datetime.datetime(2099, 1, 2)
+        # kyiv_to_utc/kyiv_day_bounds — не наївна дата (CLAUDE.md п.26/27):
+        # заявка на реальну київську годину 10, не на naive UTC+10h.
+        target = kyiv_to_utc('2099-01-02', 0)
+        day_start, day_end = kyiv_day_bounds('2099-01-02')
         db.query(MarketBid).filter(
             MarketBid.asset_id == asset.id,
-            MarketBid.timestamp >= target,
-            MarketBid.timestamp < target + datetime.timedelta(days=1),
+            MarketBid.timestamp >= day_start,
+            MarketBid.timestamp < day_end,
         ).delete()
         db.commit()
 
         row = MarketBid(
-            asset_id=asset.id, timestamp=target + datetime.timedelta(hours=10),
+            asset_id=asset.id, timestamp=kyiv_to_utc('2099-01-02', 10),
             bid_type='sell', volume_kw=200.0, forecast_price_uah=3000.0, margin_pct=2.0,
             bid_price_uah=2940.0, actual_price_uah=2000.0, executed=False, realized_profit_uah=0.0,
             idm_fallback_suggested=True, idm_fallback_price_uah=2100.0, idm_fallback_profit_uah=150.0,
