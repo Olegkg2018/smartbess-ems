@@ -340,7 +340,9 @@ def compute_real_profit_capture_ratio(db, days: int = 30) -> dict:
             charge_kw = [max(0.0, -p * 1000.0) for p in target_power_mw]
             discharge_kw = [max(0.0, p * 1000.0) for p in target_power_mw]
             actual_profit = evaluate_schedule_profit(
-                charge_kw, discharge_kw, real_prices, degradation_cost=deg_cost_kwh, **tariff_kwargs,
+                charge_kw, discharge_kw, real_prices, degradation_cost=deg_cost_kwh,
+                battery_capacity=asset.capacity_mwh * 1000.0, max_cycles_per_day=asset.max_cycles_per_day,
+                **tariff_kwargs,
             )
             actual_source = 'chargedischargeplan_full_execution_assumed'
 

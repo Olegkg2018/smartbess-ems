@@ -1,0 +1,2717 @@
+{
+  "summary": {
+    "n_days": 300,
+    "avg_flat_cycles": 0.4815,
+    "avg_tiered_cycles": 0.4958,
+    "avg_flat_net_profit_uah": 1839.19,
+    "avg_tiered_net_profit_uah": 1974.54,
+    "avg_flat_degradation_uah": 577.81,
+    "avg_tiered_degradation_uah": 455.34,
+    "days_where_tiered_cycles_lower": 11,
+    "days_over_1_cycle_flat": 19,
+    "days_over_1_cycle_tiered": 13,
+    "pct_annual_profit_delta": 7.359
+  },
+  "days": [
+    {
+      "date": "2024-08-06",
+      "flat_cycles": 0.320625,
+      "tiered_cycles": 0.320625,
+      "flat_profit": 743.345,
+      "tiered_profit": 839.5325,
+      "flat_degradation": 384.75,
+      "tiered_degradation": 288.56249999999994
+    },
+    {
+      "date": "2021-08-18",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 265.99905,
+      "tiered_profit": 294.49905,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2021-02-21",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 80.58185000000003,
+      "tiered_profit": 109.08185000000005,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-03-03",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1739.6336557746004,
+      "tiered_profit": 1967.6336557746004,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2022-07-20",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 226.66999999999996,
+      "tiered_profit": 255.16999999999996,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2022-05-19",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2022-04-05",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2021-10-14",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-02-21",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1134.3704952745998,
+      "tiered_profit": 1362.3704952745998,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2021-07-30",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 138.31904999999998,
+      "tiered_profit": 166.81905,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2024-10-21",
+      "flat_cycles": 0.771875,
+      "tiered_cycles": 0.855,
+      "flat_profit": 2512.8414000000002,
+      "tiered_profit": 2761.1541639841803,
+      "flat_degradation": 926.25,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2025-03-01",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 2230.9178695646,
+      "tiered_profit": 2458.9178695646,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2026-01-06",
+      "flat_cycles": 0.5,
+      "tiered_cycles": 0.5,
+      "flat_profit": 1279.7287443356001,
+      "tiered_profit": 1429.7287443356001,
+      "flat_degradation": 600.0,
+      "tiered_degradation": 449.99999999999994
+    },
+    {
+      "date": "2024-01-25",
+      "flat_cycles": 0.5,
+      "tiered_cycles": 0.54625,
+      "flat_profit": 868.6460084555998,
+      "tiered_profit": 1024.3399999999997,
+      "flat_degradation": 600.0,
+      "tiered_degradation": 491.62499999999994
+    },
+    {
+      "date": "2021-06-29",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 90.06,
+      "tiered_profit": 118.56000000000002,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2024-04-28",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1694.3573509746002,
+      "tiered_profit": 1922.3573509746002,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2023-05-18",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2021-03-07",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 57.66499999999999,
+      "tiered_profit": 86.165,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2021-03-03",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 74.19500000000002,
+      "tiered_profit": 102.69500000000004,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2021-07-12",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 138.31904999999998,
+      "tiered_profit": 166.81905,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2022-03-25",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2022-04-24",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2023-11-04",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 998.9148554745997,
+      "tiered_profit": 1226.9148554745998,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2024-05-21",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 1.0,
+      "flat_profit": 3317.3426319771797,
+      "tiered_profit": 3603.06113584238,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 899.9999999999999
+    },
+    {
+      "date": "2021-02-24",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 80.58185000000003,
+      "tiered_profit": 109.08185000000005,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2024-02-27",
+      "flat_cycles": 0.25,
+      "tiered_cycles": 0.25,
+      "flat_profit": 871.348008229,
+      "tiered_profit": 946.348008229,
+      "flat_degradation": 300.0,
+      "tiered_degradation": 224.99999999999997
+    },
+    {
+      "date": "2022-02-13",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 147.25,
+      "tiered_profit": 175.75,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-01-10",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1527.0547125745998,
+      "tiered_profit": 1755.0547125745998,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2024-08-27",
+      "flat_cycles": 0.771875,
+      "tiered_cycles": 0.855,
+      "flat_profit": 4245.8324999999995,
+      "tiered_profit": 4494.08171135271,
+      "flat_degradation": 926.25,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2024-12-11",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 2347.5561125746,
+      "tiered_profit": 2575.5561125746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2023-05-13",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 262.865,
+      "tiered_profit": 291.365,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2022-03-30",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2023-07-12",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1514.1704014746003,
+      "tiered_profit": 1742.1704014746003,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2024-04-25",
+      "flat_cycles": 0.75,
+      "tiered_cycles": 0.76,
+      "flat_profit": 926.9870509421996,
+      "tiered_profit": 1152.8520804745997,
+      "flat_degradation": 900.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2022-07-26",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 228.57,
+      "tiered_profit": 257.07,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-07-20",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 3133.9719740841797,
+      "tiered_profit": 3390.4719740841797,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2025-11-20",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 4716.2125944746,
+      "tiered_profit": 4944.2125944746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2021-01-14",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 61.75,
+      "tiered_profit": 90.25000000000001,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-04-08",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 2038.8091859746005,
+      "tiered_profit": 2266.8091859746005,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2025-07-13",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1560.8310323146002,
+      "tiered_profit": 1788.8310323146002,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2021-11-24",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 409.0941994745998,
+      "tiered_profit": 637.0941994745998,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2024-12-04",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1330.0020768745999,
+      "tiered_profit": 1558.0020768745999,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2023-05-19",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2022-11-30",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2021-11-16",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.76,
+      "flat_profit": 266.0,
+      "tiered_profit": 342.34685547460003,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2022-03-18",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2026-05-20",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 4230.16552713418,
+      "tiered_profit": 4486.66552713418,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2025-04-17",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 2376.22684288418,
+      "tiered_profit": 2632.72684288418,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2022-11-23",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2021-07-10",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 138.31904999999998,
+      "tiered_profit": 166.81905,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2023-02-20",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 265.90500000000003,
+      "tiered_profit": 294.40500000000003,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2021-07-19",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 138.31904999999998,
+      "tiered_profit": 166.81905,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2023-01-08",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-10-06",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 4898.0670745346,
+      "tiered_profit": 5126.0670745346,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2022-12-08",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2024-05-25",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 2594.1073509745997,
+      "tiered_profit": 2822.1073509745997,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2022-06-28",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-07-15",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 2150.6905015745997,
+      "tiered_profit": 2378.6905015745997,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2021-03-31",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 75.05000000000001,
+      "tiered_profit": 103.55000000000003,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-02-07",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1902.3705024746,
+      "tiered_profit": 2130.3705024746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2023-08-02",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1298.4757684746,
+      "tiered_profit": 1526.4757684746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2024-01-07",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.25,
+      "flat_profit": 232.75,
+      "tiered_profit": 298.129700629,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 224.99999999999997
+    },
+    {
+      "date": "2021-09-14",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2026-06-21",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 8200.04000035418,
+      "tiered_profit": 8456.54000035418,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2026-03-08",
+      "flat_cycles": 1.080625,
+      "tiered_cycles": 1.0,
+      "flat_profit": 8616.04407958418,
+      "tiered_profit": 8893.03044344938,
+      "flat_degradation": 1296.75,
+      "tiered_degradation": 899.9999999999999
+    },
+    {
+      "date": "2023-02-17",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 265.05,
+      "tiered_profit": 293.55,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2021-06-12",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 57.0,
+      "tiered_profit": 85.50000000000001,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2024-02-08",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 465.5,
+      "tiered_profit": 494.0,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2022-08-26",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 260.3,
+      "tiered_profit": 288.8,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-08-30",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 8811.21484515718,
+      "tiered_profit": 9067.71484515718,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2024-07-15",
+      "flat_cycles": 0.771875,
+      "tiered_cycles": 0.771875,
+      "flat_profit": 2345.8324999999995,
+      "tiered_profit": 2577.3949999999995,
+      "flat_degradation": 926.25,
+      "tiered_degradation": 694.6874999999999
+    },
+    {
+      "date": "2024-06-24",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 3172.8793427148,
+      "tiered_profit": 3429.3793427148,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2025-12-23",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 2553.3426124745997,
+      "tiered_profit": 2781.3426124745997,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2025-11-04",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 5053.0020899246,
+      "tiered_profit": 5281.0020899246,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2023-01-13",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2024-04-01",
+      "flat_cycles": 0.75,
+      "tiered_cycles": 0.75,
+      "flat_profit": 1105.9461880621998,
+      "tiered_profit": 1330.9461880621998,
+      "flat_degradation": 900.0,
+      "tiered_degradation": 674.9999999999999
+    },
+    {
+      "date": "2022-01-30",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 171.66500000000002,
+      "tiered_profit": 200.16500000000002,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2024-12-17",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 2519.8231354746,
+      "tiered_profit": 2747.8231354746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2021-05-24",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 60.80000000000001,
+      "tiered_profit": 89.30000000000003,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2021-04-05",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 80.58185000000003,
+      "tiered_profit": 109.08185000000005,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2024-09-20",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 4417.785263570179,
+      "tiered_profit": 4674.285263570179,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2022-04-14",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-05-07",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.771875,
+      "flat_profit": 2551.1278217746,
+      "tiered_profit": 2779.2839,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 694.6874999999999
+    },
+    {
+      "date": "2022-08-18",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2021-06-14",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 61.652150000000006,
+      "tiered_profit": 90.15215000000002,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-10-22",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.985625,
+      "flat_profit": 6078.9295804746,
+      "tiered_profit": 6336.7630012146,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 887.0624999999999
+    },
+    {
+      "date": "2025-11-14",
+      "flat_cycles": 1.21125,
+      "tiered_cycles": 1.0,
+      "flat_profit": 8012.0078438957,
+      "tiered_profit": 8220.49311910478,
+      "flat_degradation": 1453.5,
+      "tiered_degradation": 899.9999999999999
+    },
+    {
+      "date": "2021-07-27",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 138.31904999999998,
+      "tiered_profit": 166.81905,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2023-07-21",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1566.6073491745997,
+      "tiered_profit": 1794.6073491745997,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2024-07-29",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 4032.99276368418,
+      "tiered_profit": 4289.49276368418,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2025-09-09",
+      "flat_cycles": 1.436875,
+      "tiered_cycles": 1.26,
+      "flat_profit": 6147.0516976746,
+      "tiered_profit": 6262.122592887799,
+      "flat_degradation": 1724.25,
+      "tiered_degradation": 1367.9999999999998
+    },
+    {
+      "date": "2023-01-20",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2021-12-01",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.76,
+      "flat_profit": 265.51455,
+      "tiered_profit": 411.8521664746004,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2023-01-31",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 260.205,
+      "tiered_profit": 288.705,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2022-12-31",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2022-03-07",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2024-10-08",
+      "flat_cycles": 1.5,
+      "tiered_cycles": 1.436875,
+      "flat_profit": 4566.79037639688,
+      "tiered_profit": 4582.222950974599,
+      "flat_degradation": 1800.0,
+      "tiered_degradation": 1686.3749999999998
+    },
+    {
+      "date": "2022-07-03",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2024-12-12",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1914.3178656945997,
+      "tiered_profit": 2142.3178656945997,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2026-04-08",
+      "flat_cycles": 1.5,
+      "tiered_cycles": 1.5,
+      "flat_profit": 5099.501989101879,
+      "tiered_profit": 5099.501989101879,
+      "flat_degradation": 1800.0,
+      "tiered_degradation": 1799.9999999999998
+    },
+    {
+      "date": "2024-11-04",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 2827.4710299746,
+      "tiered_profit": 3055.4710299746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2024-08-24",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 2662.7302409746,
+      "tiered_profit": 2890.7302409746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2021-05-28",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 60.41905,
+      "tiered_profit": 88.91905000000001,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2024-06-05",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 4191.65842148418,
+      "tiered_profit": 4448.15842148418,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2024-07-28",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1850.4494474746,
+      "tiered_profit": 2078.4494474745998,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2021-12-18",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.76,
+      "flat_profit": 266.0,
+      "tiered_profit": 438.5415664746,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2024-01-02",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.25,
+      "flat_profit": 218.40500000000003,
+      "tiered_profit": 264.32983907899995,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 224.99999999999997
+    },
+    {
+      "date": "2025-02-06",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 2104.2652400746,
+      "tiered_profit": 2332.2652400746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2021-12-02",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 254.88405,
+      "tiered_profit": 283.38405,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2023-08-08",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1610.3178757746,
+      "tiered_profit": 1838.3178757746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2023-02-19",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 246.05,
+      "tiered_profit": 274.55,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2022-07-09",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 169.10000000000002,
+      "tiered_profit": 197.60000000000002,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2026-03-15",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 5437.14280051018,
+      "tiered_profit": 5693.64280051018,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2024-08-07",
+      "flat_cycles": 1.080625,
+      "tiered_cycles": 1.080625,
+      "flat_profit": 4481.92402819718,
+      "tiered_profit": 4733.549028197181,
+      "flat_degradation": 1296.75,
+      "tiered_degradation": 1045.1249999999998
+    },
+    {
+      "date": "2024-11-14",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1842.2483924746005,
+      "tiered_profit": 2070.2483924746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2024-02-18",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 289.75,
+      "tiered_profit": 318.25,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2022-03-28",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2024-11-07",
+      "flat_cycles": 0.9975,
+      "tiered_cycles": 1.0,
+      "flat_profit": 2357.2425000000003,
+      "tiered_profit": 2656.785048489466,
+      "flat_degradation": 1197.0,
+      "tiered_degradation": 899.9999999999999
+    },
+    {
+      "date": "2022-10-29",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-09-27",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 3083.00524255418,
+      "tiered_profit": 3339.50524255418,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2025-04-27",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 4137.19394773618,
+      "tiered_profit": 4393.69394773618,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2025-05-13",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 4467.72815826218,
+      "tiered_profit": 4724.22815826218,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2021-04-26",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 75.99904999999998,
+      "tiered_profit": 104.49905,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2022-04-17",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-08-15",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.771875,
+      "flat_profit": 5213.7915619746,
+      "tiered_profit": 5442.1449999999995,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 694.6874999999999
+    },
+    {
+      "date": "2025-07-11",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 3137.96105317018,
+      "tiered_profit": 3394.46105317018,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2022-10-11",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2023-04-05",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2022-07-05",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 170.73875000000004,
+      "tiered_profit": 199.23875000000004,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2021-05-17",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 75.905,
+      "tiered_profit": 104.40500000000002,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2022-03-10",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2026-02-18",
+      "flat_cycles": 1.21125,
+      "tiered_cycles": 1.21125,
+      "flat_profit": 6495.8136492946,
+      "tiered_profit": 6669.0636492946,
+      "flat_degradation": 1453.5,
+      "tiered_degradation": 1280.2499999999998
+    },
+    {
+      "date": "2026-04-21",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 8286.98879003218,
+      "tiered_profit": 8543.48879003218,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2024-03-10",
+      "flat_cycles": 0.75,
+      "tiered_cycles": 0.75,
+      "flat_profit": 483.7834430122,
+      "tiered_profit": 708.7834430122,
+      "flat_degradation": 900.0,
+      "tiered_degradation": 674.9999999999999
+    },
+    {
+      "date": "2025-12-04",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.771875,
+      "flat_profit": 4049.2863004746,
+      "tiered_profit": 4278.08875,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 694.6874999999999
+    },
+    {
+      "date": "2025-01-14",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1871.0585254746,
+      "tiered_profit": 2099.0585254746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2022-10-09",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2022-03-13",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2024-09-08",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 3639.9231425846,
+      "tiered_profit": 3867.9231425846,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2023-10-23",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 1.0,
+      "flat_profit": 1579.4078766745997,
+      "tiered_profit": 1860.57271368368,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 899.9999999999999
+    },
+    {
+      "date": "2023-03-24",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 255.075,
+      "tiered_profit": 283.575,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-12-21",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 2480.1863004746,
+      "tiered_profit": 2708.1863004746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2026-02-20",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 5526.7389154746,
+      "tiered_profit": 5754.7389154746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2024-08-13",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 3480.8952638101796,
+      "tiered_profit": 3737.3952638101796,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2023-08-01",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1530.0810326746,
+      "tiered_profit": 1758.0810326746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2021-10-21",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2022-06-29",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2022-05-23",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-03-10",
+      "flat_cycles": 1.26,
+      "tiered_cycles": 1.26,
+      "flat_profit": 4379.81373852036,
+      "tiered_profit": 4523.81373852036,
+      "flat_degradation": 1512.0,
+      "tiered_degradation": 1367.9999999999998
+    },
+    {
+      "date": "2024-01-12",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 934.4299024746006,
+      "tiered_profit": 1162.4299024746006,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2022-06-25",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-03-14",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 1.0,
+      "flat_profit": 3357.1882849941803,
+      "tiered_profit": 3619.70678885938,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 899.9999999999999
+    },
+    {
+      "date": "2024-04-16",
+      "flat_cycles": 0.5,
+      "tiered_cycles": 0.5,
+      "flat_profit": 556.9635015355998,
+      "tiered_profit": 706.9635015355998,
+      "flat_degradation": 600.0,
+      "tiered_degradation": 449.99999999999994
+    },
+    {
+      "date": "2023-05-31",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2026-01-17",
+      "flat_cycles": 0.75,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1237.3326259422,
+      "tiered_profit": 1462.6468054746,
+      "flat_degradation": 900.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2024-04-14",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 285.0,
+      "tiered_profit": 313.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2023-04-01",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2023-01-14",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2021-10-12",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2023-11-13",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1031.4214927157002,
+      "tiered_profit": 1259.4214927157002,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2023-10-11",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1273.1628039145999,
+      "tiered_profit": 1501.1628039145999,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2021-07-07",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": -44.18925,
+      "tiered_profit": -15.689249999999987,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-04-01",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 2961.5152454746,
+      "tiered_profit": 3189.5152454746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2021-04-08",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 80.58185000000003,
+      "tiered_profit": 109.08185000000005,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-11-03",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 8754.2483258046,
+      "tiered_profit": 8982.2483258046,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2021-08-14",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2021-11-11",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2024-07-13",
+      "flat_cycles": 0.771875,
+      "tiered_cycles": 0.855,
+      "flat_profit": 3513.395,
+      "tiered_profit": 3745.93473751018,
+      "flat_degradation": 926.25,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2021-11-25",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 447.9099891945999,
+      "tiered_profit": 675.9099891945999,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2025-06-15",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 3394.7373687791796,
+      "tiered_profit": 3651.2373687791796,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2024-10-29",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1622.1336530746,
+      "tiered_profit": 1850.1336530746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2024-05-10",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.771875,
+      "flat_profit": 2049.8441904745996,
+      "tiered_profit": 2277.9575,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 694.6874999999999
+    },
+    {
+      "date": "2021-05-12",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 80.58185000000003,
+      "tiered_profit": 109.08185000000005,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2023-03-02",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 265.715,
+      "tiered_profit": 294.215,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2023-02-23",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 250.8,
+      "tiered_profit": 279.3,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2024-05-09",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 1.0,
+      "flat_profit": 1831.4478954841802,
+      "tiered_profit": 2117.1663993493803,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 899.9999999999999
+    },
+    {
+      "date": "2023-08-20",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1300.8441895745998,
+      "tiered_profit": 1528.8441895745998,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2023-12-23",
+      "flat_cycles": 0.5,
+      "tiered_cycles": 0.5,
+      "flat_profit": 600.8021442755999,
+      "tiered_profit": 750.8021442755999,
+      "flat_degradation": 600.0,
+      "tiered_degradation": 449.99999999999994
+    },
+    {
+      "date": "2022-06-01",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2026-06-17",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 9193.90054524718,
+      "tiered_profit": 9450.40054524718,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2024-02-11",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 241.3,
+      "tiered_profit": 269.8,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-11-02",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 8612.172653047179,
+      "tiered_profit": 8868.672653047179,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2026-04-20",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 6247.4637882346,
+      "tiered_profit": 6475.4637882346,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2021-01-24",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 80.58185000000003,
+      "tiered_profit": 109.08185000000005,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-01-20",
+      "flat_cycles": 0.9975,
+      "tiered_cycles": 1.0,
+      "flat_profit": 2365.5660000000003,
+      "tiered_profit": 2665.564776467066,
+      "flat_degradation": 1197.0,
+      "tiered_degradation": 899.9999999999999
+    },
+    {
+      "date": "2021-08-24",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 265.99809999999997,
+      "tiered_profit": 294.49809999999997,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2024-11-01",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1854.1810254745997,
+      "tiered_profit": 2082.1810254745997,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2025-12-22",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 2744.6599839746,
+      "tiered_profit": 2972.6599839746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2024-01-08",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1422.3864344746,
+      "tiered_profit": 1650.3864344746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2025-03-22",
+      "flat_cycles": 0.771875,
+      "tiered_cycles": 0.771875,
+      "flat_profit": 3430.0637500000003,
+      "tiered_profit": 3661.6262500000003,
+      "flat_degradation": 926.25,
+      "tiered_degradation": 694.6874999999999
+    },
+    {
+      "date": "2025-04-28",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 1.0,
+      "flat_profit": 4158.31524013418,
+      "tiered_profit": 4427.89733665938,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 899.9999999999999
+    },
+    {
+      "date": "2024-08-09",
+      "flat_cycles": 0.771875,
+      "tiered_cycles": 0.771875,
+      "flat_profit": 2646.5825,
+      "tiered_profit": 2878.145,
+      "flat_degradation": 926.25,
+      "tiered_degradation": 694.6874999999999
+    },
+    {
+      "date": "2022-08-27",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2023-06-13",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2021-11-21",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.76,
+      "flat_profit": 266.0,
+      "tiered_profit": 339.25001850460006,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2023-07-22",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1883.2520875845998,
+      "tiered_profit": 2111.2520875846,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2021-01-07",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 9.5,
+      "tiered_profit": 38.000000000000014,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2026-05-13",
+      "flat_cycles": 1.21125,
+      "tiered_cycles": 1.0,
+      "flat_profit": 3493.921344474599,
+      "tiered_profit": 3775.4115512660655,
+      "flat_degradation": 1453.5,
+      "tiered_degradation": 899.9999999999999
+    },
+    {
+      "date": "2025-01-22",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 2796.6366904745996,
+      "tiered_profit": 3024.6366904745996,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2025-12-03",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 3951.1731354746,
+      "tiered_profit": 4179.1731354746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2025-01-17",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 2470.8227398945996,
+      "tiered_profit": 2698.8227398945996,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2022-06-26",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2026-06-19",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 8695.40763197718,
+      "tiered_profit": 8951.90763197718,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2023-10-26",
+      "flat_cycles": 0.75,
+      "tiered_cycles": 0.75,
+      "flat_profit": 722.5202899422003,
+      "tiered_profit": 947.5202899422003,
+      "flat_degradation": 900.0,
+      "tiered_degradation": 674.9999999999999
+    },
+    {
+      "date": "2025-04-14",
+      "flat_cycles": 1.080625,
+      "tiered_cycles": 1.0,
+      "flat_profit": 4005.5542728771798,
+      "tiered_profit": 4290.11162076238,
+      "flat_degradation": 1296.75,
+      "tiered_degradation": 899.9999999999999
+    },
+    {
+      "date": "2022-01-02",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 244.62310000000002,
+      "tiered_profit": 273.1231,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2023-11-09",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1699.8737959746,
+      "tiered_profit": 1927.8737959746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2026-02-17",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 4568.844172474601,
+      "tiered_profit": 4796.844172474601,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2021-08-07",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-11-22",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 5574.8682594746,
+      "tiered_profit": 5802.8682594746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2024-07-08",
+      "flat_cycles": 0.771875,
+      "tiered_cycles": 0.855,
+      "flat_profit": 3878.0825,
+      "tiered_profit": 4120.86894814718,
+      "flat_degradation": 926.25,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2022-09-06",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 264.1,
+      "tiered_profit": 292.6,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-09-24",
+      "flat_cycles": 0.771875,
+      "tiered_cycles": 0.771875,
+      "flat_profit": 6259.754999999999,
+      "tiered_profit": 6491.317499999999,
+      "flat_degradation": 926.25,
+      "tiered_degradation": 694.6874999999999
+    },
+    {
+      "date": "2024-08-05",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 4008.97894260818,
+      "tiered_profit": 4265.47894260818,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2023-02-07",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 239.875,
+      "tiered_profit": 268.375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-04-15",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 3746.4030269841796,
+      "tiered_profit": 4002.9030269841796,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2021-11-28",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 469.8656788245999,
+      "tiered_profit": 697.8656788246001,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2024-01-13",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 418.0,
+      "tiered_profit": 446.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2026-05-12",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 3974.40186398418,
+      "tiered_profit": 4230.90186398418,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2025-05-18",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 3962.9347372641796,
+      "tiered_profit": 4219.43473726418,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2026-03-09",
+      "flat_cycles": 1.5,
+      "tiered_cycles": 1.5,
+      "flat_profit": 10087.02793581258,
+      "tiered_profit": 10087.02793581258,
+      "flat_degradation": 1800.0,
+      "tiered_degradation": 1799.9999999999998
+    },
+    {
+      "date": "2023-12-26",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1094.4049884746,
+      "tiered_profit": 1322.4049884746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2026-03-01",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 2782.68658493418,
+      "tiered_profit": 3039.18658493418,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2021-01-02",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 65.35999999999999,
+      "tiered_profit": 93.86,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2024-05-15",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.985625,
+      "flat_profit": 1432.0045804745998,
+      "tiered_profit": 1705.4695804745998,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 887.0624999999999
+    },
+    {
+      "date": "2022-10-28",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2023-10-01",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1652.5605051746002,
+      "tiered_profit": 1880.5605051746002,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2021-02-09",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 80.58185000000003,
+      "tiered_profit": 109.08185000000005,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2021-08-19",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 265.99905,
+      "tiered_profit": 294.49905,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2026-03-22",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 9127.39436108418,
+      "tiered_profit": 9383.89436108418,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2023-01-16",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-12-09",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 4716.2125944746,
+      "tiered_profit": 4944.2125944746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2025-09-04",
+      "flat_cycles": 1.01,
+      "tiered_cycles": 1.01,
+      "flat_profit": 4617.89058156318,
+      "tiered_profit": 4911.89058156318,
+      "flat_degradation": 1212.0,
+      "tiered_degradation": 917.9999999999999
+    },
+    {
+      "date": "2022-09-24",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2022-05-08",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2021-04-30",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 75.05000000000001,
+      "tiered_profit": 103.55000000000003,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2022-05-11",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-12-08",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 4716.2125944746,
+      "tiered_profit": 4944.2125944746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2026-04-29",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 8728.20142148418,
+      "tiered_profit": 8984.70142148418,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2021-06-26",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 91.67500000000001,
+      "tiered_profit": 120.17500000000003,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-02-11",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1615.7624704745997,
+      "tiered_profit": 1843.7624704745997,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2023-09-26",
+      "flat_cycles": 1.01,
+      "tiered_cycles": 1.0,
+      "flat_profit": 2427.3519510939195,
+      "tiered_profit": 2726.5943905909967,
+      "flat_degradation": 1212.0,
+      "tiered_degradation": 899.9999999999999
+    },
+    {
+      "date": "2025-08-03",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 2026.1073464746,
+      "tiered_profit": 2254.1073464746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2021-05-23",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 2.7493000000000194,
+      "tiered_profit": 31.249300000000034,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2026-07-01",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 8381.23468493418,
+      "tiered_profit": 8637.73468493418,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2025-04-11",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 2514.77684288418,
+      "tiered_profit": 2771.27684288418,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2023-12-30",
+      "flat_cycles": 0.54625,
+      "tiered_cycles": 0.54625,
+      "flat_profit": 372.05500000000006,
+      "tiered_profit": 535.9300000000001,
+      "flat_degradation": 655.5,
+      "tiered_degradation": 491.62499999999994
+    },
+    {
+      "date": "2025-04-22",
+      "flat_cycles": 1.26,
+      "tiered_cycles": 1.01,
+      "flat_profit": 4076.9407886903596,
+      "tiered_profit": 4278.7946660137595,
+      "flat_degradation": 1512.0,
+      "tiered_degradation": 917.9999999999999
+    },
+    {
+      "date": "2021-09-16",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 265.04904999999997,
+      "tiered_profit": 293.54904999999997,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2021-09-21",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2024-09-17",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.855,
+      "flat_profit": 3023.8441859746,
+      "tiered_profit": 3269.80315872418,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2023-09-04",
+      "flat_cycles": 1.21125,
+      "tiered_cycles": 1.0,
+      "flat_profit": 2549.1823554745997,
+      "tiered_profit": 2847.16186676368,
+      "flat_degradation": 1453.5,
+      "tiered_degradation": 899.9999999999999
+    },
+    {
+      "date": "2024-02-03",
+      "flat_cycles": 0.320625,
+      "tiered_cycles": 0.54625,
+      "flat_profit": 502.21500000000003,
+      "tiered_profit": 660.3050000000001,
+      "flat_degradation": 384.75,
+      "tiered_degradation": 491.62499999999994
+    },
+    {
+      "date": "2021-12-06",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2023-12-20",
+      "flat_cycles": 0.320625,
+      "tiered_cycles": 0.5,
+      "flat_profit": 566.5899999999999,
+      "tiered_profit": 701.7550525556,
+      "flat_degradation": 384.75,
+      "tiered_degradation": 449.99999999999994
+    },
+    {
+      "date": "2025-11-26",
+      "flat_cycles": 0.771875,
+      "tiered_cycles": 0.771875,
+      "flat_profit": 7332.721875,
+      "tiered_profit": 7564.284375,
+      "flat_degradation": 926.25,
+      "tiered_degradation": 694.6874999999999
+    },
+    {
+      "date": "2024-05-31",
+      "flat_cycles": 1.26,
+      "tiered_cycles": 1.080625,
+      "flat_profit": 3593.58729227978,
+      "tiered_profit": 3756.7451319441802,
+      "flat_degradation": 1512.0,
+      "tiered_degradation": 1045.1249999999998
+    },
+    {
+      "date": "2023-05-20",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2026-06-04",
+      "flat_cycles": 1.26,
+      "tiered_cycles": 1.080625,
+      "flat_profit": 4180.22579838978,
+      "tiered_profit": 4421.69250035418,
+      "flat_degradation": 1512.0,
+      "tiered_degradation": 1045.1249999999998
+    },
+    {
+      "date": "2022-03-11",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-03-31",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.985625,
+      "flat_profit": 3220.0968794746,
+      "tiered_profit": 3468.8118794746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 887.0624999999999
+    },
+    {
+      "date": "2024-11-17",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 2600.3441904745996,
+      "tiered_profit": 2828.3441904745996,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2022-02-17",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 128.24999999999997,
+      "tiered_profit": 156.75,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-01-04",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 2090.7701060846002,
+      "tiered_profit": 2318.7701060846002,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2022-10-03",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2024-10-11",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 2301.3441814746,
+      "tiered_profit": 2529.3441814746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2023-02-06",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 248.805,
+      "tiered_profit": 277.305,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2023-06-20",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2026-01-21",
+      "flat_cycles": 1.355,
+      "tiered_cycles": 1.355,
+      "flat_profit": 6103.976637697379,
+      "tiered_profit": 6190.97663769738,
+      "flat_degradation": 1626.0,
+      "tiered_degradation": 1538.9999999999998
+    },
+    {
+      "date": "2023-11-29",
+      "flat_cycles": 0.75,
+      "tiered_cycles": 0.76,
+      "flat_profit": 880.8135320322001,
+      "tiered_profit": 1107.5710293446002,
+      "flat_degradation": 900.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2023-07-17",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 1331.7716895745998,
+      "tiered_profit": 1559.7716895745998,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2021-09-06",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 266.0,
+      "tiered_profit": 294.5,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2022-05-25",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2022-04-08",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2021-05-13",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 80.02515,
+      "tiered_profit": 108.52515000000001,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2022-11-26",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 265.544,
+      "tiered_profit": 294.044,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2021-02-13",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 80.58185000000003,
+      "tiered_profit": 109.08185000000005,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2024-04-23",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 2521.45368493418,
+      "tiered_profit": 2777.95368493418,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2024-02-12",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 313.5,
+      "tiered_profit": 342.0,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2022-04-19",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2024-04-24",
+      "flat_cycles": 0.75,
+      "tiered_cycles": 0.985625,
+      "flat_profit": 926.9870509421996,
+      "tiered_profit": 1199.4670804745997,
+      "flat_degradation": 900.0,
+      "tiered_degradation": 887.0624999999999
+    },
+    {
+      "date": "2021-01-15",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 60.610000000000014,
+      "tiered_profit": 89.11000000000003,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2021-05-27",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 59.20685,
+      "tiered_profit": 87.70685000000002,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2024-12-24",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 2611.4231354746,
+      "tiered_profit": 2839.4231354746,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2024-07-20",
+      "flat_cycles": 0.855,
+      "tiered_cycles": 0.855,
+      "flat_profit": 4045.2505267471797,
+      "tiered_profit": 4301.75052674718,
+      "flat_degradation": 1026.0,
+      "tiered_degradation": 769.4999999999999
+    },
+    {
+      "date": "2021-05-02",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 75.05000000000001,
+      "tiered_profit": 103.55000000000003,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2022-04-16",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2021-05-20",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 71.15215,
+      "tiered_profit": 99.65215000000002,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2026-02-02",
+      "flat_cycles": 1.26,
+      "tiered_cycles": 1.26,
+      "flat_profit": 6028.757121687799,
+      "tiered_profit": 6172.757121687798,
+      "flat_degradation": 1512.0,
+      "tiered_degradation": 1367.9999999999998
+    },
+    {
+      "date": "2021-03-06",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 57.95000000000002,
+      "tiered_profit": 86.45000000000003,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-10-31",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 6351.5020765146,
+      "tiered_profit": 6579.5020765146,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    },
+    {
+      "date": "2022-11-10",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 265.6808,
+      "tiered_profit": 294.1808,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2023-11-22",
+      "flat_cycles": 0.5,
+      "tiered_cycles": 0.54625,
+      "flat_profit": 677.9261053356003,
+      "tiered_profit": 839.6800000000003,
+      "flat_degradation": 600.0,
+      "tiered_degradation": 491.62499999999994
+    },
+    {
+      "date": "2022-05-05",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2022-07-27",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 236.36,
+      "tiered_profit": 264.86,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2024-10-06",
+      "flat_cycles": 0.771875,
+      "tiered_cycles": 0.771875,
+      "flat_profit": 3899.7999999999997,
+      "tiered_profit": 4131.362499999999,
+      "flat_degradation": 926.25,
+      "tiered_degradation": 694.6874999999999
+    },
+    {
+      "date": "2023-09-25",
+      "flat_cycles": 0.54625,
+      "tiered_cycles": 0.771875,
+      "flat_profit": 1385.3469499999999,
+      "tiered_profit": 1578.4518124999995,
+      "flat_degradation": 655.5,
+      "tiered_degradation": 694.6874999999999
+    },
+    {
+      "date": "2022-03-16",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 137.39375,
+      "tiered_profit": 165.89375,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2021-09-29",
+      "flat_cycles": 0.095,
+      "tiered_cycles": 0.095,
+      "flat_profit": 223.19869999999997,
+      "tiered_profit": 251.69869999999997,
+      "flat_degradation": 114.0,
+      "tiered_degradation": 85.49999999999999
+    },
+    {
+      "date": "2025-01-25",
+      "flat_cycles": 0.76,
+      "tiered_cycles": 0.76,
+      "flat_profit": 2132.8622125745997,
+      "tiered_profit": 2360.8622125745997,
+      "flat_degradation": 912.0,
+      "tiered_degradation": 683.9999999999999
+    }
+  ]
+}

@@ -1,10 +1,59 @@
 import pulp
 import numpy as np
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 
 from src.modules.tariff_service.services import TariffService
 
 PRICE_FLOOR = TariffService.PRICE_FLOOR_UAH_MWH
+
+DEGRADATION_TIER2_MULTIPLIER = 2.0
+
+def tiered_degradation_rates(
+    degradation_cost: float,
+    battery_capacity: float,
+    max_cycles_per_day: float,
+    horizon_hours: int = 24,
+    tier2_multiplier: float = DEGRADATION_TIER2_MULTIPLIER,
+) -> Tuple[float, float, float, float]:
+    """
+    Кусочно-лінійна (опукла) вартість деградації замість плоскої константи.
+
+    Джерело: Preger et al. 2020 (Sandia National Labs, J. Electrochem. Soc.,
+    DOI 10.1149/1945-7111/abae37, відкритий датасет — batteryarchive.org) —
+    реальне багаторічне циклування комерційних LFP-елементів: цикл-життя
+    монотонно падає з глибиною розряду (40-60% SOC > 20-80% SOC > 0-100% SOC),
+    розкид 2500-9000 еквівалентних повних циклів залежно від умов. ЧЕСНЕ
+    ОБМЕЖЕННЯ: точної кривої cost(DoD) по проміжних точках з відкритих джерел
+    не знайдено — датасет був right-censored (більшість LFP-елементів не
+    досягли 80% ємності до завершення дослідження). `tier2_multiplier=2.0` —
+    консервативна середина реального розкиду (до ~3.6x на повному діапазоні
+    дослідження від найглибшого до найдрібнішого циклування), а не вигадане
+    число, але це наближення, що потребує окремого бектесту дисбатчу до/після
+    (як і решта проєкту — CLAUDE.md принцип "не вигадувати").
+
+    "1 цикл" визначається так само, як вже існуючий cycle_limit у цьому файлі
+    — розряд, що дорівнює battery_capacity (не usable min/max SoC діапазону).
+    tier1 покриває перший еквівалентний цикл доби, tier2 — усе понад це
+    (другий+ цикл, глибше денне циклування). tier1_rate калібрується так,
+    щоб середньозважена вартість ПРИ ПОВНОМУ використанні max_cycles_per_day
+    дорівнювала переданому degradation_cost — вже настроєне в Settings число
+    (Asset.deg_cost_per_mwh) лишається чинним середнім, модель лише отримує
+    правильну опуклу форму замість плоскої лінії. Якщо max_cycles_per_day<=1
+    (батарея фізично не дотягується до другого циклу), tier1==tier2==
+    degradation_cost — поведінка НЕ відрізняється від старої плоскої моделі.
+
+    Returns (tier1_rate, tier2_rate, tier1_capacity_kwh, tier2_capacity_kwh).
+    """
+    horizon_factor = horizon_hours / 24.0
+    tier1_capacity_kwh = battery_capacity * min(1.0, max_cycles_per_day) * horizon_factor
+    tier2_capacity_kwh = battery_capacity * max(0.0, max_cycles_per_day - 1.0) * horizon_factor
+
+    if max_cycles_per_day <= 1.0:
+        return degradation_cost, degradation_cost, tier1_capacity_kwh, tier2_capacity_kwh
+
+    tier1_rate = (degradation_cost * max_cycles_per_day) / (1.0 + tier2_multiplier * (max_cycles_per_day - 1.0))
+    tier2_rate = tier2_multiplier * tier1_rate
+    return tier1_rate, tier2_rate, tier1_capacity_kwh, tier2_capacity_kwh
 
 def optimize_battery_schedule(
     prices: List[float],
@@ -72,15 +121,28 @@ def optimize_battery_schedule(
     # Adjust cycle limit based on horizon T (e.g. 1.5 cycles per 24 hours)
     cycle_limit = max_cycles_per_day * battery_capacity * (T / 24.0)
     prob += total_discharge <= cycle_limit, "Cycle_Limit"
-    
+
     # Final SoC constraint: battery should end the day discharged completely to min_soc
     prob += soc[T-1] == min_soc * battery_capacity, "Final_SoC_Balance"
-    
+
+    # Кусочно-лінійна вартість деградації (tiered_degradation_rates вище) —
+    # перший еквівалентний цикл доби дешевший за другий+. Дві допоміжні
+    # неперервні змінні замість плоскої суми: LP у задачі максимізації сам
+    # заповнить дешевший tier1 раніше tier2 (стандартний трюк опуклої вартості
+    # у транспортних задачах — коректно без додаткових бінарних змінних, доки
+    # tier1_rate <= tier2_rate).
+    tier1_rate, tier2_rate, tier1_cap, tier2_cap = tiered_degradation_rates(
+        degradation_cost, battery_capacity, max_cycles_per_day, horizon_hours=T,
+    )
+    discharge_tier1 = pulp.LpVariable("Discharge_Tier1", lowBound=0, upBound=tier1_cap)
+    discharge_tier2 = pulp.LpVariable("Discharge_Tier2", lowBound=0, upBound=tier2_cap)
+    prob += discharge_tier1 + discharge_tier2 == total_discharge, "Degradation_Tier_Split"
+
     # 4. Objective Function: Maximize net financial benefit
     revenue = pulp.lpSum([p_sell[t] * y[t] for t in range(T)])
     cost_charging = pulp.lpSum([p_buy[t] * x[t] for t in range(T)])
-    cost_degradation = pulp.lpSum([degradation_cost * y[t] for t in range(T)])
-    
+    cost_degradation = tier1_rate * discharge_tier1 + tier2_rate * discharge_tier2
+
     prob += revenue - cost_charging - cost_degradation
     
     # 5. Solve the LP problem
@@ -89,15 +151,24 @@ def optimize_battery_schedule(
     charge_schedule = [x[t].varValue if x[t].varValue is not None else 0.0 for t in range(T)]
     discharge_schedule = [y[t].varValue if y[t].varValue is not None else 0.0 for t in range(T)]
     soc_schedule = [soc[t].varValue if soc[t].varValue is not None else init_soc_kwh for t in range(T)]
-    
+
+    tier1_used = discharge_tier1.varValue if discharge_tier1.varValue is not None else 0.0
+    tier2_used = discharge_tier2.varValue if discharge_tier2.varValue is not None else 0.0
+    total_degradation = tier1_rate * tier1_used + tier2_rate * tier2_used
+    total_discharge_kwh = sum(discharge_schedule)
+    # Blended середня ставка — лише для почасового відображення P&L: справжня
+    # опукла вартість оцінюється один раз за сукупним денним розрядом, а не
+    # погодинно, тому будь-який розподіл по годинах — умовний.
+    blended_deg_rate = (total_degradation / total_discharge_kwh) if total_discharge_kwh > 1e-9 else tier1_rate
+
     hourly_p_l = []
     schedule_details = []
     for t in range(T):
         ch = charge_schedule[t]
         dis = discharge_schedule[t]
-        
+
         # Calculate hourly P&L in UAH
-        p_l = p_sell[t] * dis - p_buy[t] * ch - degradation_cost * dis
+        p_l = p_sell[t] * dis - p_buy[t] * ch - blended_deg_rate * dis
         hourly_p_l.append(p_l)
         
         action = "STANDBY"
@@ -120,8 +191,7 @@ def optimize_battery_schedule(
     
     total_cost_charging = sum(p_buy[t] * charge_schedule[t] for t in range(T))
     total_revenue_discharging = sum(p_sell[t] * discharge_schedule[t] for t in range(T))
-    total_degradation = sum(degradation_cost * discharge_schedule[t] for t in range(T))
-    
+
     return {
         'status': pulp.LpStatus[status],
         'charge': charge_schedule,
@@ -133,6 +203,10 @@ def optimize_battery_schedule(
         'revenue_discharging_uah': float(total_revenue_discharging),
         'degradation_cost_uah': float(total_degradation),
         'cycles_used': float(actual_cycles),
+        'degradation_tier1_kwh': float(tier1_used),
+        'degradation_tier2_kwh': float(tier2_used),
+        'degradation_tier1_rate_uah_kwh': float(tier1_rate),
+        'degradation_tier2_rate_uah_kwh': float(tier2_rate),
         'hourly_buy_prices_mwh': [float(p) * 1000.0 for p in p_buy],
         'hourly_sell_prices_mwh': [float(p) * 1000.0 for p in p_sell],
         'hourly_buy_prices': [float(p) * 1000.0 for p in p_buy],
@@ -240,6 +314,8 @@ def evaluate_schedule_profit(
     dispatch_tariff: float = 104.57,
     supplier_margin: float = 100.0,
     mode: str = 'arbitrage',
+    battery_capacity: float = None,
+    max_cycles_per_day: float = None,
 ) -> float:
     """
     Рахує грошовий P&L (грн) для ВЖЕ ВІДОМОГО графіка заряду/розряду
@@ -248,14 +324,41 @@ def evaluate_schedule_profit(
     усередині `optimize_battery_schedule`, винесена окремо, щоб порівнювати
     "що реально відбулось" із "що дав би MILP" на однакових цінах (perfect
     foresight capture ratio, forecast_accuracy.py) без дублювання формули.
+
+    `battery_capacity`/`max_cycles_per_day` — ОПЦІОНАЛЬНІ. Якщо не передані
+    (за замовчуванням, як і раніше) — деградація плоска, `degradation_cost`
+    за кожен kWh, без змін для існуючих викликів (напр. `bidding_service.py`,
+    де оцінюється ОДНА ставка/година без контексту решти доби — тіерна
+    формула там не має сенсу). Якщо передані — застосовується та сама
+    кусочно-лінійна `tiered_degradation_rates`, що й у `optimize_battery_schedule`,
+    обов'язково для порівняння actual vs perfect_foresight на однакових умовах
+    (forecast_accuracy.py) — інакше дві сторони porівняння розійдуться.
     """
     total_tariffs_kwh = (transmission_tariff + distribution_tariff + dispatch_tariff + supplier_margin) / 1000.0
+
+    if battery_capacity is not None and max_cycles_per_day is not None:
+        tier1_rate, tier2_rate, tier1_cap, tier2_cap = tiered_degradation_rates(
+            degradation_cost, battery_capacity, max_cycles_per_day, horizon_hours=len(prices),
+        )
+        total_discharge = sum(discharge_kw)
+        tier1_used = min(total_discharge, tier1_cap)
+        remaining = max(0.0, total_discharge - tier1_cap)
+        # tier2_used може перевищити tier2_cap, якщо реальний диспетчинг
+        # відхилився від плану (факт може не збігатись з тим, що дозволяв
+        # MILP) — надлишок все одно тарифікується за tier2_rate, а не
+        # безкоштовно, це консервативно чесно.
+        tier2_used = remaining
+        total_degradation = tier1_rate * tier1_used + tier2_rate * tier2_used
+        blended_rate = (total_degradation / total_discharge) if total_discharge > 1e-9 else tier1_rate
+    else:
+        blended_rate = degradation_cost
+
     profit = 0.0
     for t in range(len(prices)):
         dam_kwh = prices[t] / 1000.0
         p_buy = dam_kwh + total_tariffs_kwh
         p_sell = dam_kwh if mode == 'arbitrage' else dam_kwh + total_tariffs_kwh
-        profit += p_sell * discharge_kw[t] - p_buy * charge_kw[t] - degradation_cost * discharge_kw[t]
+        profit += p_sell * discharge_kw[t] - p_buy * charge_kw[t] - blended_rate * discharge_kw[t]
     return float(profit)
 
 
