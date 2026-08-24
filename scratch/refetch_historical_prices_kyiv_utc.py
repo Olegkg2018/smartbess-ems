@@ -24,18 +24,25 @@ sys.path.insert(0, '.')
 import src.modules.market_data_service.data_manager as dm
 
 
-def months_in_cache(subdir, prefix):
-    d = os.path.join(dm.DATA_DIR, subdir)
+def all_months_since(start_year, start_month):
+    """Явний діапазон 2021-01..поточний місяць — НЕ покладаємось на те, які
+    файли вже закешовані (на VPS кеш виявився розрідженим, лише останні
+    кілька місяців, на відміну від локального dev — historical_data_merged.csv
+    там колись насіявся інакше, без повного помісячного кешу)."""
+    now = __import__('datetime').datetime.now()
     out = []
-    for f in sorted(os.listdir(d)):
-        if f.startswith(prefix) and f.endswith('.csv'):
-            parts = f[len(prefix):-4].split('_')
-            out.append((int(parts[0]), int(parts[1])))
+    y, m = start_year, start_month
+    while (y, m) <= (now.year, now.month):
+        out.append((y, m))
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
     return out
 
 
 def refetch_all(subdir, prefix, market, value_col):
-    months = months_in_cache(subdir, prefix)
+    months = all_months_since(2021, 1)
     now = __import__('datetime').datetime.now()
     ok, failed = [], []
     for year, month in months:
