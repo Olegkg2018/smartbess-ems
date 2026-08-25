@@ -391,6 +391,21 @@ def _predict_ensemble_members(members, df_slice, features):
         'mlp': mlp.predict(scaler.transform(df_slice[features])),
     }
 
+def _predict_ensemble_members_from_matrix(members, X_test):
+    """Як _predict_ensemble_members, але для вже побудованої as-of матриці
+    X_test (build_forecast_feature_matrix), а не сирого df_slice[features] —
+    потрібно для честного (as-of-уніфікованого) ансамблевого бектеста
+    (2026-08-24, план ensemble-модель прогнозу): df_slice[features] бере
+    лаги IDM/ENTSO-E напряму з build_training_table без симуляції затримки
+    публікації відносно as_of, тоді як X_test цю затримку чесно враховує —
+    той самий шлях, яким реально рахується прод (predict_next_day)."""
+    lgbm, xgb, mlp, scaler = members
+    return {
+        'lightgbm': lgbm.predict(X_test),
+        'xgboost': xgb.predict(X_test),
+        'mlp': mlp.predict(scaler.transform(X_test)),
+    }
+
 def _compute_inverse_error_weights(df_train, features, val_days=14):
     """
     Ваги ансамблю = обернена помилка (1/MAE) кожної моделі, порахована на
@@ -453,7 +468,8 @@ def _weather_slice_archived_forecast(day, day_end):
 
 def walk_forward_backtest(test_days=90, retrain_every_days=7, model_type='lightgbm',
                            weather_mode='archived_actual_approx', acknowledge_approximation=False,
-                           use_surplus_classifier=False, extra_features=None, idm_lag_hours=24):
+                           use_surplus_classifier=False, extra_features=None, idm_lag_hours=24,
+                           record_hourly=False):
     """
     Чесна оцінка точності день-наперед прогнозу: розширюване вікно навчання,
     прогноз на наступну добу (24г), крок вперед. Модель перенавчається раз на
@@ -550,7 +566,14 @@ def walk_forward_backtest(test_days=90, retrain_every_days=7, model_type='lightg
     # As-of-уніфікація (виклик того самого build_forecast_feature_matrix, що
     # й прод) застосовна лише для конфігурації, яка реально відповідає
     # проду — інші режими не мають прод-еквіваленту, з яким їх зіставляти.
-    asof_eligible = (model_type == 'lightgbm' and not use_surplus_classifier and not extra_features)
+    # Ансамбль (2026-08-24) ТЕЖ as-of-eligible — до цього фіксу він йшов
+    # окремим шляхом (сирий df_test[features], без симуляції затримки
+    # публікації IDM/ENTSO-E і без clip_and_shift) — нечесне порівняння з
+    # тим, як реально рахується прод. Див. план "ensemble-модель прогнозу".
+    asof_eligible = (
+        (model_type == 'lightgbm' or is_ensemble)
+        and not use_surplus_classifier and not extra_features
+    )
 
     if len(df) < 24 * (test_days + 30):
         test_days = max(7, len(df) // 24 - 30)
@@ -582,24 +605,28 @@ def walk_forward_backtest(test_days=90, retrain_every_days=7, model_type='lightg
             day += pd.Timedelta(days=1)
             continue
 
-        if is_ensemble:
-            if ensemble_members is None or days_since_retrain >= retrain_every_days:
-                ensemble_members = _train_ensemble_members(df_train, features)
-                ensemble_weights = (
-                    _compute_inverse_error_weights(df_train, features)
-                    if model_type == 'ensemble_weighted'
-                    else {'lightgbm': 1 / 3, 'xgboost': 1 / 3, 'mlp': 1 / 3}
-                )
-                days_since_retrain = 0
-
-            member_preds = _predict_ensemble_members(ensemble_members, df_test, features)
-            y_pred = sum(ensemble_weights[k] * member_preds[k] for k in member_preds)
-            y_true = df_test['Price'].values
-        elif asof_eligible:
-            if model is None or days_since_retrain >= retrain_every_days:
-                model = build_model()
-                model.fit(df_train[features], df_train['Price'])
-                days_since_retrain = 0
+        if asof_eligible:
+            # Ансамбль і соло-lightgbm тепер діляться ОДНИМ шляхом побудови
+            # фіч (build_forecast_feature_matrix(..., as_of=day, ...) —
+            # той самий, яким реально рахує прод predict_next_day) і
+            # ОДНИМ clip_and_shift — раніше ансамбль мав окрему сиру гілку
+            # без жодного з двох (нечесне порівняння, план "ensemble-модель
+            # прогнозу", 2026-08-24). Різниця лишається лише в тому, ЯК
+            # тренується і як з X_test виходить сире передбачення.
+            if is_ensemble:
+                if ensemble_members is None or days_since_retrain >= retrain_every_days:
+                    ensemble_members = _train_ensemble_members(df_train, features)
+                    ensemble_weights = (
+                        _compute_inverse_error_weights(df_train, features)
+                        if model_type == 'ensemble_weighted'
+                        else {'lightgbm': 1 / 3, 'xgboost': 1 / 3, 'mlp': 1 / 3}
+                    )
+                    days_since_retrain = 0
+            else:
+                if model is None or days_since_retrain >= retrain_every_days:
+                    model = build_model()
+                    model.fit(df_train[features], df_train['Price'])
+                    days_since_retrain = 0
 
             if weather_mode == 'archived_forecast':
                 weather_for_day = _weather_slice_archived_forecast(day, day_end)
@@ -619,7 +646,11 @@ def walk_forward_backtest(test_days=90, retrain_every_days=7, model_type='lightg
                 day.strftime('%Y-%m-%d'), weather_for_day, last_prices_for_day, as_of=day,
                 idm_lag_hours=idm_lag_hours,
             )
-            y_pred_raw = model.predict(X_test)
+            if is_ensemble:
+                member_preds = _predict_ensemble_members_from_matrix(ensemble_members, X_test)
+                y_pred_raw = sum(ensemble_weights[k] * member_preds[k] for k in member_preds)
+            else:
+                y_pred_raw = model.predict(X_test)
             y_pred_all = clip_and_shift(y_pred_raw, shift_pct=0.0)
 
             day_actual = df_raw[(df_raw['Datetime'] >= day) & (df_raw['Datetime'] < day_end)].copy()
@@ -653,13 +684,20 @@ def walk_forward_backtest(test_days=90, retrain_every_days=7, model_type='lightg
         mape, wape = calculate_mape_wape(y_true, y_pred)
         mae = float(mean_absolute_error(y_true, y_pred))
 
-        daily_results.append({
+        day_entry = {
             'date': day.strftime('%Y-%m-%d'),
             'mape': mape,
             'wape': wape,
             'mae': mae,
             'n_hours': int(len(y_true)),
-        })
+        }
+        if record_hourly:
+            hours = common_hours if asof_eligible else df_test['Datetime'].dt.hour.tolist()
+            day_entry['hourly'] = [
+                {'hour': int(h), 'actual': float(a), 'forecast': float(p)}
+                for h, a, p in zip(hours, y_true, y_pred)
+            ]
+        daily_results.append(day_entry)
 
         days_since_retrain += 1
         day += pd.Timedelta(days=1)
