@@ -114,6 +114,25 @@ def run_optimization_background_job(
             **battery_params
         )
         
+        # CODE_REVIEW.md п.7-20 (MILP-статус солвера ігнорується, 2026-08-25):
+        # optimize_battery_schedule вже рахує pulp.LpStatus (напр. 'Infeasible',
+        # якщо реальний SoC із SCADA-телеметрії опинився поза min_soc/max_soc
+        # межами активу — не гіпотетичний випадок), але цей статус ніде не
+        # перевірявся — при провалі солвера LpVariable.varValue стає None,
+        # код мовчки підставляв 0.0 і писав ChargeDischargePlan з "нульовим"
+        # графіком, нерозрізнюваним від реального "сьогодні вигідніше STANDBY".
+        # raise тут ловиться вже існуючим except нижче (db.rollback +
+        # job["status"]="failed") — той самий шлях, яким і так проходять інші
+        # помилки цієї джоби; фронтенд (api/client.ts::pollJob) вже кидає
+        # Error(status.error) на "failed", AppContext вже показує це як
+        # addLog('API', ..., 'error') — нового UI-коду не потрібно.
+        base_status = scenarios_results['scenarios']['base']['status']
+        if base_status != 'Optimal':
+            raise RuntimeError(
+                f"MILP солвер не знайшов оптимальне рішення (status={base_status}) — "
+                f"план НЕ збережено. Перевірте вхідний SoC/ліміти активу/ціни на {target_date_str}."
+            )
+
         # Save optimal base schedule to database
         base_sched = scenarios_results['scenarios']['base']
         for t in range(24):
