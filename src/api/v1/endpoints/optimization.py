@@ -6,7 +6,7 @@ from typing import Optional, List
 
 from src.core.config import settings
 from src.database.session import SessionLocal
-from src.database.models import Asset, ChargeDischargePlan, PriceForecast, ManualOverride, InitialSocOverride, BessTelemetry
+from src.database.models import Asset, ChargeDischargePlan, PriceForecast, ForecastRun, ManualOverride, InitialSocOverride, BessTelemetry
 import src.modules.optimization_service.milp_model as opt
 from src.modules.scada_service.soc_state import get_current_soc_fraction, previous_day_calculated_fraction
 from src.core.redis import set_job_status, get_job_status
@@ -52,6 +52,17 @@ def run_optimization_background_job(
         )
 
         target_dt_start = kyiv_to_utc(target_date_str, 0)
+
+        # Lineage (CODE_REVIEW.md п.7-20): який ForecastRun реально стоїть за
+        # PriceForecast нижче — найновіший на цю target_date (persist_forecast_run
+        # пишеться в ТІЙ САМІЙ транзакції, що й поточний PriceForecast, тож
+        # найновіший ForecastRun.generated_at_utc відповідає тому, що зараз у
+        # PriceForecast). None, якщо прогнозу взагалі не було/він старший за
+        # 2026-08-21 (до появи ForecastRun) — чесно, не вигадуємо.
+        latest_run = db.query(ForecastRun).filter(
+            ForecastRun.target_date == target_dt_start
+        ).order_by(ForecastRun.generated_at_utc.desc()).first()
+        forecast_run_id = latest_run.id if latest_run else None
 
         # Load forecast prices from DB or generate mock if empty
         forecasts = db.query(PriceForecast).filter(
@@ -120,7 +131,8 @@ def run_optimization_background_job(
                 optimized_run_at=target_dt_start,
                 target_power_mw=sched_item['power_kw'] / 1000.0,
                 expected_soc_mwh=sched_item['soc_kwh'] / 1000.0,
-                expected_profit_uah=sched_item['hourly_p_l_uah']
+                expected_profit_uah=sched_item['hourly_p_l_uah'],
+                forecast_run_id=forecast_run_id,
             )
             db.add(plan_entry)
             
@@ -285,7 +297,8 @@ async def get_plans(asset_id: str, date: str):
                     "timestamp": p.timestamp.isoformat() + "Z",
                     "target_power_mw": p.target_power_mw,
                     "expected_soc_mwh": p.expected_soc_mwh,
-                    "expected_profit_uah": p.expected_profit_uah
+                    "expected_profit_uah": p.expected_profit_uah,
+                    "forecast_run_id": p.forecast_run_id,
                 }
                 for p in plans
             ]

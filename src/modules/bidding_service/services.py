@@ -107,6 +107,9 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
         row.forecast_price_uah = forecast_price
         row.margin_pct = margin_pct
         row.bid_price_uah = bid_price
+        # Lineage (CODE_REVIEW.md п.7-20) — той самий ForecastRun, що дав
+        # forecast_price вище (p — той самий ChargeDischargePlan рядок).
+        row.forecast_run_id = p.forecast_run_id
         # Нова заявка — попередній стан розрахунку (якщо доба вже колись
         # заселювалась) більше не дійсний, доки не прийде нова факт-ціна.
         row.actual_price_uah = None
@@ -318,6 +321,7 @@ def _bid_to_dict(b: MarketBid, soc_feasible=None) -> dict:
         'idm_fallback_profit_uah': b.idm_fallback_profit_uah,
         'bid_price_legally_clamped': price_clamped,
         'oree_bid_price_bounds_uah': {'min': OREE_BID_PRICE_MIN_UAH, 'max': OREE_BID_PRICE_MAX_UAH},
+        'forecast_run_id': b.forecast_run_id,
     }
 
 

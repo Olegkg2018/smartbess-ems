@@ -121,6 +121,11 @@ class ChargeDischargePlan(Base):
     target_power_mw = Column(Float, nullable=False) # Заданная мощность заряда(-) или разряда(+)
     expected_soc_mwh = Column(Float, nullable=False)
     expected_profit_uah = Column(Float, nullable=False)
+    # Lineage (CODE_REVIEW.md п.7-20, 2026-08-25): який саме ForecastRun дав
+    # ціни, на яких порахований цей план. Nullable — рядки до цієї зміни
+    # (і mock-price fallback, коли прогнозу взагалі нема) чесно не мають
+    # відповіді, не вигадуємо. Заповнюється в optimization.py.
+    forecast_run_id = Column(String(36), ForeignKey("forecast_runs.id", ondelete="SET NULL"), nullable=True)
 
 class ManualOverride(Base):
     __tablename__ = "manual_overrides"
@@ -257,6 +262,10 @@ class MarketBid(Base):
     forecast_price_uah = Column(Float, nullable=False)
     margin_pct = Column(Float, nullable=False)
     bid_price_uah = Column(Float, nullable=False)
+    # Lineage (CODE_REVIEW.md п.7-20, 2026-08-25) — той самий ForecastRun, що
+    # дав forecast_price_uah (скопійовано з ChargeDischargePlan.forecast_run_id
+    # у generate_bids_for_date). Nullable з тих самих причин, що й у плані.
+    forecast_run_id = Column(String(36), ForeignKey("forecast_runs.id", ondelete="SET NULL"), nullable=True)
     actual_price_uah = Column(Float, nullable=True)
     executed = Column(Boolean, nullable=True)
     realized_profit_uah = Column(Float, nullable=True)
