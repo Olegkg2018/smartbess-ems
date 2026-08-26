@@ -78,6 +78,19 @@ FEATURE_SOURCE_COLUMNS = [
     'Temperature', 'Cloud_Cover', 'Wind_Speed', 'Shortwave_Radiation',
     'Solar_Gen', 'Wind_Gen', 'IDM_Price', 'DAM_IDM_Spread',
     'Grid_Net_Export_MW', 'EU_DAM_Price_EUR_MWh',
+    # 2026-08-26: реальні дані НЕК "Укренерго" (energy-map.info, вручну
+    # завантажені користувачем) — кандидати для Фази C-style бектесту, ще
+    # НЕ в FEATURES. Imbalance_Price_UAH — реальна погодинна ціна
+    # небалансу (01.10.2019-28.02.2026, головна континентальна зона).
+    # Grid_Outage_Official_Active — офіційний бінарний прапорець ГПВ
+    # (01.01.2023-31.03.2026, 21.3% годин активні) — та сама ідея, що вже
+    # реалізований Strike_Oblasts_Affected (Telegram-парсинг Укренерго,
+    # лише ~2 місяці історії), але з офіційного джерела й на 3+ роки
+    # глибше — кандидат ЗАМІНИТИ або доповнити той сигнал, якщо бектест
+    # покаже реальну користь. Обидва датасети НЕ живі (кінець покриття
+    # значно відстає від "сьогодні") — придатні для бектесту, не для
+    # прод-інференсу без окремого рішення про регулярне довантаження.
+    'Imbalance_Price_UAH', 'Grid_Outage_Official_Active',
 ]
 
 # Тільки реальні джерела (oree.com.ua, Open-Meteo) + фізично обґрунтовані
@@ -241,6 +254,17 @@ def build_training_table(df_raw, idm_lag_hours=24):
 
     df['EU_DAM_Price_Lag_24'] = df['EU_DAM_Price_EUR_MWh'].shift(24)
     df['EU_DAM_Price_Mean_24h'] = df['EU_DAM_Price_EUR_MWh'].shift(24).rolling(window=24).mean()
+
+    # 2026-08-26: кандидати НЕК "Укренерго" (див. FEATURE_SOURCE_COLUMNS
+    # вище) — лаговано на 24г з тієї ж причини, що й IDM/ENTSO-E: обидва
+    # датасети публікуються з реальною затримкою (архівні експорти, не
+    # живий фід), "сьогоднішнє" значення на момент прогнозу не відоме.
+    # Mean_24h для Grid_Outage_Official_Active — частка минулої доби під
+    # відключеннями (0.0-1.0), інформативніша за сирий бінарний лаг однієї
+    # години.
+    df['Imbalance_Price_Lag_24'] = df['Imbalance_Price_UAH'].shift(24)
+    df['Imbalance_Price_Mean_24h'] = df['Imbalance_Price_UAH'].shift(24).rolling(window=24).mean()
+    df['Grid_Outage_Official_Mean_24h'] = df['Grid_Outage_Official_Active'].shift(24).rolling(window=24).mean()
 
     df = df.dropna(subset=FEATURES + ['Price']).reset_index(drop=True)
     return df
