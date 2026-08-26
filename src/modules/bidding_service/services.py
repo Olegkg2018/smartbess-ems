@@ -49,13 +49,17 @@ def get_margin_pct(db, asset_id: str, target_date: datetime.datetime) -> float:
     return override.margin_pct if override else DEFAULT_MARGIN_PCT
 
 
-def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct: float = None) -> dict:
+def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct: float = None, force_full_day: bool = False) -> dict:
     """
     Будує заявки РДН на target_date з уже порахованого MILP-графіка
     (ChargeDischargePlan) + прогнозної ціни (PriceForecast) на ту саму добу,
     зсунутих на margin_pct (bid_margin_overrides, якщо збережено дispatcher'ом,
     інакше DEFAULT_MARGIN_PCT). Не запускає прогноз/оптимізацію заново —
     вимагає, щоб вони вже були пораховані (як і /optimization/plans).
+
+    force_full_day=True — свідомий вихід із заморозки минулих годин (як і
+    в run_optimization_background_job) — перезаписує заявки на ВСІ 24
+    години, включно з уже минулими. За замовчуванням False.
     """
     if margin_pct is None:
         margin_pct = get_margin_pct(db, asset.id, target_date)
@@ -89,7 +93,7 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
 
     bids = []
     for p in plans:
-        if p.timestamp <= now_utc:
+        if not force_full_day and p.timestamp <= now_utc:
             continue
         hour = utc_to_kyiv(p.timestamp).hour
         forecast_price = forecast_by_hour.get(hour)

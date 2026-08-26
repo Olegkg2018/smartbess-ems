@@ -25,6 +25,13 @@ class RunOptimizationRequest(BaseModel):
     initial_soc_pct: Optional[float] = None
     mode: Optional[str] = "arbitrage"
     simulations_count: Optional[int] = 50
+    # 2026-08-26: явний, свідомий вихід із заморозки минулих годин (див.
+    # коментар нижче) — для випадку, коли диспетчер хоче ПОВНІСТЮ
+    # перезапустити день "як новий" (напр. попередні розрахунки на цю дату
+    # були зроблені тестово/помилково і не відображають жодної реальної
+    # диспетчеризації, яку варто зберігати як факт). За замовчуванням
+    # False — звичайний виклик НЕ чіпає минуле.
+    force_full_day: Optional[bool] = False
 
 def run_optimization_background_job(
     job_id: str,
@@ -32,7 +39,8 @@ def run_optimization_background_job(
     target_date_str: str,
     initial_soc_pct: Optional[float],
     mode_str: str,
-    simulations_count: int
+    simulations_count: int,
+    force_full_day: bool = False,
 ):
     job = get_job_status(job_id) or {}
     job["status"] = "running"
@@ -79,15 +87,18 @@ def run_optimization_background_job(
         # джоба рахує ЗАВТРАШНІЙ день) усі 24 години в майбутньому, start_t=0
         # — поведінка НЕ змінюється.
         now_utc = datetime.datetime.utcnow()
-        start_t = 24
-        for t in range(24):
-            if kyiv_to_utc(target_date_str, t) > now_utc:
-                start_t = t
-                break
-        if start_t == 24:
-            raise RuntimeError(
-                f"Усі 24 години {target_date_str} вже минули — перерахунок на цю дату більше не має сенсу."
-            )
+        if force_full_day:
+            start_t = 0
+        else:
+            start_t = 24
+            for t in range(24):
+                if kyiv_to_utc(target_date_str, t) > now_utc:
+                    start_t = t
+                    break
+            if start_t == 24:
+                raise RuntimeError(
+                    f"Усі 24 години {target_date_str} вже минули — перерахунок на цю дату більше не має сенсу."
+                )
         horizon = 24 - start_t
 
         # Lineage (CODE_REVIEW.md п.7-20): який ForecastRun реально стоїть за
@@ -246,7 +257,8 @@ async def run_optimization(req: RunOptimizationRequest, background_tasks: Backgr
         req.target_date,
         req.initial_soc_pct,
         req.mode,
-        req.simulations_count
+        req.simulations_count,
+        req.force_full_day or False,
     )
     
     return {

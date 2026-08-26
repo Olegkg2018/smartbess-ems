@@ -26,6 +26,9 @@ class GenerateBidsRequest(BaseModel):
     asset_id: str
     date: str
     margin_pct: Optional[float] = None
+    # 2026-08-26: свідомий вихід із заморозки минулих годин — див.
+    # RunOptimizationRequest.force_full_day (optimization.py).
+    force_full_day: Optional[bool] = False
 
 
 class SettleBidsRequest(BaseModel):
@@ -140,7 +143,7 @@ async def generate_bids(req: GenerateBidsRequest):
         if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
         target_dt = kyiv_to_utc(req.date, 0)
-        result = generate_bids_for_date(db, asset, target_dt, margin_pct=req.margin_pct)
+        result = generate_bids_for_date(db, asset, target_dt, margin_pct=req.margin_pct, force_full_day=req.force_full_day or False)
         if result['status'] != 'ok':
             raise HTTPException(status_code=400, detail=result['message'])
         return result
