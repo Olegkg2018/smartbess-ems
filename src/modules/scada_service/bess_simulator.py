@@ -7,7 +7,7 @@ from pymodbus.simulator import SimData, SimDevice, DataType
 import asyncio
 
 from src.database.session import SessionLocal
-from src.database.models import Asset
+from src.database.models import Asset, BessTelemetry
 
 # Фолбек-значення лише якщо в БД ще немає жодного Asset (холодний старт до
 # сідування в app.py lifespan) — у проді відразу перезаписується реальними
@@ -33,6 +33,29 @@ def _load_asset_limits():
             MAX_POWER_KW = asset.power_mw * 1000.0
             MIN_SOC_FRACTION = asset.min_soc_pct / 100.0
             MAX_SOC_FRACTION = asset.max_soc_pct / 100.0
+    finally:
+        db.close()
+
+
+def _load_last_telemetry():
+    """Останній реальний запис BessTelemetry (записується scada_service.py
+    щоразу після успішного опитування) — точка відновлення для симулятора
+    після перезапуску процесу (2026-08-26, знайдено користувачем: рестарт
+    контейнера — напр. під час деплою — скидав SoC на захардкоджені 20%,
+    хоча реальна батарея фізично НЕ втрачає заряд/знос через перезапуск
+    керуючого софту). None, якщо телеметрії ще жодного разу не було
+    (справжній холодний старт — тоді і лишається дефолт 20%/100%)."""
+    db = SessionLocal()
+    try:
+        asset = db.query(Asset).first()
+        if not asset:
+            return None
+        return (
+            db.query(BessTelemetry)
+            .filter(BessTelemetry.asset_id == asset.id)
+            .order_by(BessTelemetry.timestamp.desc())
+            .first()
+        )
     finally:
         db.close()
 
@@ -70,9 +93,16 @@ async def _device_action(function_code, start_address, address, count, current_r
 def run_physical_simulation():
     print("SCADA: Starting battery physical simulation thread...")
     _load_asset_limits()
-    soc_kwh = CAPACITY_KWH * 0.20  # старт на 20% реальної ємності Asset
-    soh = 100.0      # 100%
-    temp = AMBIENT_TEMP
+    last_tel = _load_last_telemetry()
+    if last_tel is not None:
+        soc_kwh = max(0.0, min(CAPACITY_KWH, last_tel.current_soc_mwh * 1000.0))
+        soh = last_tel.soh_pct if last_tel.soh_pct is not None else 100.0
+        temp = last_tel.battery_temp_c if last_tel.battery_temp_c is not None else AMBIENT_TEMP
+        print(f"SCADA: Resuming simulated battery from last known telemetry — SoC={soc_kwh:.1f} kWh, SoH={soh:.2f}%, temp={temp:.1f}°C (real battery does not reset on a software restart).")
+    else:
+        soc_kwh = CAPACITY_KWH * 0.20  # справжній холодний старт — телеметрії ще не було
+        soh = 100.0
+        temp = AMBIENT_TEMP
     dt = 1.0 / 3600.0
 
     while True:
