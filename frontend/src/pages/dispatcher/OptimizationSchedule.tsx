@@ -40,7 +40,7 @@ export default function OptimizationSchedule() {
   // Фолбек лише одразу після "Розрахувати", поки manualOverrides (і
   // похідний dispatchProfile) ще не підвантажились для нової дати.
   const chartProfile = baseSchedule.length === 24
-    ? baseSchedule.map((s: any) => ({ hour: `${s.hour + 1}`, charge: s.power_kw < 0 ? -s.power_kw : 0, discharge: s.power_kw > 0 ? s.power_kw : 0, soc: s.soc_kwh, price: s.price_forecast_uah_mwh }))
+    ? baseSchedule.map((s: any) => ({ hour: `${s.hour}`, charge: s.power_kw < 0 ? -s.power_kw : 0, discharge: s.power_kw > 0 ? s.power_kw : 0, soc: s.soc_kwh, price: s.price_forecast_uah_mwh }))
     : [];
 
   const hasProfile = dispatchProfile.length === 24;

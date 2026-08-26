@@ -77,8 +77,20 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
     if len(forecast_by_hour) != 24:
         return {'status': 'no_forecast', 'message': f'Немає повного прогнозу цін на {target_date.date()} (є {len(forecast_by_hour)}/24 годин).'}
 
+    # 2026-08-26: не переписуємо заявку на вже минулу годину повторним
+    # запуском (той самий принцип, що й ChargeDischargePlan у
+    # run_optimization_background_job — знайдено тим самим інцидентом:
+    # диспетчер кілька разів натиснув "Розрахувати" за ранок, і кожен
+    # раз стирав уже подану/звірену заявку на години, що вже минули,
+    # включно з фактом подачі (external_order_id) і звірки (executed/
+    # actual_price_uah) — реальна історія зникала без сліду). Майбутні
+    # години, як і раніше, перераховуються завжди.
+    now_utc = datetime.datetime.utcnow()
+
     bids = []
     for p in plans:
+        if p.timestamp <= now_utc:
+            continue
         hour = utc_to_kyiv(p.timestamp).hour
         forecast_price = forecast_by_hour.get(hour)
         if forecast_price is None:

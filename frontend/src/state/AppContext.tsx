@@ -488,7 +488,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
 
       return {
-        hour: o.hour + 1,
+        // 2026-08-26: раніше було `o.hour + 1` — графік підписував години на
+        // 1 пізніше за реальні (диспетчер порівнював заявку на годину 19 з
+        // барами на графіку, підписаними "20") — той самий реальний
+        // Kyiv-hour, що й у таблиці заявок (`b.hour`), без зсуву.
+        hour: o.hour,
         charge: chargeKW,
         discharge: dischargeKW,
         soc: runningSoc,

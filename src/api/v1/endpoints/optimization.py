@@ -134,16 +134,42 @@ def run_optimization_background_job(
                 f"план НЕ збережено. Перевірте вхідний SoC/ліміти активу/ціни на {target_date_str}."
             )
 
-        # Save optimal base schedule to database
+        # Save optimal base schedule to database.
+        #
+        # 2026-08-26: MILP рахує РІВНО 24 години доби target_date, як завжди —
+        # незалежно від того, коли реально запущено розрахунок. Якщо диспетчер
+        # тисне "Розрахувати" ПОСЕРЕДИНІ дня (на target_date == сьогодні), не
+        # можна мовчки ПЕРЕПИСУВАТИ години, що вже РЕАЛЬНО минули — MILP видає
+        # для них ідеальний "заднім числом" графік (наче доба щойно почалась),
+        # який фізично ніколи не виконувався (SCADA не могла подати команду на
+        # вже минулу годину). Раніше цей запис безумовно стирав і минулі, і
+        # майбутні години на кожен перерахунок — знайдено користувачем: після
+        # кількох ручних перерахунків за один ранок графік показував заряд на
+        # 23:00-01:00 (вже минулу ніч), а реальна SCADA-телеметрія весь цей
+        # час стояла на 0 кВт/незмінному SoC, бо в момент, коли ті години були
+        # ще майбутніми, цього плану просто не існувало. Тепер: години, чий
+        # реальний UTC-момент вже <= "зараз", НЕ переписуємо — лишаємо те, що
+        # там вже є (факт попереднього запуску, або взагалі нічого, якщо
+        # це перший розрахунок на сьогодні вже посеред дня — чесно, не
+        # вигадуємо заднім числом). Тільки МАЙБУТНІ від "зараз" години
+        # оновлюються нашим новим рішенням. Для звичайного випадку (щоденна
+        # 06:00-джоба рахує ЗАВТРАШНІЙ день) усі 24 години завжди в
+        # майбутньому — поведінка НЕ змінюється.
+        now_utc = datetime.datetime.utcnow()
         base_sched = scenarios_results['scenarios']['base']
+        n_skipped_past = 0
         for t in range(24):
             forecast_time = kyiv_to_utc(target_date_str, t)
+            if forecast_time <= now_utc:
+                n_skipped_past += 1
+                continue
+
             db.query(ChargeDischargePlan).filter(
                 ChargeDischargePlan.timestamp == forecast_time,
                 ChargeDischargePlan.asset_id == asset.id,
                 ChargeDischargePlan.optimized_run_at == target_dt_start
             ).delete()
-            
+
             sched_item = base_sched['schedule'][t]
             plan_entry = ChargeDischargePlan(
                 timestamp=forecast_time,
@@ -155,8 +181,9 @@ def run_optimization_background_job(
                 forecast_run_id=forecast_run_id,
             )
             db.add(plan_entry)
-            
+
         db.commit()
+        scenarios_results['n_past_hours_frozen'] = n_skipped_past
         
         job["status"] = "completed"
         job["progress"] = 100
