@@ -1,9 +1,11 @@
 """
 Реальна механіка подачі заявок на РДН (аукціон єдиної ціни) — див.
 докстрінг MarketBid у database/models.py для повного пояснення правил
-виконання. Сьогодні (2026-07-31) диспетчер РУЧНО вносить заявку в кабінет
-oree.com.ua на основі того, що показує цей модуль — автоматичного подання
-через API немає (майбутня робота, не зроблено).
+виконання. Диспетчер РУЧНО вносить заявку в кабінет oree.com.ua на основі
+того, що показує цей модуль — реального API OREE немає (MEMORY.md §8).
+`submit_bids_for_date` (2026-08-26, "віртуальний диспетчер") емулює цей
+крок через `oree_client.MockOreeClient`, щоб решта автоматизованого циклу
+(звірка, аудит) могла будуватись і тестуватись вже зараз.
 """
 import datetime
 import pandas as pd
@@ -11,6 +13,7 @@ import pandas as pd
 from src.database.models import ChargeDischargePlan, PriceForecast, MarketBid, BidMarginOverride, MarketBidSocFeasibility
 from src.modules.optimization_service.milp_model import evaluate_schedule_profit
 from src.modules.scada_service.soc_state import get_current_soc_fraction
+from src.modules.bidding_service.oree_client import get_oree_client
 import src.modules.forecast_service.ml_pipeline as mt
 from src.core.time_utils import kyiv_day_bounds, utc_to_kyiv
 
@@ -119,6 +122,11 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
         row.idm_fallback_price_uah = None
         row.idm_fallback_profit_uah = None
         row.settled_at = None
+        # Заявка перерахована — стара емульована подача (якщо була) більше
+        # не відповідає новим цифрам, submit_bids_for_date подасть заново.
+        row.external_order_id = None
+        row.oree_submission_status = None
+        row.submitted_at = None
         bids.append(row)
 
     db.commit()
@@ -130,6 +138,38 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
         'n_bids': len(bids),
         'n_price_clamped': sum(1 for d in bid_dicts if d['bid_price_legally_clamped']),
         'bids': bid_dicts,
+    }
+
+
+def submit_bids_for_date(db, asset, target_date: datetime.datetime) -> dict:
+    """
+    Емулює подачу вже згенерованих заявок (`generate_bids_for_date`) через
+    `oree_client.get_oree_client()` (MockOreeClient за замовчуванням — див.
+    докстрінг oree_client.py, немає реального API OREE). Ідемпотентно:
+    чіпає лише заявки з `external_order_id IS NULL` — вже подані повторно
+    не переподає.
+    """
+    day_start, day_end = kyiv_day_bounds(utc_to_kyiv(target_date).strftime('%Y-%m-%d'))
+    bids = db.query(MarketBid).filter(
+        MarketBid.asset_id == asset.id,
+        MarketBid.timestamp >= day_start, MarketBid.timestamp < day_end,
+        MarketBid.external_order_id.is_(None),
+    ).order_by(MarketBid.timestamp).all()
+    if not bids:
+        return {'status': 'nothing_to_submit', 'date': target_date.date().isoformat(), 'n_submitted': 0}
+
+    client = get_oree_client()
+    for b in bids:
+        result = client.submit_bid(b)
+        b.external_order_id = result['external_order_id']
+        b.oree_submission_status = result['status']
+        b.submitted_at = result['submitted_at']
+
+    db.commit()
+    return {
+        'status': 'ok',
+        'date': target_date.date().isoformat(),
+        'n_submitted': len(bids),
     }
 
 
@@ -322,6 +362,10 @@ def _bid_to_dict(b: MarketBid, soc_feasible=None) -> dict:
         'bid_price_legally_clamped': price_clamped,
         'oree_bid_price_bounds_uah': {'min': OREE_BID_PRICE_MIN_UAH, 'max': OREE_BID_PRICE_MAX_UAH},
         'forecast_run_id': b.forecast_run_id,
+        # Емуляція подачі (oree_client.py) — НЕ реальна подача на біржу.
+        'external_order_id': b.external_order_id,
+        'oree_submission_status': b.oree_submission_status,
+        'submitted_at': b.submitted_at.isoformat() + 'Z' if b.submitted_at else None,
     }
 
 

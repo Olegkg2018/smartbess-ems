@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from src.core.config import settings
 from src.database.session import SessionLocal
-from src.database.models import Asset, BessTelemetry, ChargeDischargePlan
+from src.database.models import Asset, BessTelemetry, ChargeDischargePlan, ManualOverride
 
 scada_thread = None
 stop_flag = False
@@ -76,13 +76,26 @@ def poll_bess_and_control():
             db.commit()
             
             current_hour = datetime.datetime.now().replace(minute=0, second=0, microsecond=0)
+
+            # Ручний оверрайд диспетчера (2026-08-26, "віртуальний диспетчер")
+            # — раніше цей контур брав команду ЛИШЕ з ChargeDischargePlan,
+            # ігноруючи ManualOverride (реальний, задокументований розрив,
+            # CLAUDE.md п.19). Той самий пріоритет "оверрайд > план", що вже
+            # перевірений в optimization.py::get_plans/manual-overrides.
+            override = db.query(ManualOverride).filter(
+                ManualOverride.asset_id == asset.id,
+                ManualOverride.timestamp == current_hour,
+            ).first()
             plan = db.query(ChargeDischargePlan).filter(
                 ChargeDischargePlan.asset_id == asset.id,
                 ChargeDischargePlan.timestamp == current_hour
             ).order_by(ChargeDischargePlan.optimized_run_at.desc()).first()
-            
+
             target_power_kw = 0
-            if plan:
+            if override:
+                target_power_kw = int(override.power_mw * 1000.0)
+                print(f"SCADA: Manual override for hour {current_hour.hour}:00. Action power command = {target_power_kw} kW.")
+            elif plan:
                 target_power_kw = int(plan.target_power_mw * 1000.0)
                 print(f"SCADA: Found optimization plan for hour {current_hour.hour}:00. Action power command = {target_power_kw} kW.")
             else:

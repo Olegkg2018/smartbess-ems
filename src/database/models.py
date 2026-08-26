@@ -274,6 +274,14 @@ class MarketBid(Base):
     idm_fallback_profit_uah = Column(Float, nullable=True)
     bid_generated_at = Column(DateTime, default=datetime.datetime.utcnow)
     settled_at = Column(DateTime, nullable=True)
+    # Емуляція подачі на біржу (2026-08-26, "віртуальний диспетчер") —
+    # реального API OREE немає (MEMORY.md §8), тому це завжди результат
+    # MockOreeClient (oree_client.py), НЕ справжня подача. Nullable —
+    # заявка може бути ще не "подана" емулятором, або (історичні рядки)
+    # створена до появи цього поля.
+    external_order_id = Column(String(64), nullable=True)
+    oree_submission_status = Column(String(20), nullable=True)
+    submitted_at = Column(DateTime, nullable=True)
 
 class MarketBidSocFeasibility(Base):
     """

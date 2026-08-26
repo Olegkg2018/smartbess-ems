@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     SCADA_SIMULATOR_ENABLED: bool = True
     BESS_MODBUS_HOST: str = "127.0.0.1"
     BESS_MODBUS_PORT: int = 5020
+    # "mock" (дефолт, єдиний реально готовий режим) — див.
+    # bidding_service/oree_client.py. "live" поки не реалізовано (немає
+    # публічного API OREE ні облікових даних, MEMORY.md §8).
+    OREE_CLIENT_MODE: str = "mock"
 
     class Config:
         env_file = ".env"

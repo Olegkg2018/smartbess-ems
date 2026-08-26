@@ -11,9 +11,10 @@ import src.modules.optimization_service.milp_model as opt
 from src.modules.reporting_service.forecast_accuracy import sync_market_prices_to_db, sync_today_market_prices_from_oree
 import src.modules.external_data_service.telegram_bot as telegram_bot
 from src.modules.scada_service.soc_state import get_current_soc_fraction
+from src.modules.bidding_service.services import generate_bids_for_date, submit_bids_for_date, settle_bids_for_date
 from src.database.session import SessionLocal
-from src.database.models import Asset, PriceForecast, ChargeDischargePlan
-from src.core.time_utils import kyiv_to_utc, utc_to_kyiv
+from src.database.models import Asset, PriceForecast, ChargeDischargePlan, MarketPrice
+from src.core.time_utils import kyiv_to_utc, utc_to_kyiv, kyiv_day_bounds
 
 def run_daily_forecast_and_optimization():
     print(f"[{datetime.datetime.now()}] Background Scheduler: Starting daily forecast and optimization job...")
@@ -161,6 +162,21 @@ def run_daily_forecast_and_optimization():
 
         db.commit()
         print(f"[{datetime.datetime.now()}] Background Scheduler: Successfully completed daily forecast and BESS optimization plan.")
+
+        # 7. Віртуальний диспетчер (2026-08-26) — генерація + емульована подача
+        # заявок одразу після плану, тим самим ланцюжком, а не окремою джобою
+        # (уникає ризику розсинхронізації розкладу). Обгорнуто в свій
+        # try/except — збій тут не повинен "стирати" вже успішно порахований
+        # і закомічений прогноз/план вище.
+        try:
+            bid_result = generate_bids_for_date(db, asset, target_dt_start)
+            print(f"Bid generation: {bid_result.get('status')}, n_bids={bid_result.get('n_bids')}")
+            if bid_result.get('status') == 'ok':
+                submit_result = submit_bids_for_date(db, asset, target_dt_start)
+                print(f"Bid submission (emulated): {submit_result.get('status')}, n_submitted={submit_result.get('n_submitted')}")
+        except Exception as bid_err:
+            db.rollback()
+            print(f"Warning: automated bid generation/submission failed: {bid_err}")
     except Exception as e:
         db.rollback()
         print(f"Error in background scheduler job: {e}")
@@ -216,9 +232,11 @@ def run_intraday_price_sync():
 def run_bid_reminder_check():
     """
     Читає ІСНУЮЧИЙ стан заявок (сьогодні/завтра) і шле Telegram-нагадування
-    диспетчеру зі списком конкретних дій — НІКОЛИ сама не генерує і не
-    звіряє заявки (це відкладена користувачем автоматизація), тільки читає
-    вже наявні MarketBid через build_daily_action_summary.
+    диспетчеру зі списком конкретних дій — сама нічого не генерує й не
+    звіряє (генерація/подача/звірка автоматизовані окремо — див.
+    run_daily_forecast_and_optimization п.7 і run_daily_bid_settlement,
+    "віртуальний диспетчер", 2026-08-26), тільки читає вже наявні
+    MarketBid через build_daily_action_summary.
     """
     print(f"[{datetime.datetime.now()}] Background Scheduler: Checking bid reminder...")
     try:
@@ -241,6 +259,57 @@ def run_drift_check():
         print(f"[{datetime.datetime.now()}] Drift check result: {result}")
     except Exception as e:
         print(f"Warning: drift check failed: {e}")
+
+def run_daily_bid_settlement():
+    """
+    "Віртуальний диспетчер" (2026-08-26) — звіряє ВЧОРАШНІ заявки з
+    реальною ціною РДН, той самий патерн побудови actual_prices_by_hour,
+    що вже є в bids.py::settle_bids (спершу MarketPrice з БД, якщо не всі
+    24 години — dm.fetch_oree_prices_for_month() як фолбек). Якщо й тоді
+    не 24/24 — ціна на вчора ще не опублікована повністю, чесно
+    пропускаємо, наступного дня спробуємо знову (як і nightly retrain —
+    не валимо процес).
+    """
+    print(f"[{datetime.datetime.now()}] Background Scheduler: Starting daily bid settlement job...")
+    db = SessionLocal()
+    try:
+        asset = db.query(Asset).first()
+        if not asset:
+            print("Warning: No BESS asset found in database. Skipping settlement.")
+            return
+
+        yesterday_kyiv = utc_to_kyiv(datetime.datetime.utcnow()).date() - datetime.timedelta(days=1)
+        yesterday_str = yesterday_kyiv.strftime('%Y-%m-%d')
+        target_dt = kyiv_to_utc(yesterday_str, 0)
+        day_start, day_end = kyiv_day_bounds(yesterday_str)
+
+        rows = db.query(MarketPrice).filter(
+            MarketPrice.timestamp >= day_start, MarketPrice.timestamp < day_end,
+        ).order_by(MarketPrice.timestamp).all()
+        actual_by_hour = {utc_to_kyiv(r.timestamp).hour: r.price_uah for r in rows}
+
+        if len(actual_by_hour) != 24:
+            df_month = dm.fetch_oree_prices_for_month(day_start.month, day_start.year)
+            df_month_next = dm.fetch_oree_prices_for_month(day_end.month, day_end.year)
+            if not df_month_next.empty:
+                df_month = pd.concat([df_month, df_month_next]).drop_duplicates(subset=['Datetime']) if not df_month.empty else df_month_next
+            if not df_month.empty:
+                df_month['Datetime'] = pd.to_datetime(df_month['Datetime'])
+                df_day = df_month[(df_month['Datetime'] >= day_start) & (df_month['Datetime'] < day_end)]
+                actual_by_hour = {utc_to_kyiv(dt.to_pydatetime()).hour: price for dt, price in zip(df_day['Datetime'], df_day['Price'])}
+
+        if len(actual_by_hour) != 24:
+            print(f"Bid settlement: real РДН price for {yesterday_str} not fully published yet ({len(actual_by_hour)}/24h) — skipping, will retry tomorrow.")
+            return
+
+        result = settle_bids_for_date(db, asset, target_dt, actual_by_hour)
+        print(f"[{datetime.datetime.now()}] Bid settlement for {yesterday_str}: {result.get('status')}, "
+              f"n_settled={result.get('n_settled')}, total_realized_profit_uah={result.get('total_realized_profit_uah')}")
+    except Exception as e:
+        db.rollback()
+        print(f"Error in bid settlement job: {e}")
+    finally:
+        db.close()
 
 scheduler = BackgroundScheduler()
 
@@ -279,6 +348,12 @@ def start_scheduler():
         # (звіт диспетчера 2026-08-23, CLAUDE.md п.24-25) — раніше це
         # чекало наступного 06:00 job.
         scheduler.add_job(run_intraday_price_sync, 'interval', minutes=30, id='intraday_price_sync')
+        # 05:30 — 30 хв запасу до ранкового 06:00 job, звіряє ВЧОРАШНІ заявки
+        # (той самий actual_prices_by_hour-патерн, що bids.py::settle_bids).
+        # "Віртуальний диспетчер" (2026-08-26): генерація+емульована подача
+        # заявок вже автоматизовані як п.7 у run_daily_forecast_and_optimization
+        # (та сама транзакційна послідовність, не окрема джоба).
+        scheduler.add_job(run_daily_bid_settlement, 'cron', hour=5, minute=30, id='daily_bid_settlement')
         scheduler.start()
         print("Background Scheduler started successfully.")
 
