@@ -139,10 +139,32 @@ def run_physical_simulation():
                 current_power = 0.0
                 state = 0
 
+            # 2026-08-26: знайдено користувачем — тепловий баланс раніше НЕ
+            # масштабувався на `dt` (на відміну від SoC/деградації вище) і
+            # коефіцієнт брав СИРІ кВт, а не частку від номінальної
+            # потужності активу — при 125-250 кВт (як у первинній
+            # перевірці п.40, 35 секунд спостереження) це виглядало
+            # правдоподібно, але для реального продового активу 1 МВт
+            # (VPS) давало приріст ~7.5°C НА СЕКУНДУ — за хвилину сталого
+            # заряду температура "вигадано" залітала за 300°C. Тепер:
+            # heating масштабовано часткою від номінальної потужності
+            # активу (`MAX_POWER_KW`, різна для кожного деплою — 250 кВт
+            # локально, 1 МВт на проді) так, щоб рівновага (heating=
+            # cooling) при 100% сталої потужності виходила на реалістичні
+            # +40°C над ambient, а не залежала від абсолютних кВт. Стала
+            # часу охолодження ~20 хв (K_COOLING=3.0/год) — досить швидко,
+            # щоб рух температури лишався видимим за кілька хвилин
+            # спостереження, досить повільно, щоб не зімітувати миттєвий
+            # перегрів.
+            EQUILIBRIUM_RISE_AT_FULL_POWER_C = 40.0
+            K_COOLING_PER_HOUR = 3.0
+            K_HEATING_PER_HOUR = K_COOLING_PER_HOUR * EQUILIBRIUM_RISE_AT_FULL_POWER_C
+            max_loss_kw = MAX_POWER_KW * (1.0 - EFFICIENCY)
             loss = abs(current_power) * (1.0 - EFFICIENCY)
-            heating_rate = loss * 0.15
-            cooling_rate = (temp - AMBIENT_TEMP) * 0.02
-            temp += (heating_rate - cooling_rate) * 1.0
+            loss_fraction = (loss / max_loss_kw) if max_loss_kw > 0 else 0.0
+            heating_rate = loss_fraction * K_HEATING_PER_HOUR
+            cooling_rate = (temp - AMBIENT_TEMP) * K_COOLING_PER_HOUR
+            temp += (heating_rate - cooling_rate) * dt
 
             if abs(current_power) > 0:
                 throughput = abs(current_power) * dt
