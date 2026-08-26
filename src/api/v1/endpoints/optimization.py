@@ -54,12 +54,6 @@ def run_optimization_background_job(
         if not asset:
             raise ValueError("No asset found in database")
 
-        resolved_initial_soc = (
-            initial_soc_pct / 100.0
-            if initial_soc_pct is not None
-            else get_current_soc_fraction(db, asset, target_date=target_date_str)
-        )
-
         target_dt_start = kyiv_to_utc(target_date_str, 0)
 
         # 2026-08-26: якщо target_date — СЬОГОДНІ (чи будь-яка дата, де частина
@@ -100,6 +94,17 @@ def run_optimization_background_job(
                     f"Усі 24 години {target_date_str} вже минули — перерахунок на цю дату більше не має сенсу."
                 )
         horizon = 24 - start_t
+
+        # `include_midnight_override=False` для частткового (start_t>0)
+        # перерахунку — InitialSocOverride означає "SoC на 00:00", не "SoC
+        # прямо зараз"; якщо все одно спрацює, солвер прийме застаріле
+        # опівнічне число за поточний стан замість живої телеметрії (див.
+        # докстрінг get_current_soc_fraction).
+        resolved_initial_soc = (
+            initial_soc_pct / 100.0
+            if initial_soc_pct is not None
+            else get_current_soc_fraction(db, asset, target_date=target_date_str, include_midnight_override=(start_t == 0))
+        )
 
         # Lineage (CODE_REVIEW.md п.7-20): який ForecastRun реально стоїть за
         # PriceForecast нижче — найновіший на цю target_date (persist_forecast_run

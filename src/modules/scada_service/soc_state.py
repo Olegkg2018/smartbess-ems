@@ -30,7 +30,7 @@ def previous_day_calculated_fraction(db: Session, asset: Asset, target_dt: datet
     return prev_last.expected_soc_mwh / asset.capacity_mwh
 
 
-def get_current_soc_fraction(db: Session, asset: Asset, target_date: Optional[str] = None) -> float:
+def get_current_soc_fraction(db: Session, asset: Asset, target_date: Optional[str] = None, include_midnight_override: bool = True) -> float:
     """
     SoC (частка ємності 0.0-1.0), що використовується як initial_soc для
     day-ahead оптимізації на target_date. Пріоритет джерел:
@@ -52,6 +52,15 @@ def get_current_soc_fraction(db: Session, asset: Asset, target_date: Optional[st
     попередня доба реально могла завершитись на іншому рівні (типово на
     min_soc, бо MILP форсує розряд до min_soc в кінці кожної доби) — звідси
     "розряд о 1:00", хоча батарея вже порожня з учора.
+
+    `include_midnight_override=False` (2026-08-26) — для ЧАСТКОВОГО
+    (mid-day, "від зараз") перерахунку `InitialSocOverride` пропускається:
+    він за своєю природою означає "SoC РІВНО на 00:00 цієї доби", а частковий
+    перерахунок рахує "SoC ПРЯМО ЗАРАЗ" (вже не опівночі) — якщо override
+    все одно спрацює, солвер прийме вже застаріле "опівнічне" число за
+    поточний стан, замість живої телеметрії, і знову розійдеться з реальністю
+    (той самий клас багу, що й повний перерахунок з опівночі посеред дня,
+    виправлений раніше того самого дня).
     """
     target_dt = None
     if target_date and asset.capacity_mwh > 0:
@@ -66,7 +75,7 @@ def get_current_soc_fraction(db: Session, asset: Asset, target_date: Optional[st
     min_frac = asset.min_soc_pct / 100.0
     max_frac = asset.max_soc_pct / 100.0
 
-    if target_dt is not None:
+    if target_dt is not None and include_midnight_override:
         override = (
             db.query(InitialSocOverride)
             .filter(InitialSocOverride.date == target_dt, InitialSocOverride.asset_id == asset.id)
