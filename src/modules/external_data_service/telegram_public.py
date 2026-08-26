@@ -122,6 +122,84 @@ def parse_energy_status(text: str) -> dict:
 
     return result
 
+
+# --- Блок "НАСЛІДКИ ОБСТРІЛІВ" (2026-08-26, docs/review_price_drivers_2026-08-25.md
+# п.4) — перевірене на 87 реальних кешованих постах (не вигадано): окремої
+# наперед-орієнтованої "прогноз на завтра" заяви в каналі Укренерго НЕ
+# знайдено (0 постів зі словом "завтра"), натомість 55/87 (63%) постів
+# містять цей блок з переліком НАЗВ областей ("у Дніпропетровській,
+# Донецькій... областях") — інший патерн, ніж _OBLASTS_RE вище (та матчить
+# лише "у {словом-числом} область", напр. "у восьми областях" з негодного
+# блоку СТАН ЕНЕРГОСИСТЕМИ, і не бачить списку назв).
+_STRIKE_HEADER_RE = re.compile(r"наслідки обстрілів", re.I)
+# Перша спроба — вузька фраза "на ранок є (нові) знеструмлен" — хибно
+# пропустила 5/55 реальних постів з інакше сформульованим, але так само
+# реальним впливом (напр. "найскладнішою на ранок є ситуація на Сумщині,
+# там найбільша кількість нових знеструмлених споживачів"). Усі 55/55
+# постів із заголовком блоку хоч раз згадують корінь "знеструмлен" десь
+# у межах блоку — тому виявлення спрощено до цього.
+_STRIKE_NEW_OUTAGES_RE = re.compile(r"знеструмлен", re.I)
+# Пост часто продовжується іншими блоками ПІСЛЯ обстрілів (СПОЖИВАННЯ,
+# НАСЛІДКИ НЕГОДИ — окрема, непов'язана причина знеструмлень) — реальний
+# знайдений випадок: блок обстрілів згадує 6 областей, а без цієї межі
+# лічильник додає ще 1 з "НАСЛІДКИ НЕГОДИ" нижче по тому самому посту,
+# змішуючи причини. Обрізаємо на найближчому наступному заголовку.
+_NEXT_SECTION_RE = re.compile(r"\n\s*(СПОЖИВАННЯ|НАСЛІДКИ НЕГОДИ|СТАН ЕНЕРГОСИСТЕМИ)\b")
+
+# Locative (місцевий відмінок) форми всіх 24 областей України — статичний
+# довідник, не змінюється. Підрахунок унікальних входжень стійкіший до
+# варіацій пунктуації/сполучників ("і"/","), ніж парсинг меж списку.
+_OBLAST_LOCATIVE_TO_NAME = {
+    "вінницькій": "Вінницька", "волинській": "Волинська",
+    "дніпропетровській": "Дніпропетровська", "донецькій": "Донецька",
+    "житомирській": "Житомирська", "закарпатській": "Закарпатська",
+    "запорізькій": "Запорізька", "івано-франківській": "Івано-Франківська",
+    "київській": "Київська", "кіровоградській": "Кіровоградська",
+    "луганській": "Луганська", "львівській": "Львівська",
+    "миколаївській": "Миколаївська", "одеській": "Одеська",
+    "полтавській": "Полтавська", "рівненській": "Рівненська",
+    "сумській": "Сумська", "тернопільській": "Тернопільська",
+    "харківській": "Харківська", "херсонській": "Херсонська",
+    "хмельницькій": "Хмельницька", "черкаській": "Черкаська",
+    "чернівецькій": "Чернівецька", "чернігівській": "Чернігівська",
+}
+_STRIKE_OBLAST_NAMES_RE = re.compile(
+    # Перелік у реальних постах — через кому/"і", лише ОСТАННЄ ім'я в
+    # списку стоїть безпосередньо перед "областях" (напр. "у Київській,
+    # Чернігівській, ... і Запорізькій областях") — тому кожна форма
+    # шукається як самостійне слово (межі слова), без вимоги "област" одразу
+    # після. Locative-форми достатньо унікальні, щоб не матчитись хибно.
+    r"\b(" + "|".join(_OBLAST_LOCATIVE_TO_NAME.keys()) + r")\b", re.I
+)
+
+
+def parse_strike_aftermath(text: str) -> dict:
+    """
+    Витягує сигнал з блоку "НАСЛІДКИ ОБСТРІЛІВ" — чесно повертає None для
+    обох полів, якщо в пості цього блоку взагалі немає (не 0 — відсутність
+    блоку не означає "ударів не було", просто пост іншого типу, напр. про
+    ремонтні роботи чи форум). Рахує лише текст ПІСЛЯ заголовка блоку, щоб
+    не зачепити перелік областей із сусіднього блоку СТАН ЕНЕРГОСИСТЕМИ.
+    """
+    result = {"strike_new_outages": None, "strike_oblasts_affected": None}
+
+    header = _STRIKE_HEADER_RE.search(text)
+    if not header:
+        return result
+
+    block_text = text[header.end():]
+    next_section = _NEXT_SECTION_RE.search(block_text)
+    if next_section:
+        block_text = block_text[:next_section.start()]
+
+    result["strike_new_outages"] = 1 if _STRIKE_NEW_OUTAGES_RE.search(block_text) else 0
+
+    oblasts = {m.lower() for m in _STRIKE_OBLAST_NAMES_RE.findall(block_text)}
+    result["strike_oblasts_affected"] = len(oblasts) if oblasts else 0
+
+    return result
+
+
 _MSG_RE = re.compile(
     r'data-post="[^"]*?/(\d+)".*?datetime="([^"]+)".*?'
     r'tgme_widget_message_text[^>]*>(.*?)</div>',
@@ -241,7 +319,8 @@ def daily_grid_stress_signal(channels=None) -> dict:
     Агрегує кешовані пости всіх каналів у щоденний сигнал:
     {date_str: {'grid_stress_high': 0/1, 'grid_stress_medium': 0/1, 'mentions': N,
     'consumption_trend', 'same_time_deviation_pct', 'peak_deviation_pct',
-    'forced_restriction_queues', 'settlements_affected', 'oblasts_affected'}}
+    'forced_restriction_queues', 'settlements_affected', 'oblasts_affected',
+    'strike_new_outages', 'strike_oblasts_affected'}}
 
     grid_stress_high/medium/mentions — грубий keyword-скан (як і раніше, по
     ВСЬОМУ тексту, включно з блоком про обстріли). Нові поля —
@@ -281,6 +360,8 @@ def daily_grid_stress_signal(channels=None) -> dict:
         entry["forced_restriction_queues"] = None
         entry["settlements_affected"] = None
         entry["oblasts_affected"] = None
+        entry["strike_new_outages"] = None
+        entry["strike_oblasts_affected"] = None
         for _post_id, text in posts:
             parsed = parse_energy_status(text)
             for key in ("consumption_trend", "same_time_deviation_pct", "peak_deviation_pct", "forced_restriction_queues"):
@@ -289,6 +370,11 @@ def daily_grid_stress_signal(channels=None) -> dict:
             for key in ("settlements_affected", "oblasts_affected"):
                 if parsed[key] is not None:
                     entry[key] = max(parsed[key], entry[key]) if entry[key] is not None else parsed[key]
+
+            strike = parse_strike_aftermath(text)
+            for key in ("strike_new_outages", "strike_oblasts_affected"):
+                if strike[key] is not None:
+                    entry[key] = max(strike[key], entry[key]) if entry[key] is not None else strike[key]
 
     return daily
 

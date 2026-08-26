@@ -336,9 +336,12 @@ def add_real_market_factors(df):
         if col not in df.columns:
             df[col] = 0
         df[col] = df[col].fillna(0)
-    # Числові поля з parse_energy_status (СТАН ЕНЕРГОСИСТЕМИ/СПОЖИВАННЯ) —
-    # реальні, але ЧЕСНО NaN, де немає джерела (до дня, з якого почали
-    # кешувати телеграм-пости) або конкретний пост не містив цього поля.
+    # Числові поля з parse_energy_status (СТАН ЕНЕРГОСИСТЕМИ/СПОЖИВАННЯ) і
+    # parse_strike_aftermath (НАСЛІДКИ ОБСТРІЛІВ, 2026-08-26 —
+    # docs/review_price_drivers_2026-08-25.md п.4: скільки областей мають
+    # нові знеструмлення через ворожі обстріли/удари сьогодні) — реальні,
+    # але ЧЕСНО NaN, де немає джерела (до дня, з якого почали кешувати
+    # телеграм-пости) або конкретний пост не містив цього поля.
     # Історія коротка (кешування почалось нещодавно) — намеренно НЕ
     # додаються в prepare_features/FEATURES моделі, як і Gas_Price_EUR_MWh
     # (див. коментар на початку ml_pipeline.py). Перевіряти обсяг реальної
@@ -347,6 +350,7 @@ def add_real_market_factors(df):
     numeric_cols = [
         'consumption_trend', 'same_time_deviation_pct', 'peak_deviation_pct',
         'forced_restriction_queues', 'settlements_affected', 'oblasts_affected',
+        'strike_new_outages', 'strike_oblasts_affected',
     ]
     for col in numeric_cols:
         if col not in df.columns:
@@ -361,6 +365,8 @@ def add_real_market_factors(df):
         'forced_restriction_queues': 'Grid_Forced_Restriction_Queues',
         'settlements_affected': 'Grid_Settlements_Affected',
         'oblasts_affected': 'Grid_Oblasts_Affected',
+        'strike_new_outages': 'Strike_New_Outages',
+        'strike_oblasts_affected': 'Strike_Oblasts_Affected',
     })
 
     # Ручна оцінка диспетчера (GridStressOverride) заповнює ЛИШЕ прогалини
