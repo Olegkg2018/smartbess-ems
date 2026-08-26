@@ -498,6 +498,19 @@ class SystemSettingsModel(BaseModel):
     auto_dispatch_enabled: Optional[bool] = None
     excise_duty_pct: Optional[float] = None
     transformer_loss_pct: Optional[float] = None
+    # Підключення реальної батареї (2026-08-26) — "simulator"|"tcp"|"serial"|
+    # "disabled". У "simulator" tcp_host/tcp_port ігноруються (завжди
+    # внутрішній 127.0.0.1:5020) — поля лишаються заповненими лише як
+    # готовий дефолт, коли власник перемкне на "tcp".
+    bess_connection_type: Optional[str] = None
+    bess_tcp_host: Optional[str] = None
+    bess_tcp_port: Optional[int] = None
+    bess_serial_port: Optional[str] = None
+    bess_serial_baudrate: Optional[int] = None
+    bess_serial_parity: Optional[str] = None
+    bess_serial_stopbits: Optional[int] = None
+    bess_serial_bytesize: Optional[int] = None
+    bess_modbus_unit_id: Optional[int] = None
 
 # Довідкові потужності для перетворення "% робочих АЕС/ГЕС" у МВт-дельту
 # (generation_adjustments.py). Це НЕ вигадка — реальні опубліковані дані:
@@ -528,6 +541,22 @@ DEFAULT_BID_REMINDER_TELEGRAM_ENABLED = True
 # заявок (scheduler.py::run_daily_forecast_and_optimization п.7). Реальний
 # фінансовий/ринковий ризик — явна згода, не тихий дефолт.
 DEFAULT_AUTO_DISPATCH_ENABLED = False
+
+# Підключення реальної батареї (2026-08-26) — дефолт "simulator" (поточна,
+# єдина раніше існуюча поведінка). tcp_port=502 — реальний стандартний
+# Modbus-TCP порт (НЕ 5020 — те число внутрішнє для симулятора, обране щоб
+# не вимагати root/CAP_NET_BIND_SERVICE у контейнері; 5020 лишається
+# захардкодженим лише для самого симулятора, не тут). baudrate/parity/
+# stopbits/bytesize — типові значення Modbus RTU (8-N-1, 9600 бод).
+DEFAULT_BESS_CONNECTION_TYPE = "simulator"
+DEFAULT_BESS_TCP_HOST = "127.0.0.1"
+DEFAULT_BESS_TCP_PORT = 502
+DEFAULT_BESS_SERIAL_PORT = ""
+DEFAULT_BESS_SERIAL_BAUDRATE = 9600
+DEFAULT_BESS_SERIAL_PARITY = "N"
+DEFAULT_BESS_SERIAL_STOPBITS = 1
+DEFAULT_BESS_SERIAL_BYTESIZE = 8
+DEFAULT_BESS_MODBUS_UNIT_ID = 1
 
 # Акциз (3.2%) і втрати трансформаторного обладнання (1.5-2.5%) — з
 # зовнішнього ревью 2026-08-24 (CLAUDE.md п.32). Застосовність до цієї
@@ -567,13 +596,22 @@ async def get_system_settings():
         "auto_dispatch_enabled": DEFAULT_AUTO_DISPATCH_ENABLED,
         "excise_duty_pct": DEFAULT_EXCISE_DUTY_PCT,
         "transformer_loss_pct": DEFAULT_TRANSFORMER_LOSS_PCT,
+        "bess_connection_type": DEFAULT_BESS_CONNECTION_TYPE,
+        "bess_tcp_host": DEFAULT_BESS_TCP_HOST,
+        "bess_tcp_port": DEFAULT_BESS_TCP_PORT,
+        "bess_serial_port": DEFAULT_BESS_SERIAL_PORT,
+        "bess_serial_baudrate": DEFAULT_BESS_SERIAL_BAUDRATE,
+        "bess_serial_parity": DEFAULT_BESS_SERIAL_PARITY,
+        "bess_serial_stopbits": DEFAULT_BESS_SERIAL_STOPBITS,
+        "bess_serial_bytesize": DEFAULT_BESS_SERIAL_BYTESIZE,
+        "bess_modbus_unit_id": DEFAULT_BESS_MODBUS_UNIT_ID,
     }
 
     if os.path.exists(path):
         try:
             with open(path, "r") as f:
                 saved = json.load(f)
-                for key in ("launch_date", "osr", "voltage_class", "margin", "nuclear_reference_capacity_mw", "hydro_reference_capacity_mw", "baseload_passthrough_ratio", "bid_reminder_telegram_enabled", "auto_dispatch_enabled", "excise_duty_pct", "transformer_loss_pct"):
+                for key in ("launch_date", "osr", "voltage_class", "margin", "nuclear_reference_capacity_mw", "hydro_reference_capacity_mw", "baseload_passthrough_ratio", "bid_reminder_telegram_enabled", "auto_dispatch_enabled", "excise_duty_pct", "transformer_loss_pct", "bess_connection_type", "bess_tcp_host", "bess_tcp_port", "bess_serial_port", "bess_serial_baudrate", "bess_serial_parity", "bess_serial_stopbits", "bess_serial_bytesize", "bess_modbus_unit_id"):
                     if key in saved:
                         data[key] = saved[key]
         except Exception:
@@ -617,6 +655,15 @@ async def save_system_settings(req: SystemSettingsModel):
             "auto_dispatch_enabled": req.auto_dispatch_enabled if req.auto_dispatch_enabled is not None else DEFAULT_AUTO_DISPATCH_ENABLED,
             "excise_duty_pct": req.excise_duty_pct if req.excise_duty_pct is not None else DEFAULT_EXCISE_DUTY_PCT,
             "transformer_loss_pct": req.transformer_loss_pct if req.transformer_loss_pct is not None else DEFAULT_TRANSFORMER_LOSS_PCT,
+            "bess_connection_type": req.bess_connection_type if req.bess_connection_type is not None else DEFAULT_BESS_CONNECTION_TYPE,
+            "bess_tcp_host": req.bess_tcp_host if req.bess_tcp_host is not None else DEFAULT_BESS_TCP_HOST,
+            "bess_tcp_port": req.bess_tcp_port if req.bess_tcp_port is not None else DEFAULT_BESS_TCP_PORT,
+            "bess_serial_port": req.bess_serial_port if req.bess_serial_port is not None else DEFAULT_BESS_SERIAL_PORT,
+            "bess_serial_baudrate": req.bess_serial_baudrate if req.bess_serial_baudrate is not None else DEFAULT_BESS_SERIAL_BAUDRATE,
+            "bess_serial_parity": req.bess_serial_parity if req.bess_serial_parity is not None else DEFAULT_BESS_SERIAL_PARITY,
+            "bess_serial_stopbits": req.bess_serial_stopbits if req.bess_serial_stopbits is not None else DEFAULT_BESS_SERIAL_STOPBITS,
+            "bess_serial_bytesize": req.bess_serial_bytesize if req.bess_serial_bytesize is not None else DEFAULT_BESS_SERIAL_BYTESIZE,
+            "bess_modbus_unit_id": req.bess_modbus_unit_id if req.bess_modbus_unit_id is not None else DEFAULT_BESS_MODBUS_UNIT_ID,
         }
 
         os.makedirs(os.path.dirname(path), exist_ok=True)

@@ -6,7 +6,6 @@ from pymodbus.pdu.device import ModbusDeviceIdentification
 from pymodbus.simulator import SimData, SimDevice, DataType
 import asyncio
 
-from src.core.config import settings
 from src.database.session import SessionLocal
 from src.database.models import Asset
 
@@ -153,8 +152,10 @@ async def start_modbus_server():
         action=_device_action,
         identity=identity,
     )
-    host = settings.BESS_MODBUS_HOST
-    port = settings.BESS_MODBUS_PORT
+    # Внутрішня адреса нашого власного симулятора — завжди 127.0.0.1:5020
+    # (не з Settings: 2026-08-26, реальні host/port тепер стосуються лише
+    # РЕАЛЬНОЇ батареї, див. scada_service.py::load_bess_connection_settings).
+    host, port = '127.0.0.1', 5020
     print(f"SCADA: Starting Modbus TCP Server on {host}:{port}...")
     await StartAsyncTcpServer(context=device, address=(host, port))
 

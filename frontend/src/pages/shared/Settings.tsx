@@ -9,6 +9,10 @@ export default function Settings() {
     autoDispatchEnabled, setAutoDispatchEnabled,
     exciseDutyPct, setExciseDutyPct, transformerLossPct, setTransformerLossPct,
     launchDate, setLaunchDate, saveSettings,
+    bessConnectionType, setBessConnectionType, bessTcpHost, setBessTcpHost, bessTcpPort, setBessTcpPort,
+    bessSerialPort, setBessSerialPort, bessSerialBaudrate, setBessSerialBaudrate,
+    bessSerialParity, setBessSerialParity, bessSerialStopbits, setBessSerialStopbits,
+    bessSerialBytesize, setBessSerialBytesize, bessModbusUnitId, setBessModbusUnitId,
   } = useApp();
 
   return (
@@ -117,6 +121,102 @@ export default function Settings() {
           тепер бере ці дані з реальних джерел автоматично. Поточний стан див. на екрані
           «Стан енергосистеми» (Dispatcher Console).
         </p>
+      </div>
+
+      <div className="glass-card">
+        <h3 className="card-title" style={{ marginBottom: '16px' }}>Підключення батареї (SCADA/Modbus)</h3>
+
+        <div className="form-group">
+          <label className="form-label">Джерело даних BESS</label>
+          <select
+            className="form-select"
+            value={bessConnectionType}
+            onChange={(e) => setBessConnectionType(e.target.value)}
+          >
+            <option value="simulator">Вбудований симулятор (за замовчуванням, для тестування)</option>
+            <option value="tcp">Реальна батарея — Modbus TCP/IP</option>
+            <option value="serial">Реальна батарея — Modbus RTU (RS-485/COM-порт)</option>
+            <option value="disabled">Вимкнено (без телеметрії й керування)</option>
+          </select>
+        </div>
+
+        {bessConnectionType === 'tcp' && (
+          <>
+            <div className="form-group">
+              <label className="form-label">IP-адреса батареї</label>
+              <input type="text" className="form-input" value={bessTcpHost} onChange={(e) => setBessTcpHost(e.target.value)} placeholder="192.168.1.50" />
+            </div>
+            <div className="form-group">
+              <label className="form-label">TCP-порт</label>
+              <input type="number" className="form-input" value={bessTcpPort} onChange={(e) => setBessTcpPort(Number(e.target.value))} />
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '6px 0 0' }}>
+                Стандартний Modbus-TCP порт — 502. Уточніть в документації вашого пристрою (напр. Huawei
+                LUNA2000/SmartLogger), якщо виробник використовує інший.
+              </p>
+            </div>
+          </>
+        )}
+
+        {bessConnectionType === 'serial' && (
+          <>
+            <div className="form-group">
+              <label className="form-label">COM-порт</label>
+              <input
+                type="text" className="form-input" value={bessSerialPort}
+                onChange={(e) => setBessSerialPort(e.target.value)}
+                placeholder="COM3 (Windows) або /dev/ttyUSB0 (Linux)"
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Швидкість (бод)</label>
+              <select className="form-select" value={bessSerialBaudrate} onChange={(e) => setBessSerialBaudrate(Number(e.target.value))}>
+                <option value={9600}>9600 (типово для Modbus RTU)</option>
+                <option value={19200}>19200</option>
+                <option value={38400}>38400</option>
+                <option value={57600}>57600</option>
+                <option value={115200}>115200</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Парність / стоп-біти / біти даних</label>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <select className="form-select" value={bessSerialParity} onChange={(e) => setBessSerialParity(e.target.value)}>
+                  <option value="N">Без парності (N)</option>
+                  <option value="E">Парна (E)</option>
+                  <option value="O">Непарна (O)</option>
+                </select>
+                <select className="form-select" value={bessSerialStopbits} onChange={(e) => setBessSerialStopbits(Number(e.target.value))}>
+                  <option value={1}>1 стоп-біт</option>
+                  <option value={2}>2 стоп-біти</option>
+                </select>
+                <select className="form-select" value={bessSerialBytesize} onChange={(e) => setBessSerialBytesize(Number(e.target.value))}>
+                  <option value={8}>8 біт даних</option>
+                  <option value={7}>7 біт даних</option>
+                </select>
+              </div>
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '6px 0 0' }}>
+                Типове поєднання — 8-N-1 (8 біт даних, без парності, 1 стоп-біт). Точні значення вказані в
+                документації вашого пристрою.
+              </p>
+            </div>
+          </>
+        )}
+
+        {(bessConnectionType === 'tcp' || bessConnectionType === 'serial') && (
+          <div className="form-group">
+            <label className="form-label">Modbus Unit ID (адреса пристрою)</label>
+            <input type="number" min={0} max={247} className="form-input" value={bessModbusUnitId} onChange={(e) => setBessModbusUnitId(Number(e.target.value))} />
+          </div>
+        )}
+
+        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '10px', lineHeight: 1.5 }}>
+          Зміни в підключенні батареї застосовуються лише після перезапуску сервера — це не гаряче
+          перепідключення живого фізичного з'єднання.
+        </p>
+
+        <button className="btn" style={{ width: '100%', marginTop: '10px' }} onClick={saveSettings}>
+          Зберегти налаштування
+        </button>
       </div>
 
       <div className="glass-card">

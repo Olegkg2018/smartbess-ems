@@ -69,7 +69,7 @@ export async function fetchAssets(role: UserRole): Promise<Asset[]> {
 
 export interface ScadaStatus {
   connected: boolean;
-  simulator: boolean;
+  connection_type: string;
   timestamp: string | null;
   soc_pct: number | null;
   soc_mwh: number | null;

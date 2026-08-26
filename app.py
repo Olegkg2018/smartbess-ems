@@ -14,7 +14,7 @@ from src.database.init_db import init_db
 from src.database.models import Organization, Asset, PriceForecast, ChargeDischargePlan
 
 from src.tasks.scheduler import start_scheduler, shutdown_scheduler
-from src.modules.scada_service.scada_service import start_scada_service, stop_scada_service
+from src.modules.scada_service.scada_service import start_scada_service, stop_scada_service, load_bess_connection_settings
 from src.core.config import settings
 
 @asynccontextmanager
@@ -66,20 +66,24 @@ async def lifespan(app: FastAPI):
     # 3. Start the daily background scheduler
     start_scheduler()
     
-    # 4-5. Start the Modbus BESS simulator + SCADA telemetry/control service.
-    # Єдиний реально існуючий сьогодні режим — симулятор (реального обладнання
-    # не підключено, див. CLAUDE.md); прапорець лише дає змогу вимкнути його,
-    # а не перемикає на якийсь інший "реальний" режим.
-    if settings.SCADA_SIMULATOR_ENABLED:
+    # 4-5. Start the Modbus BESS simulator (if selected) + SCADA telemetry/
+    # control service. 2026-08-26: підключення реальної батареї (tcp/serial)
+    # тепер керується через Settings UI (system_settings.json), не env-var —
+    # раніше клієнт (start_scada_service) стартував ЛИШЕ разом із симулятором,
+    # реального шляху "клієнт без нашого симулятора" не було (реальний,
+    # виправлений тут пробіл).
+    bess_cfg = load_bess_connection_settings()
+    if bess_cfg['connection_type'] == 'simulator':
         import threading
         from src.modules.scada_service.bess_simulator import run_simulator_process
         t_sim = threading.Thread(target=run_simulator_process, daemon=True)
         t_sim.start()
         print("FastAPI Lifespan: Started BESS Modbus TCP simulator.")
 
+    if bess_cfg['connection_type'] != 'disabled':
         start_scada_service()
     else:
-        print("FastAPI Lifespan: SCADA_SIMULATOR_ENABLED=False — simulator and SCADA poll loop not started.")
+        print("FastAPI Lifespan: BESS connection disabled (Settings) — SCADA poll loop not started.")
     
     yield
 

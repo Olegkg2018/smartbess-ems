@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from src.database.session import SessionLocal
 from src.database.models import Asset, BessTelemetry
 from src.core.security import RoleChecker
-from src.core.config import settings
+from src.modules.scada_service.scada_service import load_bess_connection_settings
 
 router = APIRouter()
 
@@ -44,6 +44,7 @@ async def get_scada_status(asset_id: str):
     незалежно від того, чи реально живий симулятор. Тепер віддає останній
     запис BessTelemetry і честно каже, застарілий він чи ні.
     """
+    connection_type = load_bess_connection_settings()['connection_type']
     db = SessionLocal()
     try:
         asset = db.query(Asset).filter(Asset.id == asset_id).first()
@@ -60,7 +61,7 @@ async def get_scada_status(asset_id: str):
         if tel is None:
             return {
                 "connected": False,
-                "simulator": settings.SCADA_SIMULATOR_ENABLED,
+                "connection_type": connection_type,
                 "timestamp": None,
                 "soc_pct": None,
                 "soc_mwh": None,
@@ -75,7 +76,7 @@ async def get_scada_status(asset_id: str):
 
         return {
             "connected": age_seconds < SCADA_TELEMETRY_FRESHNESS_SECONDS,
-            "simulator": settings.SCADA_SIMULATOR_ENABLED,
+            "connection_type": connection_type,
             "timestamp": tel.timestamp.isoformat() + "Z",
             "soc_pct": soc_pct,
             "soc_mwh": tel.current_soc_mwh,

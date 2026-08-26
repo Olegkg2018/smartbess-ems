@@ -1,7 +1,9 @@
 import datetime
+import json
+import os
 import time
 import threading
-from pymodbus.client import ModbusTcpClient
+from pymodbus.client import ModbusTcpClient, ModbusSerialClient
 from sqlalchemy.orm import Session
 
 from src.core.config import settings
@@ -11,22 +13,84 @@ from src.database.models import Asset, BessTelemetry, ChargeDischargePlan, Manua
 scada_thread = None
 stop_flag = False
 
+# Дефолти дзеркалять DEFAULT_BESS_* у optimization.py — не імпортуємо звідти
+# напряму, щоб не тягнути весь FastAPI-роутер у SCADA-модуль (той самий
+# принцип ізоляції, що вже є для telegram_bot.py::_bid_reminder_enabled).
+_BESS_CONNECTION_DEFAULTS = {
+    'connection_type': 'simulator',
+    'tcp_host': '127.0.0.1',
+    'tcp_port': 502,
+    'serial_port': '',
+    'serial_baudrate': 9600,
+    'serial_parity': 'N',
+    'serial_stopbits': 1,
+    'serial_bytesize': 8,
+    'unit_id': 1,
+}
+_BESS_SETTINGS_KEY_MAP = {
+    'connection_type': 'bess_connection_type',
+    'tcp_host': 'bess_tcp_host',
+    'tcp_port': 'bess_tcp_port',
+    'serial_port': 'bess_serial_port',
+    'serial_baudrate': 'bess_serial_baudrate',
+    'serial_parity': 'bess_serial_parity',
+    'serial_stopbits': 'bess_serial_stopbits',
+    'serial_bytesize': 'bess_serial_bytesize',
+    'unit_id': 'bess_modbus_unit_id',
+}
+
+
+def load_bess_connection_settings() -> dict:
+    """Читає підключення реальної батареї з system_settings.json (той самий
+    патерн, що telegram_bot.py::_bid_reminder_enabled/scheduler.py::
+    _auto_dispatch_enabled) — 2026-08-26. Невідомий/відсутній
+    connection_type чесно фолбечить на 'simulator' (не падає, не вигадує)."""
+    cfg = dict(_BESS_CONNECTION_DEFAULTS)
+    path = os.path.join(settings.DATA_DIR, "system_settings.json")
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                saved = json.load(f)
+            for local_key, json_key in _BESS_SETTINGS_KEY_MAP.items():
+                if saved.get(json_key) is not None:
+                    cfg[local_key] = saved[json_key]
+        except Exception:
+            pass
+    if cfg['connection_type'] not in ('simulator', 'tcp', 'serial', 'disabled'):
+        cfg['connection_type'] = 'simulator'
+    return cfg
+
+
+def _build_client(cfg: dict):
+    if cfg['connection_type'] == 'serial':
+        return ModbusSerialClient(
+            cfg['serial_port'], baudrate=cfg['serial_baudrate'],
+            parity=cfg['serial_parity'], stopbits=cfg['serial_stopbits'],
+            bytesize=cfg['serial_bytesize'],
+        ), f"serial:{cfg['serial_port']}@{cfg['serial_baudrate']}"
+    if cfg['connection_type'] == 'tcp':
+        return ModbusTcpClient(cfg['tcp_host'], port=cfg['tcp_port']), f"{cfg['tcp_host']}:{cfg['tcp_port']}"
+    # 'simulator' (і фолбек для 'disabled', яке start_scada_service узагалі
+    # не запускає — див. app.py) — наш власний симулятор, завжди 127.0.0.1:5020.
+    return ModbusTcpClient('127.0.0.1', port=5020), '127.0.0.1:5020 (simulator)'
+
+
 def poll_bess_and_control():
-    bess_ip = settings.BESS_MODBUS_HOST
-    bess_port = settings.BESS_MODBUS_PORT
-    print(f"SCADA: Starting EMS control loop (target {bess_ip}:{bess_port})...")
-    client = ModbusTcpClient(bess_ip, port=bess_port)
+    cfg = load_bess_connection_settings()
+    unit_id = cfg['unit_id']
+    client, target_desc = _build_client(cfg)
+    print(f"SCADA: Starting EMS control loop (target {target_desc}, unit_id={unit_id})...")
 
     while not stop_flag:
         db = SessionLocal()
         try:
             connected = client.connect()
             if not connected:
-                print(f"SCADA Error: Could not connect to BESS at {bess_ip}:{bess_port}")
+                print(f"SCADA Error: Could not connect to BESS at {target_desc}")
                 time.sleep(10.0)
                 continue
-                
-            res = client.read_holding_registers(0, count=6)
+
+            res = client.read_holding_registers(0, count=6, device_id=unit_id)
             if res.isError():
                 print(f"SCADA Error: Failed to read BESS registers: {res}")
                 client.close()
@@ -104,7 +168,7 @@ def poll_bess_and_control():
             cmd_val = target_power_kw
             if cmd_val < 0:
                 cmd_val += 65536
-            client.write_register(5, cmd_val)
+            client.write_register(5, cmd_val, device_id=unit_id)
         except Exception as e:
             if db:
                 db.rollback()

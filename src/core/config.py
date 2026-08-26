@@ -35,17 +35,10 @@ class Settings(BaseSettings):
     # роль через curl). Перевизначити через .env для розгорнутих інстансів.
     MOCK_JWT_SECRET: str = "dev-mock-secret-change-me"
     BESS_LAUNCH_DATE: str = "2026-01-01"
-    # SCADA_SIMULATOR_ENABLED=True — стартує власний Modbus-симулятор
-    # (bess_simulator.py) на BESS_MODBUS_HOST/PORT. Для підключення до
-    # РЕАЛЬНОЇ батареї (2026-08-26: перевірено на офіційній Huawei-документації
-    # "LUNA2000B ESS Modbus Port Definitions"/"SmartLogger Modbus Interface
-    # Definitions" — той самий реальний регістровий протокол використовує і
-    # наш симулятор, і клієнт scada_service.py) — вимкнути симулятор
-    # (SCADA_SIMULATOR_ENABLED=False) і вказати реальні host/port батареї;
-    # клієнтський код МІНЯТИ НЕ ТРЕБА.
-    SCADA_SIMULATOR_ENABLED: bool = True
-    BESS_MODBUS_HOST: str = "127.0.0.1"
-    BESS_MODBUS_PORT: int = 5020
+    # Підключення батареї (симулятор/tcp/serial, host/port/COM-порт тощо)
+    # перенесено з env-var Settings у system_settings.json (2026-08-26) —
+    # редаговане в UI (Settings.tsx), не потребує доступу до сервера/.env.
+    # Див. scada_service.py::load_bess_connection_settings.
     # "mock" (дефолт, єдиний реально готовий режим) — див.
     # bidding_service/oree_client.py. "live" поки не реалізовано (немає
     # публічного API OREE ні облікових даних, MEMORY.md §8).

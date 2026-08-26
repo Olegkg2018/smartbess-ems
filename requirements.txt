@@ -12,6 +12,7 @@ sqlalchemy
 psycopg2-binary
 apscheduler
 pymodbus
+pyserial
 pydantic-settings
 python-dotenv
 numpy-financial

@@ -106,6 +106,15 @@ interface AppState {
   maxCyclesPerDay: number; setMaxCyclesPerDay: (v: number) => void;
   bidReminderTelegramEnabled: boolean; setBidReminderTelegramEnabled: (v: boolean) => void;
   autoDispatchEnabled: boolean; setAutoDispatchEnabled: (v: boolean) => void;
+  bessConnectionType: string; setBessConnectionType: (v: string) => void;
+  bessTcpHost: string; setBessTcpHost: (v: string) => void;
+  bessTcpPort: number; setBessTcpPort: (v: number) => void;
+  bessSerialPort: string; setBessSerialPort: (v: string) => void;
+  bessSerialBaudrate: number; setBessSerialBaudrate: (v: number) => void;
+  bessSerialParity: string; setBessSerialParity: (v: string) => void;
+  bessSerialStopbits: number; setBessSerialStopbits: (v: number) => void;
+  bessSerialBytesize: number; setBessSerialBytesize: (v: number) => void;
+  bessModbusUnitId: number; setBessModbusUnitId: (v: number) => void;
   exciseDutyPct: number; setExciseDutyPct: (v: number) => void;
   transformerLossPct: number; setTransformerLossPct: (v: number) => void;
   launchDate: string; setLaunchDate: (v: string) => void;
@@ -179,6 +188,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // автоматизацію подачі заявок (2026-08-26, "віртуальний диспетчер").
   // Безпечний дефолт: реальний фінансовий/ринковий ризик, явна згода.
   const [autoDispatchEnabled, setAutoDispatchEnabled] = useState(false);
+  // Підключення реальної батареї (2026-08-26) — дефолти дзеркалять
+  // DEFAULT_BESS_* в optimization.py (tcp_port=502 — реальний Modbus-TCP
+  // стандарт, не внутрішній 5020 симулятора).
+  const [bessConnectionType, setBessConnectionType] = useState('simulator');
+  const [bessTcpHost, setBessTcpHost] = useState('127.0.0.1');
+  const [bessTcpPort, setBessTcpPort] = useState(502);
+  const [bessSerialPort, setBessSerialPort] = useState('');
+  const [bessSerialBaudrate, setBessSerialBaudrate] = useState(9600);
+  const [bessSerialParity, setBessSerialParity] = useState('N');
+  const [bessSerialStopbits, setBessSerialStopbits] = useState(1);
+  const [bessSerialBytesize, setBessSerialBytesize] = useState(8);
+  const [bessModbusUnitId, setBessModbusUnitId] = useState(1);
   const [exciseDutyPct, setExciseDutyPct] = useState(0);
   const [transformerLossPct, setTransformerLossPct] = useState(0);
   const [launchDate, setLaunchDate] = useState('2026-01-01');
@@ -239,6 +260,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (data.max_cycles_per_day != null) setMaxCyclesPerDay(data.max_cycles_per_day);
       if (data.bid_reminder_telegram_enabled != null) setBidReminderTelegramEnabled(data.bid_reminder_telegram_enabled);
       if (data.auto_dispatch_enabled != null) setAutoDispatchEnabled(data.auto_dispatch_enabled);
+      if (data.bess_connection_type != null) setBessConnectionType(data.bess_connection_type);
+      if (data.bess_tcp_host != null) setBessTcpHost(data.bess_tcp_host);
+      if (data.bess_tcp_port != null) setBessTcpPort(data.bess_tcp_port);
+      if (data.bess_serial_port != null) setBessSerialPort(data.bess_serial_port);
+      if (data.bess_serial_baudrate != null) setBessSerialBaudrate(data.bess_serial_baudrate);
+      if (data.bess_serial_parity != null) setBessSerialParity(data.bess_serial_parity);
+      if (data.bess_serial_stopbits != null) setBessSerialStopbits(data.bess_serial_stopbits);
+      if (data.bess_serial_bytesize != null) setBessSerialBytesize(data.bess_serial_bytesize);
+      if (data.bess_modbus_unit_id != null) setBessModbusUnitId(data.bess_modbus_unit_id);
       if (data.excise_duty_pct != null) setExciseDutyPct(data.excise_duty_pct);
       if (data.transformer_loss_pct != null) setTransformerLossPct(data.transformer_loss_pct);
     }).catch(() => {});
@@ -319,12 +349,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
         auto_dispatch_enabled: autoDispatchEnabled,
         excise_duty_pct: exciseDutyPct,
         transformer_loss_pct: transformerLossPct,
+        bess_connection_type: bessConnectionType,
+        bess_tcp_host: bessTcpHost,
+        bess_tcp_port: bessTcpPort,
+        bess_serial_port: bessSerialPort,
+        bess_serial_baudrate: bessSerialBaudrate,
+        bess_serial_parity: bessSerialParity,
+        bess_serial_stopbits: bessSerialStopbits,
+        bess_serial_bytesize: bessSerialBytesize,
+        bess_modbus_unit_id: bessModbusUnitId,
       });
       addLog('SETTINGS', `Параметри системи збережено. Дата запуску: ${launchDate}.`, 'success');
     } catch (e: any) {
       addLog('API', `Помилка збереження налаштувань: ${e.message}`, 'error');
     }
-  }, [activeRole, launchDate, osr, voltageClass, margin, capacity, power, efficiency, maxCyclesPerDay, bidReminderTelegramEnabled, autoDispatchEnabled, exciseDutyPct, transformerLossPct, addLog]);
+  }, [activeRole, launchDate, osr, voltageClass, margin, capacity, power, efficiency, maxCyclesPerDay, bidReminderTelegramEnabled, autoDispatchEnabled, exciseDutyPct, transformerLossPct, bessConnectionType, bessTcpHost, bessTcpPort, bessSerialPort, bessSerialBaudrate, bessSerialParity, bessSerialStopbits, bessSerialBytesize, bessModbusUnitId, addLog]);
 
   useEffect(() => {
     if (!activeAssetId) return;
@@ -673,6 +712,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     capacity, setCapacity, power, setPower, efficiency, setEfficiency,
     maxCyclesPerDay, setMaxCyclesPerDay, bidReminderTelegramEnabled, setBidReminderTelegramEnabled,
     autoDispatchEnabled, setAutoDispatchEnabled,
+    bessConnectionType, setBessConnectionType, bessTcpHost, setBessTcpHost, bessTcpPort, setBessTcpPort,
+    bessSerialPort, setBessSerialPort, bessSerialBaudrate, setBessSerialBaudrate,
+    bessSerialParity, setBessSerialParity, bessSerialStopbits, setBessSerialStopbits,
+    bessSerialBytesize, setBessSerialBytesize, bessModbusUnitId, setBessModbusUnitId,
     exciseDutyPct, setExciseDutyPct, transformerLossPct, setTransformerLossPct,
     launchDate, setLaunchDate, saveSettings,
     capex, setCapex, discountRate, setDiscountRate, lifetime, setLifetime,
@@ -691,6 +734,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     bidMargin, saveBidMarginAndRegenerate, clearBidMarginAndRegenerate,
     bids, refreshBids, actionSummary, refreshActionSummary, generateBidsNow, settleBidsNow,
     osr, voltageClass, margin, capacity, power, efficiency, maxCyclesPerDay, bidReminderTelegramEnabled, autoDispatchEnabled, launchDate, saveSettings,
+    bessConnectionType, bessTcpHost, bessTcpPort, bessSerialPort, bessSerialBaudrate, bessSerialParity, bessSerialStopbits, bessSerialBytesize, bessModbusUnitId,
     capex, discountRate, lifetime, systemLogs, addLog, auditLogs,
     showApprovalModal, pendingAction, approvalToken, triggerFourEyesApproval, executeApprovedAction, cancelApproval,
   ]);
