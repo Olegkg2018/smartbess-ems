@@ -54,6 +54,42 @@ def run_optimization_background_job(
 
         target_dt_start = kyiv_to_utc(target_date_str, 0)
 
+        # 2026-08-26: якщо target_date — СЬОГОДНІ (чи будь-яка дата, де частина
+        # години вже минула), не можна рахувати MILP на всі 24 години "з нуля"
+        # доби — це давало internally coherent, але ВІД'ЄДНАНИЙ ВІД РЕАЛЬНОСТІ
+        # прогноз: `resolved_initial_soc` вище бере РЕАЛЬНИЙ SoC із SCADA
+        # ЗАРАЗ (get_current_soc_fraction), але якщо цей SoC підставити як
+        # "стан на північ доби" і порахувати вперед усі 24 години, MILP сам
+        # вирішує, як "вигідно" зарядити/розрядити ще й ті години, що вже
+        # ФІЗИЧНО минули — а write-guard нижче ці минулі години просто не
+        # записує. Результат: майбутня частина графіка (яку MILP порахував як
+        # продовження свого власного, відкинутого рішення для минулих годин)
+        # описує SoC-траєкторію, що ніколи фізично не була і не буде
+        # досяжною з РЕАЛЬНОГО поточного SoC. Знайдено користувачем: реальний
+        # SoC 824 кВт·год, а графік на вечір показував розряд з 3600 кВт·год,
+        # яких батарея фізично ніде не набрала. Правильно — рахувати MILP
+        # ЛИШЕ на ще майбутній "хвіст" доби (горизонт `T = len(prices)` вже й
+        # так підтримується `optimize_battery_schedule` для довільної
+        # довжини, docstring явно каже "arbitrary horizon"), з
+        # `resolved_initial_soc` як стан РІВНО "зараз" (а не "опівночі") —
+        # це коректно, бо `T`-годинний хвіст починається саме зараз.
+        # `start_t` — перша година доби, чий реальний UTC-момент ще НЕ настав
+        # (той самий критерій `<=`, що й у write-guard нижче — узгоджено,
+        # інакше межі розійдуться). Для звичайного випадку (щоденна 06:00-
+        # джоба рахує ЗАВТРАШНІЙ день) усі 24 години в майбутньому, start_t=0
+        # — поведінка НЕ змінюється.
+        now_utc = datetime.datetime.utcnow()
+        start_t = 24
+        for t in range(24):
+            if kyiv_to_utc(target_date_str, t) > now_utc:
+                start_t = t
+                break
+        if start_t == 24:
+            raise RuntimeError(
+                f"Усі 24 години {target_date_str} вже минули — перерахунок на цю дату більше не має сенсу."
+            )
+        horizon = 24 - start_t
+
         # Lineage (CODE_REVIEW.md п.7-20): який ForecastRun реально стоїть за
         # PriceForecast нижче — найновіший на цю target_date (persist_forecast_run
         # пишеться в ТІЙ САМІЙ транзакції, що й поточний PriceForecast, тож
@@ -87,6 +123,14 @@ def run_optimization_background_job(
                 2000.0, 1800.0, 1200.0, 1000.0, 1500.0, 2200.0,
                 4500.0, 6000.0, 7500.0, 8500.0, 6500.0, 4500.0
             ]
+
+        # Різати на "хвіст" від start_t (див. коментар вище) — лише реально
+        # майбутні години йдуть у солвер.
+        prices = prices[start_t:]
+        if price_lower is not None:
+            price_lower = price_lower[start_t:]
+        if price_upper is not None:
+            price_upper = price_upper[start_t:]
 
         battery_params = {
             'battery_capacity': asset.capacity_mwh * 1000.0,
@@ -134,35 +178,16 @@ def run_optimization_background_job(
                 f"план НЕ збережено. Перевірте вхідний SoC/ліміти активу/ціни на {target_date_str}."
             )
 
-        # Save optimal base schedule to database.
-        #
-        # 2026-08-26: MILP рахує РІВНО 24 години доби target_date, як завжди —
-        # незалежно від того, коли реально запущено розрахунок. Якщо диспетчер
-        # тисне "Розрахувати" ПОСЕРЕДИНІ дня (на target_date == сьогодні), не
-        # можна мовчки ПЕРЕПИСУВАТИ години, що вже РЕАЛЬНО минули — MILP видає
-        # для них ідеальний "заднім числом" графік (наче доба щойно почалась),
-        # який фізично ніколи не виконувався (SCADA не могла подати команду на
-        # вже минулу годину). Раніше цей запис безумовно стирав і минулі, і
-        # майбутні години на кожен перерахунок — знайдено користувачем: після
-        # кількох ручних перерахунків за один ранок графік показував заряд на
-        # 23:00-01:00 (вже минулу ніч), а реальна SCADA-телеметрія весь цей
-        # час стояла на 0 кВт/незмінному SoC, бо в момент, коли ті години були
-        # ще майбутніми, цього плану просто не існувало. Тепер: години, чий
-        # реальний UTC-момент вже <= "зараз", НЕ переписуємо — лишаємо те, що
-        # там вже є (факт попереднього запуску, або взагалі нічого, якщо
-        # це перший розрахунок на сьогодні вже посеред дня — чесно, не
-        # вигадуємо заднім числом). Тільки МАЙБУТНІ від "зараз" години
-        # оновлюються нашим новим рішенням. Для звичайного випадку (щоденна
-        # 06:00-джоба рахує ЗАВТРАШНІЙ день) усі 24 години завжди в
-        # майбутньому — поведінка НЕ змінюється.
-        now_utc = datetime.datetime.utcnow()
+        # Save optimal schedule to database — лише реально майбутні години
+        # (t від start_t, обчисленого вище) записуються; уже минулі години
+        # НЕ переписуються, лишається те, що там вже є (факт попереднього
+        # запуску, або взагалі нічого — чесно, не вигадуємо заднім числом).
+        # Для звичайного випадку (щоденна 06:00-джоба рахує ЗАВТРАШНІЙ день)
+        # start_t=0 — записуються всі 24 години, поведінка НЕ змінюється.
         base_sched = scenarios_results['scenarios']['base']
-        n_skipped_past = 0
-        for t in range(24):
+        n_skipped_past = start_t
+        for t in range(start_t, 24):
             forecast_time = kyiv_to_utc(target_date_str, t)
-            if forecast_time <= now_utc:
-                n_skipped_past += 1
-                continue
 
             db.query(ChargeDischargePlan).filter(
                 ChargeDischargePlan.timestamp == forecast_time,
@@ -170,7 +195,7 @@ def run_optimization_background_job(
                 ChargeDischargePlan.optimized_run_at == target_dt_start
             ).delete()
 
-            sched_item = base_sched['schedule'][t]
+            sched_item = base_sched['schedule'][t - start_t]
             plan_entry = ChargeDischargePlan(
                 timestamp=forecast_time,
                 asset_id=asset.id,
@@ -184,6 +209,11 @@ def run_optimization_background_job(
 
         db.commit()
         scenarios_results['n_past_hours_frozen'] = n_skipped_past
+        # schedule[i] тепер відповідає РЕАЛЬНІЙ годині (schedule_start_hour + i),
+        # не завжди hour i доби — фронтенд (RiskScenarios.tsx) враховує зсув
+        # при підписі осі, інакше графік сценаріїв показав би ціни не на тих
+        # годинах для будь-якого перерахунку посеред дня.
+        scenarios_results['schedule_start_hour'] = start_t
         
         job["status"] = "completed"
         job["progress"] = 100

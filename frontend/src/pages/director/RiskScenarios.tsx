@@ -6,10 +6,15 @@ export default function RiskScenarios() {
 
   const scenarios = optimizationResult?.scenarios;
   const summary = optimizationResult?.summary;
+  // Перерахунок посеред дня рахує лише "хвіст" доби від поточної години —
+  // schedule[0] тоді відповідає не годині 0, а schedule_start_hour
+  // (бекенд, 2026-08-26) — без цього зсуву графік підписав би ціни не на
+  // тих годинах доби для будь-якого перерахунку після півночі.
+  const startHour = optimizationResult?.schedule_start_hour ?? 0;
 
   const scenariosData = scenarios
-    ? Array.from({ length: 24 }, (_, i) => ({
-        hour: i + 1,
+    ? Array.from({ length: 24 - startHour }, (_, i) => ({
+        hour: startHour + i + 1,
         base: scenarios.base?.schedule?.[i]?.price_forecast_uah_mwh,
         pessimistic: scenarios.pessimistic?.schedule?.[i]?.price_forecast_uah_mwh,
         aggressive: scenarios.aggressive?.schedule?.[i]?.price_forecast_uah_mwh,
