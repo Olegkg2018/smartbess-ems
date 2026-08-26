@@ -487,7 +487,14 @@ async def get_manual_overrides(asset_id: str, date: str):
                 "timestamp": dt_hour.isoformat() + "Z",
                 "power_mw": o.power_mw if o else default_power,
                 "price_uah": o.price_uah if o else default_price,
-                "is_overridden": o is not None
+                "is_overridden": o is not None,
+                # 2026-08-26: реальний SoC-трейд-офф уже пораховано бекендом
+                # (run_optimization_background_job — з правильним
+                # розщепленням "минуле заморожено / майбутнє від живої
+                # телеметрії", яке фронтенд не повторює). None, якщо для
+                # цієї години взагалі немає плану (ще не рахували) — чесно,
+                # фронтенд сам вирішує, як показати прогалину.
+                "expected_soc_mwh": p.expected_soc_mwh if p else None,
             })
             
         return {

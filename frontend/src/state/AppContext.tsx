@@ -464,12 +464,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const maxSocKwh = capacity * 0.9;
     const minSocKwh = capacity * 0.1;
     let runningSoc = initialSoc?.capacity_kwh ?? capacity * 0.2;
+    // 2026-08-26: раніше ця функція ЗАВЖДИ сама перераховувала SoC "з опівночі"
+    // для всіх 24 годин, ігноруючи `expected_soc_mwh`, який бекенд уже
+    // коректно порахував (з правильним розщепленням "минуле заморожено /
+    // майбутнє від живої SCADA-телеметрії", п.43-45) — звідси графік
+    // розходився із заявками й реальним станом батареї, навіть коли жодного
+    // ручного оверрайду не було. Тепер: доки диспетчер НІЧОГО не редагував
+    // (`is_overridden===false`) і бекенд має число для години — довіряємо
+    // РІВНО бекендовому SoC. Локальна симуляція (як і раніше) вмикається
+    // лише ПІСЛЯ першої ручної правки/прогалини в плані — для live-прев'ю
+    // ще незбереженої зміни, де бекенд ще не знає нового курсу.
+    let diverged = false;
 
     return manualOverrides.map((o: any) => {
       // Клип до реальної макс. потужності БЕСС — введена вручну команда може
       // в разі перевищувати фізичну потужність батареї.
       const commandedKW = Math.max(-power, Math.min(power, o.power_mw * 1000.0));
       const priceKWh = o.price_uah / 1000.0;
+
+      if (!diverged && !o.is_overridden && o.expected_soc_mwh != null) {
+        const chargeKW = commandedKW < 0 ? Math.abs(commandedKW) : 0;
+        const dischargeKW = commandedKW > 0 ? commandedKW : 0;
+        const revenueUah = dischargeKW * priceKWh;
+        const costUah = chargeKW * (priceKWh + TARIFF_UAH_PER_KWH);
+        const degradationUah = dischargeKW * DEGRADATION_UAH_PER_KWH;
+        runningSoc = o.expected_soc_mwh * 1000.0;
+        return {
+          hour: o.hour, charge: chargeKW, discharge: dischargeKW, soc: runningSoc,
+          price: o.price_uah, isManual: false, revenueUah, costUah, degradationUah,
+        };
+      }
+      diverged = true;
+
       let chargeKW = 0, dischargeKW = 0, revenueUah = 0, costUah = 0, degradationUah = 0;
 
       if (commandedKW < 0) {
