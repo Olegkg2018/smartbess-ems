@@ -6,6 +6,7 @@ export default function Settings() {
     capacity, setCapacity, power, setPower, efficiency, setEfficiency,
     maxCyclesPerDay, setMaxCyclesPerDay,
     bidReminderTelegramEnabled, setBidReminderTelegramEnabled,
+    autoDispatchEnabled, setAutoDispatchEnabled,
     exciseDutyPct, setExciseDutyPct, transformerLossPct, setTransformerLossPct,
     launchDate, setLaunchDate, saveSettings,
   } = useApp();
@@ -86,6 +87,25 @@ export default function Settings() {
             />
             Telegram-нагадування про дії з заявками РДН/ВДР (щодня о 10:00)
           </label>
+        </div>
+
+        <div className="form-group">
+          <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={autoDispatchEnabled}
+              onChange={(e) => setAutoDispatchEnabled(e.target.checked)}
+            />
+            Автоматична подача заявок (без ручного підтвердження диспетчера)
+          </label>
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '6px 0 0' }}>
+            Вимкнено (за замовчуванням) — система лише готує заявки й нагадує диспетчеру,
+            остаточну подачу робить людина вручну. Увімкнено — заявки на завтра подаються
+            автоматично щоранку о 06:00, без очікування на диспетчера. Це підстраховка на
+            випадок, якщо диспетчер не встигне подати заявки вчасно (батарея інакше або
+            простоює, або — гірше — заявки виставляться на нульовий обсяг), а не заміна
+            ручного контролю за замовчуванням.
+          </p>
         </div>
 
         <button className="btn" style={{ width: '100%', marginTop: '10px' }} onClick={saveSettings}>

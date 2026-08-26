@@ -1,4 +1,6 @@
 import datetime
+import json
+import os
 import pandas as pd
 import numpy as np
 from sqlalchemy.orm import Session
@@ -14,7 +16,23 @@ from src.modules.scada_service.soc_state import get_current_soc_fraction
 from src.modules.bidding_service.services import generate_bids_for_date, submit_bids_for_date, settle_bids_for_date
 from src.database.session import SessionLocal
 from src.database.models import Asset, PriceForecast, ChargeDischargePlan, MarketPrice
+from src.core.config import settings
 from src.core.time_utils import kyiv_to_utc, utc_to_kyiv, kyiv_day_bounds
+
+
+def _auto_dispatch_enabled() -> bool:
+    """Читає прапорець з system_settings.json (SystemSettingsModel-патерн,
+    той самий, що telegram_bot.py::_bid_reminder_enabled) — за замовчуванням
+    False, власник батареї свідомо вмикає автоматичну подачу заявок
+    ("віртуальний диспетчер", CLAUDE.md п.41)."""
+    path = os.path.join(settings.DATA_DIR, "system_settings.json")
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                return bool(json.load(f).get("auto_dispatch_enabled", False))
+        except Exception:
+            pass
+    return False
 
 def run_daily_forecast_and_optimization():
     print(f"[{datetime.datetime.now()}] Background Scheduler: Starting daily forecast and optimization job...")
@@ -163,17 +181,26 @@ def run_daily_forecast_and_optimization():
         db.commit()
         print(f"[{datetime.datetime.now()}] Background Scheduler: Successfully completed daily forecast and BESS optimization plan.")
 
-        # 7. Віртуальний диспетчер (2026-08-26) — генерація + емульована подача
-        # заявок одразу після плану, тим самим ланцюжком, а не окремою джобою
-        # (уникає ризику розсинхронізації розкладу). Обгорнуто в свій
-        # try/except — збій тут не повинен "стирати" вже успішно порахований
-        # і закомічений прогноз/план вище.
+        # 7. Віртуальний диспетчер (2026-08-26) — генерація заявок одразу після
+        # плану, тим самим ланцюжком, а не окремою джобою (уникає ризику
+        # розсинхронізації розкладу). Генерація відбувається ЗАВЖДИ (та сама
+        # філософія, що вже описана в MEMORY.md §8 — "програма керує процесом,
+        # готує пропозицію" — дispatcher бачить її у BidActionCenter/Telegram
+        # незалежно від режиму); (емульована) ПОДАЧА — лише коли власник
+        # батареї явно увімкнув auto_dispatch_enabled у Settings (за
+        # замовчуванням вимкнено — інакше диспетчер вручну вносить заявку в
+        # кабінет OREE, як і раніше). Обгорнуто в свій try/except — збій тут
+        # не повинен "стирати" вже успішно порахований і закомічений
+        # прогноз/план вище.
         try:
             bid_result = generate_bids_for_date(db, asset, target_dt_start)
             print(f"Bid generation: {bid_result.get('status')}, n_bids={bid_result.get('n_bids')}")
             if bid_result.get('status') == 'ok':
-                submit_result = submit_bids_for_date(db, asset, target_dt_start)
-                print(f"Bid submission (emulated): {submit_result.get('status')}, n_submitted={submit_result.get('n_submitted')}")
+                if _auto_dispatch_enabled():
+                    submit_result = submit_bids_for_date(db, asset, target_dt_start)
+                    print(f"Bid submission (emulated): {submit_result.get('status')}, n_submitted={submit_result.get('n_submitted')}")
+                else:
+                    print("Auto-dispatch disabled (Settings) — bids prepared, awaiting manual submission by dispatcher.")
         except Exception as bid_err:
             db.rollback()
             print(f"Warning: automated bid generation/submission failed: {bid_err}")

@@ -105,6 +105,7 @@ interface AppState {
   efficiency: number; setEfficiency: (v: number) => void;
   maxCyclesPerDay: number; setMaxCyclesPerDay: (v: number) => void;
   bidReminderTelegramEnabled: boolean; setBidReminderTelegramEnabled: (v: boolean) => void;
+  autoDispatchEnabled: boolean; setAutoDispatchEnabled: (v: boolean) => void;
   exciseDutyPct: number; setExciseDutyPct: (v: number) => void;
   transformerLossPct: number; setTransformerLossPct: (v: number) => void;
   launchDate: string; setLaunchDate: (v: string) => void;
@@ -174,6 +175,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [efficiency, setEfficiency] = useState(95);
   const [maxCyclesPerDay, setMaxCyclesPerDay] = useState(1.5);
   const [bidReminderTelegramEnabled, setBidReminderTelegramEnabled] = useState(true);
+  // За замовчуванням ВИМКНЕНО — власник батареї свідомо вмикає повну
+  // автоматизацію подачі заявок (2026-08-26, "віртуальний диспетчер").
+  // Безпечний дефолт: реальний фінансовий/ринковий ризик, явна згода.
+  const [autoDispatchEnabled, setAutoDispatchEnabled] = useState(false);
   const [exciseDutyPct, setExciseDutyPct] = useState(0);
   const [transformerLossPct, setTransformerLossPct] = useState(0);
   const [launchDate, setLaunchDate] = useState('2026-01-01');
@@ -233,6 +238,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setEfficiency(data.efficiency_pct);
       if (data.max_cycles_per_day != null) setMaxCyclesPerDay(data.max_cycles_per_day);
       if (data.bid_reminder_telegram_enabled != null) setBidReminderTelegramEnabled(data.bid_reminder_telegram_enabled);
+      if (data.auto_dispatch_enabled != null) setAutoDispatchEnabled(data.auto_dispatch_enabled);
       if (data.excise_duty_pct != null) setExciseDutyPct(data.excise_duty_pct);
       if (data.transformer_loss_pct != null) setTransformerLossPct(data.transformer_loss_pct);
     }).catch(() => {});
@@ -310,6 +316,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         capacity_kw: capacity, power_kw: power, efficiency_pct: efficiency,
         max_cycles_per_day: maxCyclesPerDay,
         bid_reminder_telegram_enabled: bidReminderTelegramEnabled,
+        auto_dispatch_enabled: autoDispatchEnabled,
         excise_duty_pct: exciseDutyPct,
         transformer_loss_pct: transformerLossPct,
       });
@@ -317,7 +324,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } catch (e: any) {
       addLog('API', `Помилка збереження налаштувань: ${e.message}`, 'error');
     }
-  }, [activeRole, launchDate, osr, voltageClass, margin, capacity, power, efficiency, maxCyclesPerDay, bidReminderTelegramEnabled, exciseDutyPct, transformerLossPct, addLog]);
+  }, [activeRole, launchDate, osr, voltageClass, margin, capacity, power, efficiency, maxCyclesPerDay, bidReminderTelegramEnabled, autoDispatchEnabled, exciseDutyPct, transformerLossPct, addLog]);
 
   useEffect(() => {
     if (!activeAssetId) return;
@@ -665,6 +672,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     osr, setOsr, voltageClass, setVoltageClass, margin, setMargin,
     capacity, setCapacity, power, setPower, efficiency, setEfficiency,
     maxCyclesPerDay, setMaxCyclesPerDay, bidReminderTelegramEnabled, setBidReminderTelegramEnabled,
+    autoDispatchEnabled, setAutoDispatchEnabled,
     exciseDutyPct, setExciseDutyPct, transformerLossPct, setTransformerLossPct,
     launchDate, setLaunchDate, saveSettings,
     capex, setCapex, discountRate, setDiscountRate, lifetime, setLifetime,
@@ -682,7 +690,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     gridStress, saveGridStressOverride, clearGridStressOverride,
     bidMargin, saveBidMarginAndRegenerate, clearBidMarginAndRegenerate,
     bids, refreshBids, actionSummary, refreshActionSummary, generateBidsNow, settleBidsNow,
-    osr, voltageClass, margin, capacity, power, efficiency, maxCyclesPerDay, bidReminderTelegramEnabled, launchDate, saveSettings,
+    osr, voltageClass, margin, capacity, power, efficiency, maxCyclesPerDay, bidReminderTelegramEnabled, autoDispatchEnabled, launchDate, saveSettings,
     capex, discountRate, lifetime, systemLogs, addLog, auditLogs,
     showApprovalModal, pendingAction, approvalToken, triggerFourEyesApproval, executeApprovedAction, cancelApproval,
   ]);

@@ -495,6 +495,7 @@ class SystemSettingsModel(BaseModel):
     baseload_passthrough_ratio: Optional[float] = None
     max_cycles_per_day: Optional[float] = None
     bid_reminder_telegram_enabled: Optional[bool] = None
+    auto_dispatch_enabled: Optional[bool] = None
     excise_duty_pct: Optional[float] = None
     transformer_loss_pct: Optional[float] = None
 
@@ -521,6 +522,12 @@ DEFAULT_BASELOAD_PASSTHROUGH_RATIO = 0.3
 # services.py::build_daily_action_summary, telegram_bot.py::check_and_send_bid_reminder)
 # — за замовчуванням True (нагадування вимкнене лише якщо диспетчер сам вимкнув).
 DEFAULT_BID_REMINDER_TELEGRAM_ENABLED = True
+
+# "Віртуальний диспетчер" (2026-08-26, CLAUDE.md п.41) — за замовчуванням
+# ВИМКНЕНО: власник батареї свідомо вмикає повну автоматизацію подачі
+# заявок (scheduler.py::run_daily_forecast_and_optimization п.7). Реальний
+# фінансовий/ринковий ризик — явна згода, не тихий дефолт.
+DEFAULT_AUTO_DISPATCH_ENABLED = False
 
 # Акциз (3.2%) і втрати трансформаторного обладнання (1.5-2.5%) — з
 # зовнішнього ревью 2026-08-24 (CLAUDE.md п.32). Застосовність до цієї
@@ -557,6 +564,7 @@ async def get_system_settings():
         "hydro_reference_capacity_mw": DEFAULT_HYDRO_REFERENCE_CAPACITY_MW,
         "baseload_passthrough_ratio": DEFAULT_BASELOAD_PASSTHROUGH_RATIO,
         "bid_reminder_telegram_enabled": DEFAULT_BID_REMINDER_TELEGRAM_ENABLED,
+        "auto_dispatch_enabled": DEFAULT_AUTO_DISPATCH_ENABLED,
         "excise_duty_pct": DEFAULT_EXCISE_DUTY_PCT,
         "transformer_loss_pct": DEFAULT_TRANSFORMER_LOSS_PCT,
     }
@@ -565,7 +573,7 @@ async def get_system_settings():
         try:
             with open(path, "r") as f:
                 saved = json.load(f)
-                for key in ("launch_date", "osr", "voltage_class", "margin", "nuclear_reference_capacity_mw", "hydro_reference_capacity_mw", "baseload_passthrough_ratio", "bid_reminder_telegram_enabled", "excise_duty_pct", "transformer_loss_pct"):
+                for key in ("launch_date", "osr", "voltage_class", "margin", "nuclear_reference_capacity_mw", "hydro_reference_capacity_mw", "baseload_passthrough_ratio", "bid_reminder_telegram_enabled", "auto_dispatch_enabled", "excise_duty_pct", "transformer_loss_pct"):
                     if key in saved:
                         data[key] = saved[key]
         except Exception:
@@ -606,6 +614,7 @@ async def save_system_settings(req: SystemSettingsModel):
             "hydro_reference_capacity_mw": req.hydro_reference_capacity_mw if req.hydro_reference_capacity_mw is not None else DEFAULT_HYDRO_REFERENCE_CAPACITY_MW,
             "baseload_passthrough_ratio": req.baseload_passthrough_ratio if req.baseload_passthrough_ratio is not None else DEFAULT_BASELOAD_PASSTHROUGH_RATIO,
             "bid_reminder_telegram_enabled": req.bid_reminder_telegram_enabled if req.bid_reminder_telegram_enabled is not None else DEFAULT_BID_REMINDER_TELEGRAM_ENABLED,
+            "auto_dispatch_enabled": req.auto_dispatch_enabled if req.auto_dispatch_enabled is not None else DEFAULT_AUTO_DISPATCH_ENABLED,
             "excise_duty_pct": req.excise_duty_pct if req.excise_duty_pct is not None else DEFAULT_EXCISE_DUTY_PCT,
             "transformer_loss_pct": req.transformer_loss_pct if req.transformer_loss_pct is not None else DEFAULT_TRANSFORMER_LOSS_PCT,
         }
