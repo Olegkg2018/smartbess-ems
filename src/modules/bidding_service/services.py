@@ -88,12 +88,14 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
     # раз стирав уже подану/звірену заявку на години, що вже минули,
     # включно з фактом подачі (external_order_id) і звірки (executed/
     # actual_price_uah) — реальна історія зникала без сліду). Майбутні
-    # години, як і раніше, перераховуються завжди.
+    # години, як і раніше, перераховуються завжди. Межа — КІНЕЦЬ години
+    # (не початок) — та сама узгоджена межа, що й у
+    # run_optimization_background_job, інакше знову розійдуться.
     now_utc = datetime.datetime.utcnow()
 
     bids = []
     for p in plans:
-        if not force_full_day and p.timestamp <= now_utc:
+        if not force_full_day and p.timestamp + datetime.timedelta(hours=1) <= now_utc:
             continue
         hour = utc_to_kyiv(p.timestamp).hour
         forecast_price = forecast_by_hour.get(hour)
