@@ -35,11 +35,17 @@ class Settings(BaseSettings):
     # роль через curl). Перевизначити через .env для розгорнутих інстансів.
     MOCK_JWT_SECRET: str = "dev-mock-secret-change-me"
     BESS_LAUNCH_DATE: str = "2026-01-01"
-    # Єдиний реально існуючий сьогодні режим SCADA — Modbus-симулятор.
-    # Реального обладнання не підключено (див. CLAUDE.md), тому вимкнення
-    # цього прапорця просто зупиняє симуляцію/запис телеметрії, а не вмикає
-    # якийсь інший "реальний" режим.
+    # SCADA_SIMULATOR_ENABLED=True — стартує власний Modbus-симулятор
+    # (bess_simulator.py) на BESS_MODBUS_HOST/PORT. Для підключення до
+    # РЕАЛЬНОЇ батареї (2026-08-26: перевірено на офіційній Huawei-документації
+    # "LUNA2000B ESS Modbus Port Definitions"/"SmartLogger Modbus Interface
+    # Definitions" — той самий реальний регістровий протокол використовує і
+    # наш симулятор, і клієнт scada_service.py) — вимкнути симулятор
+    # (SCADA_SIMULATOR_ENABLED=False) і вказати реальні host/port батареї;
+    # клієнтський код МІНЯТИ НЕ ТРЕБА.
     SCADA_SIMULATOR_ENABLED: bool = True
+    BESS_MODBUS_HOST: str = "127.0.0.1"
+    BESS_MODBUS_PORT: int = 5020
 
     class Config:
         env_file = ".env"

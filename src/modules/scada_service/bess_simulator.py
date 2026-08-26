@@ -3,7 +3,7 @@ import threading
 import math
 from pymodbus.server import StartAsyncTcpServer
 from pymodbus.pdu.device import ModbusDeviceIdentification
-from pymodbus.datastore import ModbusSequentialDataBlock, ModbusDeviceContext, ModbusServerContext
+from pymodbus.simulator import SimData, SimDevice, DataType
 import asyncio
 
 from src.core.config import settings
@@ -37,8 +37,36 @@ def _load_asset_limits():
     finally:
         db.close()
 
-# Datastore block (holding registers, 6 registers starting at address 1)
-block = ModbusSequentialDataBlock(1, [0, 200, 0, 200, 1000, 0])
+# Реєстри 0-5: [state, soc×10, power_kw (i16, unsigned wire repr), temp×10,
+# soh×10, target_power_cmd]. Спільний стан між фізичним циклом (пише) і
+# device_action (сервує клієнтам) — прості int-присвоєння в списку, GIL
+# робить це безпечним для одного читача/одного писача без явного лока.
+#
+# 2026-08-26: перехід зі старого ModbusSequentialDataBlock +
+# `block.simdata[0].values[:6] = [...]` на SimData/SimDevice + action —
+# перший підхід у встановленій версії pymodbus (3.13.1, requirements.txt
+# не фіксує версію) НЕ проганяв записані сервером значення до клієнта
+# через мережу (deprecated API, реально мовчки не працює — перевірено
+# прямим TCP-підключенням: клієнт завжди бачив початкові статичні
+# значення, попри працюючий фізичний цикл). SimData/SimDevice —
+# задокументований, реально перевірений робочий шлях у цій версії.
+_regs = [0, 200, 0, 200, 1000, 0]
+
+
+async def _device_action(function_code, start_address, address, count, current_registers, set_values):
+    offset = address - start_address
+    if set_values is not None:
+        for i, v in enumerate(set_values):
+            idx = offset + i
+            if 0 <= idx < len(_regs):
+                _regs[idx] = v
+        return None
+    for i in range(count):
+        idx = offset + i
+        if idx < len(_regs):
+            current_registers[i] = _regs[idx]
+    return None
+
 
 def run_physical_simulation():
     print("SCADA: Starting battery physical simulation thread...")
@@ -50,8 +78,7 @@ def run_physical_simulation():
 
     while True:
         try:
-            values = block.simdata[0].values
-            target_power_raw = values[5]
+            target_power_raw = _regs[5]
             if target_power_raw > 32767:
                 target_power = target_power_raw - 65536
             else:
@@ -82,42 +109,54 @@ def run_physical_simulation():
             else:
                 current_power = 0.0
                 state = 0
-                
+
             loss = abs(current_power) * (1.0 - EFFICIENCY)
             heating_rate = loss * 0.15
             cooling_rate = (temp - AMBIENT_TEMP) * 0.02
             temp += (heating_rate - cooling_rate) * 1.0
-            
+
             if abs(current_power) > 0:
                 throughput = abs(current_power) * dt
                 degradation = (throughput / CAPACITY_KWH) * 0.0005
                 soh = max(0.0, soh - degradation)
-                
+
             soc_pct_reg = int((soc_kwh / CAPACITY_KWH) * 1000)
             power_reg = int(current_power)
             if power_reg < 0:
                 power_reg += 65536
             temp_reg = int(temp * 10)
             soh_reg = int(soh * 10)
-            
-            block.simdata[0].values[:6] = [state, soc_pct_reg, power_reg, temp_reg, soh_reg, values[5]]
+
+            _regs[0] = state
+            _regs[1] = soc_pct_reg
+            _regs[2] = power_reg
+            _regs[3] = temp_reg
+            _regs[4] = soh_reg
+            # _regs[5] (target_power_cmd) навмисно НЕ чіпаємо тут — це
+            # WRITE-регістр клієнта, читаний вище через target_power_raw.
         except Exception as e:
             print(f"Error in BESS simulation step: {e}")
         time.sleep(1.0)
 
+
 async def start_modbus_server():
-    store = ModbusDeviceContext(hr=block, ir=block, co=block, di=block)
-    context = ModbusServerContext(devices=store, single=True)
-    
     identity = ModbusDeviceIdentification()
     identity.VendorName = 'SmartBESS'
     identity.ProductCode = 'SB-1000'
     identity.VendorUrl = 'https://github.com/Olegkg2018/ua-energy-arbitrage'
     identity.ProductName = 'BESS Simulator'
     identity.ModelName = 'SmartBESS 1.0'
-    
-    print("SCADA: Starting Modbus TCP Server on 127.0.0.1:5020...")
-    await StartAsyncTcpServer(context=context, identity=identity, address=("127.0.0.1", 5020))
+
+    device = SimDevice(
+        id=1,
+        simdata=[SimData(address=0, count=6, values=list(_regs), datatype=DataType.REGISTERS)],
+        action=_device_action,
+        identity=identity,
+    )
+    host = settings.BESS_MODBUS_HOST
+    port = settings.BESS_MODBUS_PORT
+    print(f"SCADA: Starting Modbus TCP Server on {host}:{port}...")
+    await StartAsyncTcpServer(context=device, address=(host, port))
 
 def run_simulator_process():
     t = threading.Thread(target=run_physical_simulation, daemon=True)

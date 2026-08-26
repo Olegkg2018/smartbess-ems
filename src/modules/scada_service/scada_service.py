@@ -4,26 +4,25 @@ import threading
 from pymodbus.client import ModbusTcpClient
 from sqlalchemy.orm import Session
 
+from src.core.config import settings
 from src.database.session import SessionLocal
 from src.database.models import Asset, BessTelemetry, ChargeDischargePlan
-
-# SCADA configuration
-BESS_IP = "127.0.0.1"
-BESS_PORT = 5020
 
 scada_thread = None
 stop_flag = False
 
 def poll_bess_and_control():
-    print("SCADA: Starting EMS control loop...")
-    client = ModbusTcpClient(BESS_IP, port=BESS_PORT)
-    
+    bess_ip = settings.BESS_MODBUS_HOST
+    bess_port = settings.BESS_MODBUS_PORT
+    print(f"SCADA: Starting EMS control loop (target {bess_ip}:{bess_port})...")
+    client = ModbusTcpClient(bess_ip, port=bess_port)
+
     while not stop_flag:
         db = SessionLocal()
         try:
             connected = client.connect()
             if not connected:
-                print(f"SCADA Error: Could not connect to BESS at {BESS_IP}:{BESS_PORT}")
+                print(f"SCADA Error: Could not connect to BESS at {bess_ip}:{bess_port}")
                 time.sleep(10.0)
                 continue
                 
