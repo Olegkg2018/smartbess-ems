@@ -282,6 +282,16 @@ class MarketBid(Base):
     external_order_id = Column(String(64), nullable=True)
     oree_submission_status = Column(String(20), nullable=True)
     submitted_at = Column(DateTime, nullable=True)
+    # ВДР-фолбек для невиконаних годин (2026-08-26, настроюваний сценарій
+    # віртуального диспетчера) — окремі поля від external_order_id/
+    # submitted_at вище (ті — про РДН-заявку, ці — про ВДР-заявку на ТУ Ж
+    # годину, якщо РДН не виконалась). idm_fallback_acknowledged=True —
+    # диспетчер вручну підтвердив, що сам розібрався (подав на ВДР сам,
+    # або свідомо вирішив нічого не робити) — авто-фолбек цю годину більше
+    # не займає, навіть якщо ще не подано.
+    idm_fallback_acknowledged = Column(Boolean, nullable=True)
+    idm_external_order_id = Column(String(64), nullable=True)
+    idm_submitted_at = Column(DateTime, nullable=True)
 
 class MarketBidSocFeasibility(Base):
     """

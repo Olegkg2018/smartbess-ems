@@ -301,6 +301,15 @@ export interface MarketBid {
   idm_fallback_profit_uah: number | null;
   bid_price_legally_clamped: boolean;
   oree_bid_price_bounds_uah: { min: number; max: number };
+  forecast_run_id: string | null;
+  // Емуляція подачі на РДН (oree_client.py) — НЕ реальна подача на біржу.
+  external_order_id: string | null;
+  oree_submission_status: string | null;
+  submitted_at: string | null;
+  // ВДР-фолбек — окремо від РДН-подачі вище (та сама заявка, інший ринок).
+  idm_fallback_acknowledged: boolean | null;
+  idm_external_order_id: string | null;
+  idm_submitted_at: string | null;
 }
 
 export async function fetchBids(role: UserRole, assetId: string, date: string): Promise<{ date: string; asset_id: string; bids: MarketBid[] }> {
@@ -339,6 +348,40 @@ export async function settleBids(role: UserRole, assetId: string, date: string):
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ asset_id: assetId, date }),
+  });
+}
+
+export async function acknowledgeIdmFallback(role: UserRole, assetId: string, date: string, hour: number) {
+  return authJson(role, '/api/v1/bids/idm-fallback/acknowledge', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ asset_id: assetId, date, hour }),
+  });
+}
+
+export interface DispatcherScheduleItem {
+  action: string;
+  hour: number;
+  minute: number;
+  enabled: boolean;
+}
+
+export interface DispatcherAction {
+  action: string;
+  label: string;
+  default_hour: number;
+  default_minute: number;
+}
+
+export async function fetchDispatcherSchedule(role: UserRole): Promise<{ schedule: DispatcherScheduleItem[]; available_actions: DispatcherAction[] }> {
+  return authJson(role, '/api/v1/optimization/dispatcher-schedule');
+}
+
+export async function saveDispatcherSchedule(role: UserRole, schedule: DispatcherScheduleItem[]) {
+  return authJson(role, '/api/v1/optimization/dispatcher-schedule', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(schedule),
   });
 }
 

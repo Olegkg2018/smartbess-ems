@@ -95,6 +95,12 @@ interface AppState {
   refreshActionSummary: () => Promise<void>;
   generateBidsNow: () => Promise<void>;
   settleBidsNow: () => Promise<void>;
+  acknowledgeIdmFallbackNow: (hour: number) => Promise<void>;
+
+  dispatcherSchedule: api.DispatcherScheduleItem[] | null;
+  dispatcherActions: api.DispatcherAction[];
+  refreshDispatcherSchedule: () => Promise<void>;
+  saveDispatcherScheduleNow: (schedule: api.DispatcherScheduleItem[]) => Promise<void>;
 
   // BESS technical settings
   osr: string; setOsr: (v: string) => void;
@@ -175,6 +181,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [bidMargin, setBidMargin] = useState<BidMargin | null>(null);
   const [bids, setBids] = useState<MarketBid[] | null>(null);
   const [actionSummary, setActionSummary] = useState<api.ActionSummary | null>(null);
+  const [dispatcherSchedule, setDispatcherSchedule] = useState<api.DispatcherScheduleItem[] | null>(null);
+  const [dispatcherActions, setDispatcherActions] = useState<api.DispatcherAction[]>([]);
 
   const [osr, setOsr] = useState('dtek_kiev_regional');
   const [voltageClass, setVoltageClass] = useState(1);
@@ -271,6 +279,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (data.bess_modbus_unit_id != null) setBessModbusUnitId(data.bess_modbus_unit_id);
       if (data.excise_duty_pct != null) setExciseDutyPct(data.excise_duty_pct);
       if (data.transformer_loss_pct != null) setTransformerLossPct(data.transformer_loss_pct);
+    }).catch(() => {});
+    api.fetchDispatcherSchedule(activeRole).then((r) => {
+      setDispatcherSchedule(r.schedule);
+      setDispatcherActions(r.available_actions);
     }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeAssetId]);
@@ -566,6 +578,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [activeRole, activeAssetId, targetDate, addLog, refreshBids, refreshActionSummary]);
 
+  const acknowledgeIdmFallbackNow = useCallback(async (hour: number) => {
+    if (!activeAssetId) return;
+    try {
+      await api.acknowledgeIdmFallback(activeRole, activeAssetId, targetDate, hour);
+      addLog('BIDS', `Година ${hour} на ${targetDate}: диспетчер підтвердив, що ВДР-фолбек опрацьовано вручну.`, 'success');
+      await refreshBids();
+      await refreshActionSummary();
+    } catch (e: any) {
+      addLog('API', `Помилка підтвердження ВДР-фолбеку: ${e.message}`, 'error');
+    }
+  }, [activeRole, activeAssetId, targetDate, addLog, refreshBids, refreshActionSummary]);
+
+  const refreshDispatcherSchedule = useCallback(async () => {
+    try {
+      const r = await api.fetchDispatcherSchedule(activeRole);
+      setDispatcherSchedule(r.schedule);
+      setDispatcherActions(r.available_actions);
+    } catch (e: any) {
+      addLog('API', `Помилка завантаження сценарію віртуального диспетчера: ${e.message}`, 'error');
+    }
+  }, [activeRole, addLog]);
+
+  const saveDispatcherScheduleNow = useCallback(async (schedule: api.DispatcherScheduleItem[]) => {
+    try {
+      await api.saveDispatcherSchedule(activeRole, schedule);
+      addLog('SETTINGS', 'Сценарій роботи віртуального диспетчера збережено та застосовано (без рестарту сервера).', 'success');
+      await refreshDispatcherSchedule();
+    } catch (e: any) {
+      addLog('API', `Помилка збереження сценарію віртуального диспетчера: ${e.message}`, 'error');
+    }
+  }, [activeRole, addLog, refreshDispatcherSchedule]);
+
   const refreshBidMargin = useCallback(async () => {
     if (!activeAssetId) return;
     try {
@@ -707,7 +751,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     initialSoc, saveInitialSocAndRecalculate, clearInitialSocAndRecalculate,
     gridStress, saveGridStressOverride, clearGridStressOverride,
     bidMargin, saveBidMarginAndRegenerate, clearBidMarginAndRegenerate,
-    bids, refreshBids, actionSummary, refreshActionSummary, generateBidsNow, settleBidsNow,
+    bids, refreshBids, actionSummary, refreshActionSummary, generateBidsNow, settleBidsNow, acknowledgeIdmFallbackNow,
+    dispatcherSchedule, dispatcherActions, refreshDispatcherSchedule, saveDispatcherScheduleNow,
     osr, setOsr, voltageClass, setVoltageClass, margin, setMargin,
     capacity, setCapacity, power, setPower, efficiency, setEfficiency,
     maxCyclesPerDay, setMaxCyclesPerDay, bidReminderTelegramEnabled, setBidReminderTelegramEnabled,
@@ -732,7 +777,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     initialSoc, saveInitialSocAndRecalculate, clearInitialSocAndRecalculate,
     gridStress, saveGridStressOverride, clearGridStressOverride,
     bidMargin, saveBidMarginAndRegenerate, clearBidMarginAndRegenerate,
-    bids, refreshBids, actionSummary, refreshActionSummary, generateBidsNow, settleBidsNow,
+    bids, refreshBids, actionSummary, refreshActionSummary, generateBidsNow, settleBidsNow, acknowledgeIdmFallbackNow,
+    dispatcherSchedule, dispatcherActions, refreshDispatcherSchedule, saveDispatcherScheduleNow,
     osr, voltageClass, margin, capacity, power, efficiency, maxCyclesPerDay, bidReminderTelegramEnabled, autoDispatchEnabled, launchDate, saveSettings,
     bessConnectionType, bessTcpHost, bessTcpPort, bessSerialPort, bessSerialBaudrate, bessSerialParity, bessSerialStopbits, bessSerialBytesize, bessModbusUnitId,
     capex, discountRate, lifetime, systemLogs, addLog, auditLogs,

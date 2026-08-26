@@ -12,7 +12,7 @@ export default function OptimizationSchedule() {
   const {
     optimizationResult, manualOverrides, setManualOverrides, dispatchProfile, targetDate, capacity, power, saveOverrides, resetOverridesToOptimal,
     initialSoc, saveInitialSocAndRecalculate, clearInitialSocAndRecalculate, forecastPrices,
-    bidMargin, saveBidMarginAndRegenerate, clearBidMarginAndRegenerate, bids, generateBidsNow, settleBidsNow,
+    bidMargin, saveBidMarginAndRegenerate, clearBidMarginAndRegenerate, bids, generateBidsNow, settleBidsNow, acknowledgeIdmFallbackNow,
     activeRole, activeAssetId, addLog,
   } = useApp();
 
@@ -237,6 +237,24 @@ export default function OptimizationSchedule() {
                       ) : b.idm_fallback_suggested ? (
                         <span style={{ color: 'var(--color-amber)' }}>
                           ВДР ~{Math.round(b.idm_fallback_price_uah ?? 0).toLocaleString()} грн/МВт·год → {Math.round(b.idm_fallback_profit_uah ?? 0).toLocaleString()} грн
+                          {b.idm_external_order_id ? (
+                            <span style={{ marginLeft: '6px', color: 'var(--color-emerald)' }} title={`Подано автоматично на ВДР: ${b.idm_external_order_id}`}>
+                              <CheckCircle2 size={12} style={{ verticalAlign: 'middle' }} /> подано
+                            </span>
+                          ) : b.idm_fallback_acknowledged ? (
+                            <span style={{ marginLeft: '6px', color: 'var(--text-muted)' }} title="Диспетчер підтвердив, що опрацював цю годину вручну">
+                              підтверджено вручну
+                            </span>
+                          ) : (
+                            <button
+                              className="btn"
+                              style={{ marginLeft: '6px', padding: '3px 8px', fontSize: '11px', backgroundColor: '#4b5563' }}
+                              title="Позначити, що ви самі подали заявку на ВДР (або свідомо вирішили нічого не робити) — автоматична подача цю годину більше не займе"
+                              onClick={() => acknowledgeIdmFallbackNow(b.hour)}
+                            >
+                              Позначити виконаним вручну
+                            </button>
+                          )}
                         </span>
                       ) : '—'}
                     </td>

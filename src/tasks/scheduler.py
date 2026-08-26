@@ -13,7 +13,9 @@ import src.modules.optimization_service.milp_model as opt
 from src.modules.reporting_service.forecast_accuracy import sync_market_prices_to_db, sync_today_market_prices_from_oree
 import src.modules.external_data_service.telegram_bot as telegram_bot
 from src.modules.scada_service.soc_state import get_current_soc_fraction
-from src.modules.bidding_service.services import generate_bids_for_date, submit_bids_for_date, settle_bids_for_date
+from src.modules.bidding_service.services import (
+    generate_bids_for_date, submit_bids_for_date, settle_bids_for_date, submit_idm_fallback_bids_for_date,
+)
 from src.database.session import SessionLocal
 from src.database.models import Asset, PriceForecast, ChargeDischargePlan, MarketPrice
 from src.core.config import settings
@@ -181,29 +183,21 @@ def run_daily_forecast_and_optimization():
         db.commit()
         print(f"[{datetime.datetime.now()}] Background Scheduler: Successfully completed daily forecast and BESS optimization plan.")
 
-        # 7. Віртуальний диспетчер (2026-08-26) — генерація заявок одразу після
-        # плану, тим самим ланцюжком, а не окремою джобою (уникає ризику
-        # розсинхронізації розкладу). Генерація відбувається ЗАВЖДИ (та сама
-        # філософія, що вже описана в MEMORY.md §8 — "програма керує процесом,
-        # готує пропозицію" — дispatcher бачить її у BidActionCenter/Telegram
-        # незалежно від режиму); (емульована) ПОДАЧА — лише коли власник
-        # батареї явно увімкнув auto_dispatch_enabled у Settings (за
-        # замовчуванням вимкнено — інакше диспетчер вручну вносить заявку в
-        # кабінет OREE, як і раніше). Обгорнуто в свій try/except — збій тут
-        # не повинен "стирати" вже успішно порахований і закомічений
-        # прогноз/план вище.
+        # 7. Генерація чернетки заявок одразу після плану (та сама транзакція,
+        # уникає ризику розсинхронізації розкладу) — ЗАВЖДИ, незалежно від
+        # режиму диспетчера (та сама філософія, що вже описана в MEMORY.md §8:
+        # "програма керує процесом, готує пропозицію" — дispatcher бачить її у
+        # BidActionCenter/Telegram незалежно від режиму). ПОДАЧА — окрема
+        # настроювана дія `auto_submit_bids` (див. DISPATCHER_ACTIONS нижче,
+        # "настроюваний сценарій віртуального диспетчера", 2026-08-26) —
+        # свідомо НЕ тут, щоб дати реальному диспетчеру вікно на ручну правку
+        # суми до дедлайну заявки (~12:00), а не подавати миттєво о 06:00.
         try:
             bid_result = generate_bids_for_date(db, asset, target_dt_start)
             print(f"Bid generation: {bid_result.get('status')}, n_bids={bid_result.get('n_bids')}")
-            if bid_result.get('status') == 'ok':
-                if _auto_dispatch_enabled():
-                    submit_result = submit_bids_for_date(db, asset, target_dt_start)
-                    print(f"Bid submission (emulated): {submit_result.get('status')}, n_submitted={submit_result.get('n_submitted')}")
-                else:
-                    print("Auto-dispatch disabled (Settings) — bids prepared, awaiting manual submission by dispatcher.")
         except Exception as bid_err:
             db.rollback()
-            print(f"Warning: automated bid generation/submission failed: {bid_err}")
+            print(f"Warning: automated bid generation failed: {bid_err}")
     except Exception as e:
         db.rollback()
         print(f"Error in background scheduler job: {e}")
@@ -261,8 +255,8 @@ def run_bid_reminder_check():
     Читає ІСНУЮЧИЙ стан заявок (сьогодні/завтра) і шле Telegram-нагадування
     диспетчеру зі списком конкретних дій — сама нічого не генерує й не
     звіряє (генерація/подача/звірка автоматизовані окремо — див.
-    run_daily_forecast_and_optimization п.7 і run_daily_bid_settlement,
-    "віртуальний диспетчер", 2026-08-26), тільки читає вже наявні
+    DISPATCHER_ACTIONS/reschedule_virtual_dispatcher_jobs, "настроюваний
+    сценарій віртуального диспетчера", 2026-08-26), тільки читає вже наявні
     MarketBid через build_daily_action_summary.
     """
     print(f"[{datetime.datetime.now()}] Background Scheduler: Checking bid reminder...")
@@ -287,28 +281,65 @@ def run_drift_check():
     except Exception as e:
         print(f"Warning: drift check failed: {e}")
 
-def run_daily_bid_settlement():
+def run_auto_submit_bids():
     """
-    "Віртуальний диспетчер" (2026-08-26) — звіряє ВЧОРАШНІ заявки з
-    реальною ціною РДН, той самий патерн побудови actual_prices_by_hour,
-    що вже є в bids.py::settle_bids (спершу MarketPrice з БД, якщо не всі
-    24 години — dm.fetch_oree_prices_for_month() як фолбек). Якщо й тоді
-    не 24/24 — ціна на вчора ще не опублікована повністю, чесно
-    пропускаємо, наступного дня спробуємо знову (як і nightly retrain —
-    не валимо процес).
+    Настроювана дія `auto_submit_bids` (дефолт 11:30, "настроюваний сценарій
+    віртуального диспетчера", 2026-08-26) — якщо `auto_dispatch_enabled` і є
+    заявки на завтра, ще не подані (`external_order_id IS NULL`) — подати.
+    Дефолтний час (11:30, не одразу о 06:00) свідомо дає реальному
+    диспетчеру вікно на ручну правку суми до дедлайну заявки (~12:00) —
+    якщо диспетчер уже сам щось подав/змінив до цього моменту,
+    `submit_bids_for_date` ідемпотентно пропустить вже подані заявки.
     """
-    print(f"[{datetime.datetime.now()}] Background Scheduler: Starting daily bid settlement job...")
+    print(f"[{datetime.datetime.now()}] Background Scheduler: auto_submit_bids...")
+    if not _auto_dispatch_enabled():
+        print("auto_submit_bids: auto-dispatch disabled (Settings) — skipping, dispatcher submits manually.")
+        return
     db = SessionLocal()
     try:
         asset = db.query(Asset).first()
         if not asset:
-            print("Warning: No BESS asset found in database. Skipping settlement.")
+            print("Warning: No BESS asset found in database. Skipping.")
+            return
+        tomorrow_str = (utc_to_kyiv(datetime.datetime.utcnow()).date() + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+        target_dt = kyiv_to_utc(tomorrow_str, 0)
+        result = submit_bids_for_date(db, asset, target_dt)
+        print(f"auto_submit_bids for {tomorrow_str}: {result.get('status')}, n_submitted={result.get('n_submitted')}")
+    except Exception as e:
+        db.rollback()
+        print(f"Error in auto_submit_bids job: {e}")
+    finally:
+        db.close()
+
+
+def run_reconcile_bids():
+    """
+    Настроювана дія `reconcile_bids` (дефолт 13:00, "настроюваний сценарій
+    віртуального диспетчера", 2026-08-26) — звіряє заявки на ЗАВТРА з
+    реальною ціною закриття РДН, який щойно (о 12:00) закрив ворота на
+    завтрашню добу. РДН — аукціон "на добу наперед": ціна закриття відома
+    ОДРАЗУ після закриття воріт, а не після фізичного настання доби D —
+    тому звіряти можна вже СЬОГОДНІ (раніша версія цієї джоби помилково
+    звіряла ВЧОРАШНІ заявки НАСТУПНОГО дня о 05:30 — на той момент усі
+    можливі вікна ВДР-фолбеку для тих годин уже фізично закрились).
+    Виконується ЗАВЖДИ (інформаційно для диспетчера, незалежно від режиму),
+    не гейтиться `auto_dispatch_enabled`. Той самий патерн побудови
+    actual_prices_by_hour, що вже є в bids.py::settle_bids (спершу
+    MarketPrice з БД, якщо не всі 24 години — dm.fetch_oree_prices_for_month()
+    як фолбек). Якщо й тоді не 24/24 — ціна ще не опублікована повністю,
+    чесно пропускаємо (не валимо процес).
+    """
+    print(f"[{datetime.datetime.now()}] Background Scheduler: reconcile_bids...")
+    db = SessionLocal()
+    try:
+        asset = db.query(Asset).first()
+        if not asset:
+            print("Warning: No BESS asset found in database. Skipping reconciliation.")
             return
 
-        yesterday_kyiv = utc_to_kyiv(datetime.datetime.utcnow()).date() - datetime.timedelta(days=1)
-        yesterday_str = yesterday_kyiv.strftime('%Y-%m-%d')
-        target_dt = kyiv_to_utc(yesterday_str, 0)
-        day_start, day_end = kyiv_day_bounds(yesterday_str)
+        tomorrow_str = (utc_to_kyiv(datetime.datetime.utcnow()).date() + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+        target_dt = kyiv_to_utc(tomorrow_str, 0)
+        day_start, day_end = kyiv_day_bounds(tomorrow_str)
 
         rows = db.query(MarketPrice).filter(
             MarketPrice.timestamp >= day_start, MarketPrice.timestamp < day_end,
@@ -326,31 +357,130 @@ def run_daily_bid_settlement():
                 actual_by_hour = {utc_to_kyiv(dt.to_pydatetime()).hour: price for dt, price in zip(df_day['Datetime'], df_day['Price'])}
 
         if len(actual_by_hour) != 24:
-            print(f"Bid settlement: real РДН price for {yesterday_str} not fully published yet ({len(actual_by_hour)}/24h) — skipping, will retry tomorrow.")
+            print(f"reconcile_bids: real РДН closing price for {tomorrow_str} not fully published yet ({len(actual_by_hour)}/24h) — skipping, will retry at next scheduled run.")
             return
 
         result = settle_bids_for_date(db, asset, target_dt, actual_by_hour)
-        print(f"[{datetime.datetime.now()}] Bid settlement for {yesterday_str}: {result.get('status')}, "
+        print(f"[{datetime.datetime.now()}] reconcile_bids for {tomorrow_str}: {result.get('status')}, "
               f"n_settled={result.get('n_settled')}, total_realized_profit_uah={result.get('total_realized_profit_uah')}")
     except Exception as e:
         db.rollback()
-        print(f"Error in bid settlement job: {e}")
+        print(f"Error in reconcile_bids job: {e}")
     finally:
         db.close()
+
+
+def run_auto_submit_idm_fallback():
+    """
+    Настроювана дія `auto_submit_idm_fallback` (дефолт 14:45, "настроюваний
+    сценарій віртуального диспетчера", 2026-08-26) — якщо `auto_dispatch_enabled`
+    і є заявки на завтра, для яких `reconcile_bids` вже позначив
+    `idm_fallback_suggested=True`, а диспетчер ще НЕ підтвердив сам
+    (`idm_fallback_acknowledged`, `POST /bids/idm-fallback/acknowledge`) і
+    ще не подано (`idm_external_order_id IS NULL`) — подати емульовано на
+    ВДР. Дефолтний час — до відкритого з 15:00 вікна ВДР (MEMORY.md §8),
+    даючи диспетчеру ~1.5-2 год від reconcile_bids (13:00) на реакцію.
+    """
+    print(f"[{datetime.datetime.now()}] Background Scheduler: auto_submit_idm_fallback...")
+    if not _auto_dispatch_enabled():
+        print("auto_submit_idm_fallback: auto-dispatch disabled (Settings) — skipping, dispatcher handles ВДР manually.")
+        return
+    db = SessionLocal()
+    try:
+        asset = db.query(Asset).first()
+        if not asset:
+            print("Warning: No BESS asset found in database. Skipping.")
+            return
+        tomorrow_str = (utc_to_kyiv(datetime.datetime.utcnow()).date() + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+        target_dt = kyiv_to_utc(tomorrow_str, 0)
+        result = submit_idm_fallback_bids_for_date(db, asset, target_dt)
+        print(f"auto_submit_idm_fallback for {tomorrow_str}: {result.get('status')}, n_submitted={result.get('n_submitted')}")
+    except Exception as e:
+        db.rollback()
+        print(f"Error in auto_submit_idm_fallback job: {e}")
+    finally:
+        db.close()
+
+
+# Реєстр дій "настроюваного сценарію віртуального диспетчера" (2026-08-26) —
+# розширюваний: нову дію додати пізніше means написати функцію й один рядок
+# тут, БЕЗ зміни формату system_settings.json чи фронтенду (select уже
+# ітерує цей самий реєстр). (fn, людська назва, дефолтні hour/minute).
+DISPATCHER_ACTIONS = {
+    'forecast_and_plan': (run_daily_forecast_and_optimization, 'Прогноз + MILP-план + чернетка заявок', 6, 0),
+    'auto_submit_bids': (run_auto_submit_bids, 'Автоподача заявок РДН (якщо ще не подані)', 11, 30),
+    'reconcile_bids': (run_reconcile_bids, 'Звірка заявок з ціною закриття РДН', 13, 0),
+    'auto_submit_idm_fallback': (run_auto_submit_idm_fallback, 'Автоподача ВДР-заявки для невиконаних годин', 14, 45),
+}
+
+
+def _load_dispatcher_schedule() -> list:
+    """Читає virtual_dispatcher_schedule з system_settings.json (той самий
+    патерн, що _auto_dispatch_enabled) — якщо не збережено, повертає дефолт
+    із DISPATCHER_ACTIONS (усі 4 дії увімкнені за дефолтним часом)."""
+    default = [
+        {'action': action_id, 'hour': h, 'minute': m, 'enabled': True}
+        for action_id, (_, _, h, m) in DISPATCHER_ACTIONS.items()
+    ]
+    path = os.path.join(settings.DATA_DIR, "system_settings.json")
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                saved = json.load(f).get("virtual_dispatcher_schedule")
+            if saved:
+                return saved
+        except Exception:
+            pass
+    return default
+
+
+def reschedule_virtual_dispatcher_jobs():
+    """Перебудовує APScheduler-джоби дій диспетчера за поточним розкладом
+    (system_settings.json) — викликається і при старті, і одразу після
+    POST /optimization/dispatcher-schedule (живе застосування, без
+    рестарту сервера — на відміну від BESS-підключення, це лише cron-час).
+    Невідомий action_id (напр. застаріле збережене значення) чесно
+    пропускається з попередженням, не валить решту розкладу."""
+    schedule = _load_dispatcher_schedule()
+    seen_ids = set()
+    for item in schedule:
+        action_id = item.get('action')
+        entry = DISPATCHER_ACTIONS.get(action_id)
+        if not entry:
+            print(f"Warning: unknown dispatcher action {action_id!r} in schedule — skipping.")
+            continue
+        fn, _label, _dh, _dm = entry
+        job_id = f'vdispatch_{action_id}'
+        seen_ids.add(job_id)
+        if not item.get('enabled', True):
+            if scheduler.get_job(job_id):
+                scheduler.remove_job(job_id)
+            continue
+        scheduler.add_job(
+            fn, 'cron', hour=int(item['hour']), minute=int(item['minute']),
+            id=job_id, replace_existing=True,
+        )
+    # Прибрати джоби для дій, яких більше нема в збереженому розкладі.
+    for action_id in DISPATCHER_ACTIONS:
+        job_id = f'vdispatch_{action_id}'
+        if job_id not in seen_ids and scheduler.get_job(job_id):
+            scheduler.remove_job(job_id)
+    print(f"[{datetime.datetime.now()}] Virtual dispatcher schedule applied: {[j for j in seen_ids]}")
 
 scheduler = BackgroundScheduler()
 
 def start_scheduler():
     if not scheduler.running:
-        # Run daily at 06:00 (moved from 17:30 on 2026-08-04, by request) — the
-        # target-date formula below (tomorrow = today + 1) is unchanged, this is
-        # purely a time-of-day move. Rationale: the real RDN clearing price for
-        # the target date isn't published until ~13:00+, so 06:00 still runs well
-        # before that; it also runs AFTER a full night of data accumulation
-        # (Open-Meteo weather forecast refreshes, overnight Telegram grid-stress
-        # posts) that a 17:30-the-day-before run would have missed — sync_realtime_data
-        # below simply picks up whatever is freshest at run time.
-        scheduler.add_job(run_daily_forecast_and_optimization, 'cron', hour=6, minute=0, id='daily_bess_opt')
+        # "Настроюваний сценарій віртуального диспетчера" (2026-08-26) —
+        # forecast_and_plan/auto_submit_bids/reconcile_bids/auto_submit_idm_fallback
+        # реєструються тут за розкладом із system_settings.json (дефолт —
+        # 06:00/11:30/13:00/14:45, DISPATCHER_ACTIONS вище). Rationale за
+        # дефолтний час forecast_and_plan (06:00, було колись 17:30, п.
+        # 2026-08-04): реальна ціна закриття РДН на цільову дату невідома
+        # до ~12:00+, тож 06:00 лишається задовго до цього; також після
+        # повної ночі накопичення даних (Open-Meteo/Telegram) — sync_realtime_data
+        # всередині job'и бере найсвіжіше на момент запуску.
+        reschedule_virtual_dispatcher_jobs()
         # 02:00 — ~4 hours of buffer before the 06:00 forecast job, so the fresh
         # model is already on disk in time for the same morning's forecast. Live
         # end-to-end run on 2026-08-04 (VPS, in-container) took ~13.7 min total
@@ -375,12 +505,6 @@ def start_scheduler():
         # (звіт диспетчера 2026-08-23, CLAUDE.md п.24-25) — раніше це
         # чекало наступного 06:00 job.
         scheduler.add_job(run_intraday_price_sync, 'interval', minutes=30, id='intraday_price_sync')
-        # 05:30 — 30 хв запасу до ранкового 06:00 job, звіряє ВЧОРАШНІ заявки
-        # (той самий actual_prices_by_hour-патерн, що bids.py::settle_bids).
-        # "Віртуальний диспетчер" (2026-08-26): генерація+емульована подача
-        # заявок вже автоматизовані як п.7 у run_daily_forecast_and_optimization
-        # (та сама транзакційна послідовність, не окрема джоба).
-        scheduler.add_job(run_daily_bid_settlement, 'cron', hour=5, minute=30, id='daily_bid_settlement')
         scheduler.start()
         print("Background Scheduler started successfully.")
 

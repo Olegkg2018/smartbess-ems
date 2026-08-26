@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react';
 import { useApp } from '../../state/AppContext';
+import type { DispatcherScheduleItem } from '../../api/client';
 
 export default function Settings() {
   const {
@@ -13,7 +15,32 @@ export default function Settings() {
     bessSerialPort, setBessSerialPort, bessSerialBaudrate, setBessSerialBaudrate,
     bessSerialParity, setBessSerialParity, bessSerialStopbits, setBessSerialStopbits,
     bessSerialBytesize, setBessSerialBytesize, bessModbusUnitId, setBessModbusUnitId,
+    dispatcherSchedule, dispatcherActions, saveDispatcherScheduleNow,
   } = useApp();
+
+  // Локальний чернетковий список — редагується вільно, надсилається на
+  // бекенд лише по кнопці "Зберегти сценарій" (окремий ендпоінт від
+  // saveSettings, застосовується одразу без рестарту сервера).
+  const [scheduleDraft, setScheduleDraft] = useState<DispatcherScheduleItem[]>([]);
+  useEffect(() => {
+    if (dispatcherSchedule) setScheduleDraft(dispatcherSchedule);
+  }, [dispatcherSchedule]);
+
+  const actionLabel = (action: string) => dispatcherActions.find((a) => a.action === action)?.label ?? action;
+
+  const updateRow = (idx: number, patch: Partial<DispatcherScheduleItem>) => {
+    setScheduleDraft((rows) => rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+  };
+
+  const removeRow = (idx: number) => {
+    setScheduleDraft((rows) => rows.filter((_, i) => i !== idx));
+  };
+
+  const addRow = () => {
+    const first = dispatcherActions[0];
+    if (!first) return;
+    setScheduleDraft((rows) => [...rows, { action: first.action, hour: first.default_hour, minute: first.default_minute, enabled: true }]);
+  };
 
   return (
     <div className="grid-2">
@@ -121,6 +148,62 @@ export default function Settings() {
           тепер бере ці дані з реальних джерел автоматично. Поточний стан див. на екрані
           «Стан енергосистеми» (Dispatcher Console).
         </p>
+      </div>
+
+      <div className="glass-card">
+        <h3 className="card-title" style={{ marginBottom: '16px' }}>Сценарій роботи віртуального диспетчера</h3>
+        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 16px', lineHeight: 1.5 }}>
+          Коли й що саме автоматика робить протягом доби — власник батареї налаштовує сам. Діє лише разом із
+          увімкненою вище "Автоматична подача заявок"; час застосовується одразу після збереження, без
+          перезапуску сервера. Список дій — не фіксований, у майбутньому може з'явитись нова дія віртуального
+          диспетчера.
+        </p>
+
+        {scheduleDraft.map((row, idx) => (
+          <div key={idx} className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <select
+              className="form-select"
+              style={{ flex: 2 }}
+              value={row.action}
+              onChange={(e) => updateRow(idx, { action: e.target.value })}
+            >
+              {dispatcherActions.map((a) => (
+                <option key={a.action} value={a.action}>{a.label}</option>
+              ))}
+              {!dispatcherActions.some((a) => a.action === row.action) && (
+                <option value={row.action}>{actionLabel(row.action)} (невідома дія)</option>
+              )}
+            </select>
+            <input
+              type="time"
+              className="form-input"
+              style={{ flex: 1 }}
+              value={`${String(row.hour).padStart(2, '0')}:${String(row.minute).padStart(2, '0')}`}
+              onChange={(e) => {
+                const [h, m] = e.target.value.split(':').map(Number);
+                updateRow(idx, { hour: h, minute: m });
+              }}
+            />
+            <label style={{ display: 'flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}>
+              <input type="checkbox" checked={row.enabled} onChange={(e) => updateRow(idx, { enabled: e.target.checked })} />
+              увімк.
+            </label>
+            <button className="btn btn-danger" style={{ padding: '4px 10px' }} onClick={() => removeRow(idx)}>✕</button>
+          </div>
+        ))}
+
+        <button
+          className="btn btn-secondary"
+          style={{ width: '100%', marginTop: '4px' }}
+          onClick={addRow}
+          disabled={dispatcherActions.length === 0}
+        >
+          + Додати дію
+        </button>
+
+        <button className="btn" style={{ width: '100%', marginTop: '10px' }} onClick={() => saveDispatcherScheduleNow(scheduleDraft)}>
+          Зберегти сценарій
+        </button>
       </div>
 
       <div className="glass-card">

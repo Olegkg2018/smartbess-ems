@@ -12,6 +12,7 @@ from src.modules.scada_service.soc_state import get_current_soc_fraction, previo
 from src.core.redis import set_job_status, get_job_status
 from src.core.security import RoleChecker
 from src.core.time_utils import kyiv_to_utc, kyiv_day_bounds, utc_to_kyiv
+from src.tasks.scheduler import DISPATCHER_ACTIONS, reschedule_virtual_dispatcher_jobs
 
 router = APIRouter()
 
@@ -666,9 +667,24 @@ async def save_system_settings(req: SystemSettingsModel):
             "bess_modbus_unit_id": req.bess_modbus_unit_id if req.bess_modbus_unit_id is not None else DEFAULT_BESS_MODBUS_UNIT_ID,
         }
 
+        # 2026-08-26: раніше цей запис ПОВНІСТЮ перезаписував файл лише
+        # відомими цій моделі ключами — реальний баг, знайдений при додаванні
+        # virtual_dispatcher_schedule (окремий ендпоінт нижче): будь-яке
+        # збереження загальних Settings мовчки стирало б розклад диспетчера.
+        # Тепер зберігаємо поверх уже наявного вмісту (read-merge-write),
+        # щоб ключі, якими ця модель не керує, лишались недоторканими.
+        existing = {}
+        if os.path.exists(path):
+            try:
+                with open(path, "r") as f:
+                    existing = json.load(f)
+            except Exception:
+                existing = {}
+        existing.update(data)
+
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
-            json.dump(data, f)
+            json.dump(existing, f)
 
         # Технічні параметри батареї — пишемо в Asset, а не тільки в JSON:
         # саме звідти їх бере MILP-оптимізатор (optimization/run, scheduler).
@@ -704,3 +720,73 @@ async def save_system_settings(req: SystemSettingsModel):
         raise HTTPException(status_code=500, detail=f"Error saving settings: {str(e)}")
     finally:
         db.close()
+
+
+class DispatcherScheduleItem(BaseModel):
+    action: str
+    hour: int
+    minute: int
+    enabled: bool = True
+
+
+@router.get("/dispatcher-schedule", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
+async def get_dispatcher_schedule():
+    """
+    "Настроюваний сценарій віртуального диспетчера" (2026-08-26) — розклад
+    (`virtual_dispatcher_schedule` у system_settings.json) + перелік
+    доступних дій із DISPATCHER_ACTIONS (реєстр у scheduler.py — щоб
+    фронтенд показував select із людськими назвами, не хардкодив їх
+    окремо; розширення реєстру новою дією автоматично зʼявляється тут).
+    """
+    import json
+    import os
+    path = os.path.join(settings.DATA_DIR, "system_settings.json")
+    schedule = None
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                schedule = json.load(f).get("virtual_dispatcher_schedule")
+        except Exception:
+            schedule = None
+    if not schedule:
+        schedule = [
+            {"action": action_id, "hour": h, "minute": m, "enabled": True}
+            for action_id, (_fn, _label, h, m) in DISPATCHER_ACTIONS.items()
+        ]
+    return {
+        "schedule": schedule,
+        "available_actions": [
+            {"action": action_id, "label": label, "default_hour": h, "default_minute": m}
+            for action_id, (_fn, label, h, m) in DISPATCHER_ACTIONS.items()
+        ],
+    }
+
+
+@router.post("/dispatcher-schedule", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
+async def save_dispatcher_schedule(req: List[DispatcherScheduleItem]):
+    """Зберігає розклад і одразу перепланує APScheduler-джоби (живе
+    застосування, без рестарту сервера — це лише зміна cron-часу)."""
+    import json
+    import os
+    path = os.path.join(settings.DATA_DIR, "system_settings.json")
+
+    unknown = [item.action for item in req if item.action not in DISPATCHER_ACTIONS]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Невідомі дії диспетчера: {unknown}")
+
+    existing = {}
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                existing = json.load(f)
+        except Exception:
+            existing = {}
+    existing["virtual_dispatcher_schedule"] = [item.model_dump() for item in req]
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(existing, f)
+
+    reschedule_virtual_dispatcher_jobs()
+
+    return {"status": "success", "schedule": existing["virtual_dispatcher_schedule"]}

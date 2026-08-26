@@ -33,6 +33,12 @@ class SettleBidsRequest(BaseModel):
     date: str
 
 
+class AcknowledgeIdmFallbackRequest(BaseModel):
+    asset_id: str
+    date: str
+    hour: int  # реальна київська година (0-23) — той самий патерн, що GenerateBidsRequest/SettleBidsRequest
+
+
 @router.get("/margin", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
 async def get_margin(asset_id: str, date: str):
     """Ручна маржа диспетчера на добу (bid_margin_overrides), або дефолт, якщо не збережено."""
@@ -188,5 +194,29 @@ async def settle_bids(req: SettleBidsRequest):
         if result['status'] != 'ok':
             raise HTTPException(status_code=400, detail=result['message'])
         return result
+    finally:
+        db.close()
+
+
+@router.post("/idm-fallback/acknowledge", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
+async def acknowledge_idm_fallback(req: AcknowledgeIdmFallbackRequest):
+    """
+    Диспетчер вручну підтверджує, що сам розібрався з ВДР-фолбеком для цієї
+    години (подав сам через кабінет OREE, або свідомо вирішив нічого не
+    робити) — "настроюваний сценарій віртуального диспетчера", 2026-08-26.
+    Авто-подача (`submit_idm_fallback_bids_for_date`) після цього НЕ займає
+    цю годину, навіть якщо `idm_external_order_id` ще порожній.
+    """
+    db = SessionLocal()
+    try:
+        ts = kyiv_to_utc(req.date, req.hour)
+        bid = db.query(MarketBid).filter(
+            MarketBid.asset_id == req.asset_id, MarketBid.timestamp == ts,
+        ).first()
+        if not bid:
+            raise HTTPException(status_code=404, detail="Заявку на цю годину не знайдено")
+        bid.idm_fallback_acknowledged = True
+        db.commit()
+        return {'status': 'ok', 'bid': _bid_to_dict(bid)}
     finally:
         db.close()

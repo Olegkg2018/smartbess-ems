@@ -173,6 +173,45 @@ def submit_bids_for_date(db, asset, target_date: datetime.datetime) -> dict:
     }
 
 
+def submit_idm_fallback_bids_for_date(db, asset, target_date: datetime.datetime) -> dict:
+    """
+    Емулює подачу ВДР-заявки для годин, де РДН-заявка НЕ виконалась
+    (`idm_fallback_suggested=True`, встановлюється `settle_bids_for_date`)
+    — "настроюваний сценарій віртуального диспетчера", 2026-08-26. Той
+    самий `oree_client` (не знає різниці РДН/ВДР — просто подає), результат
+    пишеться в ОКРЕМІ поля (`idm_external_order_id`/`idm_submitted_at`),
+    щоб не затерти РДН-подачу тієї самої заявки.
+
+    Ідемпотентно і поважає ручне втручання диспетчера: пропускає заявки,
+    які вже подані (`idm_external_order_id` заповнено) АБО які диспетчер
+    явно підтвердив сам (`idm_fallback_acknowledged=True` — напр. сам подав
+    на ВДР через кабінет OREE, або свідомо вирішив нічого не робити).
+    """
+    day_start, day_end = kyiv_day_bounds(utc_to_kyiv(target_date).strftime('%Y-%m-%d'))
+    bids = db.query(MarketBid).filter(
+        MarketBid.asset_id == asset.id,
+        MarketBid.timestamp >= day_start, MarketBid.timestamp < day_end,
+        MarketBid.idm_fallback_suggested.is_(True),
+        MarketBid.idm_external_order_id.is_(None),
+        MarketBid.idm_fallback_acknowledged.isnot(True),
+    ).order_by(MarketBid.timestamp).all()
+    if not bids:
+        return {'status': 'nothing_to_submit', 'date': target_date.date().isoformat(), 'n_submitted': 0}
+
+    client = get_oree_client()
+    for b in bids:
+        result = client.submit_bid(b)
+        b.idm_external_order_id = result['external_order_id']
+        b.idm_submitted_at = result['submitted_at']
+
+    db.commit()
+    return {
+        'status': 'ok',
+        'date': target_date.date().isoformat(),
+        'n_submitted': len(bids),
+    }
+
+
 def _replay_soc_feasibility(db, asset, target_date: datetime.datetime, settled_bids) -> dict:
     """
     Послідовний SoC-реплей виконаних заявок (CODE_REVIEW.md п.6, 2026-08-22).
@@ -366,6 +405,10 @@ def _bid_to_dict(b: MarketBid, soc_feasible=None) -> dict:
         'external_order_id': b.external_order_id,
         'oree_submission_status': b.oree_submission_status,
         'submitted_at': b.submitted_at.isoformat() + 'Z' if b.submitted_at else None,
+        # ВДР-фолбек — окремо від РДН-подачі вище (та сама заявка, інший ринок).
+        'idm_fallback_acknowledged': b.idm_fallback_acknowledged,
+        'idm_external_order_id': b.idm_external_order_id,
+        'idm_submitted_at': b.idm_submitted_at.isoformat() + 'Z' if b.idm_submitted_at else None,
     }
 
 
