@@ -170,10 +170,16 @@ def check_and_send_bid_reminder() -> dict:
     actionable_tomorrow = [a for a in summary_tomorrow['actions'] if a['severity'] in ('action', 'warning')]
     actionable_today = [a for a in summary_today['actions'] if a['severity'] in ('action', 'warning')]
     if actionable_tomorrow:
-        lines.append(f"📅 Заявка РДН на {tomorrow.date().isoformat()} (подати сьогодні до 12:00):")
+        # today_kyiv_str/tomorrow_kyiv_str (вище) — не tomorrow.date()/
+        # today.date(): ці — наївний UTC (kyiv_to_utc(...,0), київська
+        # північ), їхня власна календарна UTC-дата на день РАНІШЕ за
+        # реальну київську (той самий баг, що й у bidding_service/
+        # services.py, знайдено користувачем 2026-08-27 — тут показало б
+        # диспетчеру "завтра" з датою сьогодні і навпаки).
+        lines.append(f"📅 Заявка РДН на {tomorrow_kyiv_str} (подати сьогодні до 12:00):")
         lines += [f"  • {a['text']}" for a in actionable_tomorrow]
     if actionable_today:
-        lines.append(f"⚡ Сьогоднішні заявки ({today.date().isoformat()}):")
+        lines.append(f"⚡ Сьогоднішні заявки ({today_kyiv_str}):")
         lines += [f"  • {a['text']}" for a in actionable_today]
 
     if not lines:

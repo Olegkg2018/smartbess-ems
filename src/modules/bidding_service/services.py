@@ -151,7 +151,16 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
     bid_dicts = [_bid_to_dict(b) for b in bids]
     return {
         'status': 'ok',
-        'date': target_date.date().isoformat(),
+        # 2026-08-27: utc_to_kyiv(...), а НЕ сирий target_date.date() —
+        # target_date наївний UTC (kyiv_to_utc(date_str,0), київська
+        # північ), його власна календарна UTC-дата на день РАНІШЕ за
+        # реальну київську (EEST/EET зсув завжди зсуває північ на
+        # попередній UTC-день). Знайдено користувачем: `POST /bids/settle`
+        # на 2026-08-28 у відповіді повертав "date":"2026-08-27" — сама
+        # звірка й записи в БД були коректні (timestamp завжди правильний),
+        # хибним було лише це поле-відлуння у відповіді. Той самий фікс у
+        # всіх функціях цього файлу, що повертають 'date'.
+        'date': utc_to_kyiv(target_date).date().isoformat(),
         'margin_pct': margin_pct,
         'n_bids': len(bids),
         'n_price_clamped': sum(1 for d in bid_dicts if d['bid_price_legally_clamped']),
@@ -174,7 +183,7 @@ def submit_bids_for_date(db, asset, target_date: datetime.datetime) -> dict:
         MarketBid.external_order_id.is_(None),
     ).order_by(MarketBid.timestamp).all()
     if not bids:
-        return {'status': 'nothing_to_submit', 'date': target_date.date().isoformat(), 'n_submitted': 0}
+        return {'status': 'nothing_to_submit', 'date': utc_to_kyiv(target_date).date().isoformat(), 'n_submitted': 0}
 
     client = get_oree_client()
     for b in bids:
@@ -186,7 +195,7 @@ def submit_bids_for_date(db, asset, target_date: datetime.datetime) -> dict:
     db.commit()
     return {
         'status': 'ok',
-        'date': target_date.date().isoformat(),
+        'date': utc_to_kyiv(target_date).date().isoformat(),
         'n_submitted': len(bids),
     }
 
@@ -214,7 +223,7 @@ def submit_idm_fallback_bids_for_date(db, asset, target_date: datetime.datetime)
         MarketBid.idm_fallback_acknowledged.isnot(True),
     ).order_by(MarketBid.timestamp).all()
     if not bids:
-        return {'status': 'nothing_to_submit', 'date': target_date.date().isoformat(), 'n_submitted': 0}
+        return {'status': 'nothing_to_submit', 'date': utc_to_kyiv(target_date).date().isoformat(), 'n_submitted': 0}
 
     client = get_oree_client()
     for b in bids:
@@ -225,7 +234,7 @@ def submit_idm_fallback_bids_for_date(db, asset, target_date: datetime.datetime)
     db.commit()
     return {
         'status': 'ok',
-        'date': target_date.date().isoformat(),
+        'date': utc_to_kyiv(target_date).date().isoformat(),
         'n_submitted': len(bids),
     }
 
@@ -382,7 +391,7 @@ def settle_bids_for_date(db, asset, target_date: datetime.datetime, actual_price
     n_soc_infeasible = sum(1 for b in settled if b.executed and not soc_map.get(b.timestamp, True))
     return {
         'status': 'ok',
-        'date': target_date.date().isoformat(),
+        'date': utc_to_kyiv(target_date).date().isoformat(),
         'n_settled': len(settled),
         'n_executed': n_executed,
         'n_failed_needs_idm': n_failed,
