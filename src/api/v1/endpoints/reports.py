@@ -336,7 +336,13 @@ async def export_forecast_period_excel(asset_id: str, start_date: str, end_date:
     headers = [
         "Дата", "Година", "Прогноз ціни, ₴/МВт·год", "P10 (нижня межа), ₴/МВт·год",
         "P90 (верхня межа), ₴/МВт·год", "Факт ціни, ₴/МВт·год", "Різниця Факт-Прогноз, ₴/МВт·год", "Похибка, %",
-        "Тип заявки", "Ціна заявки, ₴/МВт·год", "Виконано", "Реалізований прибуток, ₴", "Заряд, МВт", "Розряд, МВт",
+        "Тип заявки", "Ціна заявки, ₴/МВт·год", "Виконано",
+        # 2026-08-27: "Плановий прибуток" — за ЦІНОЮ ЗАЯВКИ (яка МОГЛА б
+        # бути), для КОЖНОЇ заявки незалежно від executed — на відміну від
+        # "Реалізований прибуток" (лише реальна ціна закриття, 0 для
+        # невиконаних). Обидва поруч — щоб бачити розрив між "розраховували
+        # заробити" і "реально заробили".
+        "Плановий прибуток, ₴", "Реалізований прибуток, ₴", "Заряд, МВт", "Розряд, МВт",
     ]
     header_row = 4
     for col_idx, title in enumerate(headers, start=1):
@@ -396,7 +402,19 @@ async def export_forecast_period_excel(asset_id: str, start_date: str, end_date:
                 else:
                     executed_label = "так" if bid.executed else "ні"
                 ws.cell(row=row, column=11, value=executed_label).alignment = Alignment(horizontal="center")
-                ws.cell(row=row, column=12, value=round(bid.realized_profit_uah, 2) if bid.realized_profit_uah is not None else None).number_format = "+#,##0.00;-#,##0.00"
+
+                # Плановий прибуток — за ціною ЗАЯВКИ, для ВСІХ заявок
+                # (виконаних і невиконаних однаково), а не лише за фактом.
+                volume_mw = bid.volume_kw / 1000.0
+                if bid.bid_type == "sell":
+                    planned_profit = bid.bid_price_uah * volume_mw
+                elif bid.bid_type == "buy":
+                    planned_profit = -bid.bid_price_uah * volume_mw
+                else:
+                    planned_profit = 0.0
+                ws.cell(row=row, column=12, value=round(planned_profit, 2)).number_format = "+#,##0.00;-#,##0.00"
+
+                ws.cell(row=row, column=13, value=round(bid.realized_profit_uah, 2) if bid.realized_profit_uah is not None else None).number_format = "+#,##0.00;-#,##0.00"
                 if bid.bid_type == "buy":
                     charge_mw = bid.volume_kw / 1000.0
                 elif bid.bid_type == "sell":
@@ -406,10 +424,11 @@ async def export_forecast_period_excel(asset_id: str, start_date: str, end_date:
                 ws.cell(row=row, column=10, value=None)
                 ws.cell(row=row, column=11, value=None)
                 ws.cell(row=row, column=12, value=None)
-            ws.cell(row=row, column=13, value=round(charge_mw, 3)).number_format = "#,##0.000"
-            ws.cell(row=row, column=14, value=round(discharge_mw, 3)).number_format = "#,##0.000"
+                ws.cell(row=row, column=13, value=None)
+            ws.cell(row=row, column=14, value=round(charge_mw, 3)).number_format = "#,##0.000"
+            ws.cell(row=row, column=15, value=round(discharge_mw, 3)).number_format = "#,##0.000"
 
-    widths = [12, 10, 20, 20, 20, 16, 22, 12, 14, 18, 14, 20, 12, 12]
+    widths = [12, 10, 20, 20, 20, 16, 22, 12, 14, 18, 14, 18, 20, 12, 12]
     for col_idx, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(col_idx)].width = w
 
@@ -419,8 +438,8 @@ async def export_forecast_period_excel(asset_id: str, start_date: str, end_date:
     # Data Bars на Заряд/Розряд — та сама ідіома, що й export-day/"Ручне
     # коригування заявок" (Optimization Schedule): "стовпчик заряду
     # батареї" прямо в комірці, не окрема діаграма збоку.
-    charge_range = f"M{header_row + 1}:M{last_row}"
-    discharge_range = f"N{header_row + 1}:N{last_row}"
+    charge_range = f"N{header_row + 1}:N{last_row}"
+    discharge_range = f"O{header_row + 1}:O{last_row}"
     charge_rule = DataBarRule(start_type="num", start_value=0, end_type="num", end_value=power_limit_mw, color="3B82F6", showValue=True)
     discharge_rule = DataBarRule(start_type="num", start_value=0, end_type="num", end_value=power_limit_mw, color="059669", showValue=True)
     ws.conditional_formatting.add(charge_range, charge_rule)
