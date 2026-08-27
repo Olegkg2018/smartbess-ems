@@ -319,9 +319,26 @@ async def get_initial_soc(asset_id: str, date: str):
         if asset.capacity_mwh > 0:
             prev_fraction = previous_day_calculated_fraction(db, asset, target_dt)
 
+        # 2026-08-27: цей ендпоінт РАНІШЕ дублював свою власну версію
+        # пріоритету (override→телеметрія→план→фолбек), окремо від
+        # get_current_soc_fraction — коли той отримав розворот пріоритету
+        # для майбутньої дати (soc_state.py, той самий день), ЦЕЙ дубль
+        # лишився недоторканим і продовжував чесно показувати
+        # "scada_telemetry", хоча РЕАЛЬНИЙ MILP-розрахунок (той самий день,
+        # той самий баг) уже брав план. Диспетчер бачив одне джерело у
+        # панелі, а фактично використовувалось інше — знайдено
+        # користувачем. Тепер та сама логіка "майбутня дата → спершу план
+        # своєї попередньої доби" тут теж, щоб панель чесно показувала, що
+        # РЕАЛЬНО буде використано.
+        today_kyiv_str = utc_to_kyiv(datetime.datetime.utcnow()).strftime('%Y-%m-%d')
+        is_future_date = date > today_kyiv_str
+
         if override is not None:
             source = "manual"
             capacity_kwh = override.capacity_kwh
+        elif is_future_date and prev_fraction is not None:
+            source = "calculated_previous_day"
+            capacity_kwh = prev_fraction * asset.capacity_mwh * 1000.0
         elif tel is not None:
             source = "scada_telemetry"
             capacity_kwh = tel.current_soc_mwh * 1000.0
