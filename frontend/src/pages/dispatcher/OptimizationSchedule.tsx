@@ -39,8 +39,31 @@ export default function OptimizationSchedule() {
 
   // Фолбек лише одразу після "Розрахувати", поки manualOverrides (і
   // похідний dispatchProfile) ще не підвантажились для нової дати.
+  //
+  // 2026-08-27: знайдено диспетчером — лінія SoC малювалась в ТІЙ САМІЙ
+  // точці x=година, що й стовпчик потужності цієї години, хоча `soc`
+  // означає "рівень НАПРИКІНЦІ цієї години" — на графіку виглядало так,
+  // ніби заряд години 12 (стовпчик при x=12) уже стався ДО години 12
+  // (лінія росла від x=11 до x=12), хоча реально він відбувається ПІД ЧАС
+  // години 12 (має рости від x=12 до x=13). SoC — рівневий показник із
+  // 25 межами на 24 інтервали (00:00...24:00), а не 24 значеннями по
+  // одному на інтервал, як потужність/ціна — тому для лінії SoC свідомо
+  // 25 точок (0..24): x=N — SoC НА ПОЧАТКУ години N (=кінець години N-1,
+  // для x=0 — initialSoc), і додаткова 25-та точка x=24 — SoC наприкінці
+  // доби. Стовпчики потужності/ціна лишаються на своїх 24 позиціях
+  // (x=0..23) — тепер вони візуально стоять МІЖ двома межевими точками
+  // SoC, які й показують результат саме цього стовпчика.
   const chartProfile = baseSchedule.length === 24
-    ? baseSchedule.map((s: any) => ({ hour: `${s.hour}`, charge: s.power_kw < 0 ? -s.power_kw : 0, discharge: s.power_kw > 0 ? s.power_kw : 0, soc: s.soc_kwh, price: s.price_forecast_uah_mwh }))
+    ? [
+        ...baseSchedule.map((s: any, i: number) => ({
+          hour: `${s.hour}`,
+          charge: s.power_kw < 0 ? -s.power_kw : 0,
+          discharge: s.power_kw > 0 ? s.power_kw : 0,
+          soc: i === 0 ? (initialSoc?.capacity_kwh ?? s.soc_kwh) : baseSchedule[i - 1].soc_kwh,
+          price: s.price_forecast_uah_mwh,
+        })),
+        { hour: '24', soc: baseSchedule[23].soc_kwh },
+      ]
     : [];
 
   const hasProfile = dispatchProfile.length === 24;
@@ -55,8 +78,19 @@ export default function OptimizationSchedule() {
   // і при ручному оверрайді, що перевищував реальну ємність батареї, графіки
   // на двох сторінках показували різні стовпчики (реальний баг, знайдений
   // диспетчером).
+  // 25 точок (0..24), не 24 — той самий зсув меж SoC, що й у chartProfile
+  // вище (коментар там пояснює причину).
   const currentDayProfile = hasProfile
-    ? dispatchProfile.map((d) => ({ hour: `${d.hour}`, charge: d.charge, discharge: d.discharge, soc: d.soc, price: d.price }))
+    ? [
+        ...dispatchProfile.map((d, i) => ({
+          hour: `${d.hour}`,
+          charge: d.charge,
+          discharge: d.discharge,
+          soc: i === 0 ? (initialSoc?.capacity_kwh ?? d.soc) : dispatchProfile[i - 1].soc,
+          price: d.price,
+        })),
+        { hour: '24', soc: dispatchProfile[23].soc },
+      ]
     : [];
 
   const dailyRevenue = dispatchProfile.reduce((s, d) => s + d.revenueUah, 0);
