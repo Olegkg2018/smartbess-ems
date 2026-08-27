@@ -5,13 +5,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from src.database.session import SessionLocal
-from src.database.models import Asset, ChargeDischargePlan, BessTelemetry, PriceForecast
+from src.database.models import Asset, ChargeDischargePlan, BessTelemetry, PriceForecast, MarketBid
 from src.modules.reporting_service.services import ReportingService
 from src.modules.reporting_service.forecast_accuracy import compute_rolling_accuracy, get_profit_capture_ratio
 from src.core.security import RoleChecker
 from src.api.v1.endpoints.optimization import get_manual_overrides
 from src.api.v1.endpoints.forecast import get_actual_prices
-from src.core.time_utils import kyiv_to_utc, utc_to_kyiv
+from src.core.time_utils import kyiv_to_utc, kyiv_day_bounds, utc_to_kyiv
 
 router = APIRouter()
 
@@ -243,13 +243,14 @@ MAX_EXPORT_FORECAST_PERIOD_DAYS = 92  # ~квартал — запобігає �
 
 
 @router.get("/export-forecast-period", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
-async def export_forecast_period_excel(start_date: str, end_date: str):
+async def export_forecast_period_excel(asset_id: str, start_date: str, end_date: str):
     """
-    Погодинний Excel-звіт по прогнозу ціни (сторінка "Neural Price
-    Predictor") за ДОВІЛЬНИЙ період — та сама якість/стиль, що
-    export-day (заголовок, форматування, freeze panes), але без
-    диспетчерського заряду/розряду (це не про BESS-диспетчеризацію, а
-    про сам прогноз) і з можливістю вказати діапазон дат, а не одну добу.
+    Погодинний Excel-звіт по прогнозу ціни ТА заявках РДН (сторінка
+    "Neural Price Predictor") за ДОВІЛЬНИЙ період — той самий стиль/
+    оформлення, що й export-day (заголовок, форматування, freeze panes,
+    Data Bars на Заряд/Розряд — як у "Ручне коригування заявок (Manual
+    Dispatch Schedule)"), але з можливістю вказати діапазон дат, а не
+    одну добу.
 
     Один рядок на (дата, година) — до MAX_EXPORT_FORECAST_PERIOD_DAYS*24
     рядків. Факт ціни — та сама логіка, що й get_actual_prices на
@@ -260,7 +261,8 @@ async def export_forecast_period_excel(start_date: str, end_date: str):
     перетворити один запит на сотні живих HTTP-викликів. P10/P90 —
     реальний conformal-калібрований інтервал моделі (`PriceForecast.lower_
     bound_uah`/`upper_bound_uah`), якщо порахований для цієї доби — інакше
-    чесно порожньо, не вигадуємо.
+    чесно порожньо, не вигадуємо. Заявки — реальні `MarketBid` (тип/обсяг/
+    ціна/факт виконання/реалізований прибуток), не повторний розрахунок.
 
     Підсумковий WAPE рахується чесно лише по годинах, де є і прогноз, і
     факт — доба без жодного факту (ще не настала/не опублікована)
@@ -285,7 +287,13 @@ async def export_forecast_period_excel(start_date: str, end_date: str):
 
     db = SessionLocal()
     try:
+        asset = db.query(Asset).filter(Asset.id == asset_id).first()
+        if not asset:
+            raise HTTPException(status_code=404, detail="Asset not found")
+        power_limit_mw = asset.power_mw
+
         rows_by_date = {}
+        bids_by_date = {}
         for date_str in dates:
             target_dt = kyiv_to_utc(date_str, 0)
             forecasts = db.query(PriceForecast).filter(
@@ -295,29 +303,40 @@ async def export_forecast_period_excel(start_date: str, end_date: str):
                 utc_to_kyiv(f.timestamp).hour: (f.predicted_price_uah, f.lower_bound_uah, f.upper_bound_uah)
                 for f in forecasts
             }
+
+            day_start, day_end = kyiv_day_bounds(date_str)
+            bids = db.query(MarketBid).filter(
+                MarketBid.asset_id == asset_id,
+                MarketBid.timestamp >= day_start,
+                MarketBid.timestamp < day_end,
+            ).order_by(MarketBid.timestamp).all()
+            bids_by_date[date_str] = {utc_to_kyiv(b.timestamp).hour: b for b in bids}
     finally:
         db.close()
 
     from openpyxl import Workbook
     from openpyxl.styles import Font, Alignment, PatternFill
     from openpyxl.utils import get_column_letter
+    from openpyxl.formatting.rule import DataBarRule
 
     wb = Workbook()
     ws = wb.active
-    ws.title = "Прогноз ціни"
+    ws.title = "Прогноз і заявки"
 
     header_font = Font(bold=True, color="FFFFFF")
     header_fill = PatternFill("solid", fgColor="1F2937")
     title_font = Font(bold=True, size=13)
 
-    ws["A1"] = f"SmartBESS EMS — Neural Price Predictor: прогноз ціни за {start_date} — {end_date}"
+    ws["A1"] = f"SmartBESS EMS — Neural Price Predictor: прогноз і заявки за {start_date} — {end_date}"
     ws["A1"].font = title_font
-    ws["A2"] = f"{n_days} діб, погодинно"
+    ws["A2"] = f"{n_days} діб, погодинно. Актив: {asset.name}"
     ws["A2"].font = Font(italic=True, color="6B7280")
 
+    BID_TYPE_LABELS = {"buy": "Купівля", "sell": "Продаж", "standby": "Очікування"}
     headers = [
         "Дата", "Година", "Прогноз ціни, ₴/МВт·год", "P10 (нижня межа), ₴/МВт·год",
         "P90 (верхня межа), ₴/МВт·год", "Факт ціни, ₴/МВт·год", "Різниця Факт-Прогноз, ₴/МВт·год", "Похибка, %",
+        "Тип заявки", "Ціна заявки, ₴/МВт·год", "Виконано", "Реалізований прибуток, ₴", "Заряд, МВт", "Розряд, МВт",
     ]
     header_row = 4
     for col_idx, title in enumerate(headers, start=1):
@@ -334,6 +353,7 @@ async def export_forecast_period_excel(start_date: str, end_date: str):
     n_actual_hours = 0
     for date_str in dates:
         forecast_by_hour = rows_by_date[date_str]
+        bid_by_hour = bids_by_date[date_str]
         actual = await get_actual_prices(target_date=date_str)
         actual_by_hour = (
             dict(zip(actual["hours"], actual["actual_prices_uah"])) if actual.get("available") else {}
@@ -365,12 +385,46 @@ async def export_forecast_period_excel(start_date: str, end_date: str):
                 ws.cell(row=row, column=7, value=None)
                 ws.cell(row=row, column=8, value=None)
 
-    widths = [12, 10, 22, 22, 22, 18, 24, 12]
+            bid = bid_by_hour.get(hour)
+            charge_mw = 0.0
+            discharge_mw = 0.0
+            if bid is not None:
+                ws.cell(row=row, column=9, value=BID_TYPE_LABELS.get(bid.bid_type, bid.bid_type)).alignment = Alignment(horizontal="center")
+                ws.cell(row=row, column=10, value=round(bid.bid_price_uah, 2)).number_format = "#,##0.00"
+                if bid.executed is None:
+                    executed_label = "очікує факту"
+                else:
+                    executed_label = "так" if bid.executed else "ні"
+                ws.cell(row=row, column=11, value=executed_label).alignment = Alignment(horizontal="center")
+                ws.cell(row=row, column=12, value=round(bid.realized_profit_uah, 2) if bid.realized_profit_uah is not None else None).number_format = "+#,##0.00;-#,##0.00"
+                if bid.bid_type == "buy":
+                    charge_mw = bid.volume_kw / 1000.0
+                elif bid.bid_type == "sell":
+                    discharge_mw = bid.volume_kw / 1000.0
+            else:
+                ws.cell(row=row, column=9, value=None)
+                ws.cell(row=row, column=10, value=None)
+                ws.cell(row=row, column=11, value=None)
+                ws.cell(row=row, column=12, value=None)
+            ws.cell(row=row, column=13, value=round(charge_mw, 3)).number_format = "#,##0.000"
+            ws.cell(row=row, column=14, value=round(discharge_mw, 3)).number_format = "#,##0.000"
+
+    widths = [12, 10, 20, 20, 20, 16, 22, 12, 14, 18, 14, 20, 12, 12]
     for col_idx, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(col_idx)].width = w
 
     last_row = row
     ws.freeze_panes = ws.cell(row=header_row + 1, column=1)
+
+    # Data Bars на Заряд/Розряд — та сама ідіома, що й export-day/"Ручне
+    # коригування заявок" (Optimization Schedule): "стовпчик заряду
+    # батареї" прямо в комірці, не окрема діаграма збоку.
+    charge_range = f"M{header_row + 1}:M{last_row}"
+    discharge_range = f"N{header_row + 1}:N{last_row}"
+    charge_rule = DataBarRule(start_type="num", start_value=0, end_type="num", end_value=power_limit_mw, color="3B82F6", showValue=True)
+    discharge_rule = DataBarRule(start_type="num", start_value=0, end_type="num", end_value=power_limit_mw, color="059669", showValue=True)
+    ws.conditional_formatting.add(charge_range, charge_rule)
+    ws.conditional_formatting.add(discharge_range, discharge_rule)
 
     # Чесний підсумковий WAPE — лише по годинах, де реально є і прогноз, і
     # факт; якщо жодної такої години нема, явний діагностичний текст (чого

@@ -16,7 +16,7 @@ export default function PriceForecast() {
     generationAdjustment, setGenerationAdjustmentDraft, saveGenerationAdjustmentAndRecalculate,
     priceShift, setPriceShiftDraft, savePriceShiftAndRecalculate,
     gridStress, saveGridStressOverride, clearGridStressOverride,
-    activeRole, targetDate, addLog,
+    activeRole, activeAssetId, targetDate, addLog,
   } = useApp();
 
   const [queuesDraft, setQueuesDraft] = useState('');
@@ -41,11 +41,11 @@ export default function PriceForecast() {
   }, [targetDate]);
   const [exportingPeriod, setExportingPeriod] = useState(false);
   const handleExportPeriod = async () => {
-    if (!periodStart || !periodEnd) return;
+    if (!periodStart || !periodEnd || !activeAssetId) return;
     setExportingPeriod(true);
     try {
-      await api.exportForecastPeriodExcel(activeRole, periodStart, periodEnd);
-      addLog('EXPORT', `Excel-звіт по прогнозу за ${periodStart} — ${periodEnd} завантажено.`, 'success');
+      await api.exportForecastPeriodExcel(activeRole, activeAssetId, periodStart, periodEnd);
+      addLog('EXPORT', `Excel-звіт по прогнозу та заявках за ${periodStart} — ${periodEnd} завантажено.`, 'success');
     } catch (e: any) {
       addLog('API', `Помилка експорту звіту за період: ${e.message}`, 'error');
     } finally {
@@ -205,9 +205,10 @@ export default function PriceForecast() {
       </div>
 
       <div className="glass-card">
-        <h3 className="card-title" style={{ marginBottom: '12px' }}>Звіт по прогнозу за період (Excel)</h3>
+        <h3 className="card-title" style={{ marginBottom: '12px' }}>Звіт по прогнозу та заявках за період (Excel)</h3>
         <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 12px' }}>
-          Погодинний звіт (прогноз, довірчий інтервал P10/P90, факт РДН, похибка) за довільний діапазон дат —
+          Погодинний звіт (прогноз, довірчий інтервал P10/P90, факт РДН, похибка, заявка — тип/ціна/виконання/прибуток,
+          заряд/розряд з тим самим оформленням Data Bars, що й «Ручне коригування заявок») за довільний діапазон дат —
           той самий формат, що й «Excel-звіт» на Optimization Schedule, але по всьому вказаному періоду замість однієї доби.
         </p>
         <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
@@ -223,7 +224,7 @@ export default function PriceForecast() {
             className="btn btn-secondary"
             style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
             onClick={handleExportPeriod}
-            disabled={exportingPeriod || !periodStart || !periodEnd}
+            disabled={exportingPeriod || !periodStart || !periodEnd || !activeAssetId}
           >
             <FileDown size={16} /> {exportingPeriod ? 'Формується...' : 'Завантажити Excel'}
           </button>
