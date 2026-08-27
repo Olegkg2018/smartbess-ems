@@ -517,3 +517,20 @@ export async function exportDayExcel(role: UserRole, assetId: string, date: stri
   a.remove();
   window.URL.revokeObjectURL(url);
 }
+
+export async function exportForecastPeriodExcel(role: UserRole, startDate: string, endDate: string): Promise<void> {
+  const res = await authFetch(role, `/api/v1/reports/export-forecast-period?start_date=${startDate}&end_date=${endDate}`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`${res.status} ${res.statusText}: ${body.slice(0, 200)}`);
+  }
+  const blob = await res.blob();
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `smartbess_forecast_${startDate}_${endDate}.xlsx`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
+}

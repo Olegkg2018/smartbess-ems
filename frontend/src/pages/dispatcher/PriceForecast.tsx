@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Area, Bar, Line, Cell, ResponsiveContainer } from 'recharts';
-import { BookOpen, CheckCircle2, AlertTriangle, CalendarClock, RadioTower } from 'lucide-react';
+import { BookOpen, CheckCircle2, AlertTriangle, CalendarClock, RadioTower, FileDown } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
 import GlobalFilterBar from '../../components/GlobalFilterBar';
+import * as api from '../../api/client';
 
 const COLOR_CHARGE_PLANNED = 'rgba(59, 130, 246, 0.35)';
 const COLOR_CHARGE_MANUAL = 'var(--color-blue)';
@@ -15,6 +16,7 @@ export default function PriceForecast() {
     generationAdjustment, setGenerationAdjustmentDraft, saveGenerationAdjustmentAndRecalculate,
     priceShift, setPriceShiftDraft, savePriceShiftAndRecalculate,
     gridStress, saveGridStressOverride, clearGridStressOverride,
+    activeRole, targetDate, addLog,
   } = useApp();
 
   const [queuesDraft, setQueuesDraft] = useState('');
@@ -23,6 +25,33 @@ export default function PriceForecast() {
     setQueuesDraft(gridStress?.manual_forced_restriction_queues != null ? String(gridStress.manual_forced_restriction_queues) : '');
     setNoteDraft(gridStress?.manual_note || '');
   }, [gridStress]);
+
+  // Звіт за період (не за одну добу, як GlobalFilterBar) — окремий вибір
+  // дат, за замовчуванням останні 7 діб до поточної обраної дати.
+  const [periodStart, setPeriodStart] = useState('');
+  const [periodEnd, setPeriodEnd] = useState('');
+  useEffect(() => {
+    if (targetDate && !periodEnd) {
+      setPeriodEnd(targetDate);
+      const d = new Date(targetDate);
+      d.setDate(d.getDate() - 6);
+      setPeriodStart(d.toISOString().slice(0, 10));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetDate]);
+  const [exportingPeriod, setExportingPeriod] = useState(false);
+  const handleExportPeriod = async () => {
+    if (!periodStart || !periodEnd) return;
+    setExportingPeriod(true);
+    try {
+      await api.exportForecastPeriodExcel(activeRole, periodStart, periodEnd);
+      addLog('EXPORT', `Excel-звіт по прогнозу за ${periodStart} — ${periodEnd} завантажено.`, 'success');
+    } catch (e: any) {
+      addLog('API', `Помилка експорту звіту за період: ${e.message}`, 'error');
+    } finally {
+      setExportingPeriod(false);
+    }
+  };
 
   const hasBand = !!priceBand && priceBand.lower_bound_uah.length === (forecastPrices || []).length
     && priceBand.lower_bound_uah.every((v) => v !== null);
@@ -173,6 +202,32 @@ export default function PriceForecast() {
             </div>
           </>
         )}
+      </div>
+
+      <div className="glass-card">
+        <h3 className="card-title" style={{ marginBottom: '12px' }}>Звіт по прогнозу за період (Excel)</h3>
+        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '0 0 12px' }}>
+          Погодинний звіт (прогноз, довірчий інтервал P10/P90, факт РДН, похибка) за довільний діапазон дат —
+          той самий формат, що й «Excel-звіт» на Optimization Schedule, але по всьому вказаному періоду замість однієї доби.
+        </p>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="form-label">З</label>
+            <input type="date" className="form-input" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} />
+          </div>
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="form-label">По</label>
+            <input type="date" className="form-input" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} />
+          </div>
+          <button
+            className="btn btn-secondary"
+            style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+            onClick={handleExportPeriod}
+            disabled={exportingPeriod || !periodStart || !periodEnd}
+          >
+            <FileDown size={16} /> {exportingPeriod ? 'Формується...' : 'Завантажити Excel'}
+          </button>
+        </div>
       </div>
 
       <div className="glass-card">

@@ -237,3 +237,164 @@ async def export_day_excel(asset_id: str, date: str):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+MAX_EXPORT_FORECAST_PERIOD_DAYS = 92  # ~квартал — запобігає випадковому запиту на роки поспіль (сотні живих oree-фолбеків підряд)
+
+
+@router.get("/export-forecast-period", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
+async def export_forecast_period_excel(start_date: str, end_date: str):
+    """
+    Погодинний Excel-звіт по прогнозу ціни (сторінка "Neural Price
+    Predictor") за ДОВІЛЬНИЙ період — та сама якість/стиль, що
+    export-day (заголовок, форматування, freeze panes), але без
+    диспетчерського заряду/розряду (це не про BESS-диспетчеризацію, а
+    про сам прогноз) і з можливістю вказати діапазон дат, а не одну добу.
+
+    Один рядок на (дата, година) — до MAX_EXPORT_FORECAST_PERIOD_DAYS*24
+    рядків. Факт ціни — та сама логіка, що й get_actual_prices на
+    single-day звіті (спершу локальна БД, інакше живий запит до
+    oree.com.ua, якщо доба вже минула) — для довгого періоду це означає
+    послідовний виклик на кожну добу з неповним локальним покриттям, тому
+    період свідомо обмежений (MAX_EXPORT_FORECAST_PERIOD_DAYS), щоб не
+    перетворити один запит на сотні живих HTTP-викликів. P10/P90 —
+    реальний conformal-калібрований інтервал моделі (`PriceForecast.lower_
+    bound_uah`/`upper_bound_uah`), якщо порахований для цієї доби — інакше
+    чесно порожньо, не вигадуємо.
+
+    Підсумковий WAPE рахується чесно лише по годинах, де є і прогноз, і
+    факт — доба без жодного факту (ще не настала/не опублікована)
+    відображається порожньою в звіті, а не нулями чи прогнозом замість
+    факту.
+    """
+    try:
+        start_dt = datetime.datetime.strptime(start_date, '%Y-%m-%d').date()
+        end_dt = datetime.datetime.strptime(end_date, '%Y-%m-%d').date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="start_date/end_date мають бути у форматі YYYY-MM-DD")
+    if end_dt < start_dt:
+        raise HTTPException(status_code=400, detail="end_date не може бути раніше start_date")
+    n_days = (end_dt - start_dt).days + 1
+    if n_days > MAX_EXPORT_FORECAST_PERIOD_DAYS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Період завеликий ({n_days} діб) — максимум {MAX_EXPORT_FORECAST_PERIOD_DAYS} діб за один звіт.",
+        )
+
+    dates = [(start_dt + datetime.timedelta(days=i)).isoformat() for i in range(n_days)]
+
+    db = SessionLocal()
+    try:
+        rows_by_date = {}
+        for date_str in dates:
+            target_dt = kyiv_to_utc(date_str, 0)
+            forecasts = db.query(PriceForecast).filter(
+                PriceForecast.forecast_run_at == target_dt
+            ).order_by(PriceForecast.timestamp).all()
+            rows_by_date[date_str] = {
+                utc_to_kyiv(f.timestamp).hour: (f.predicted_price_uah, f.lower_bound_uah, f.upper_bound_uah)
+                for f in forecasts
+            }
+    finally:
+        db.close()
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Прогноз ціни"
+
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="1F2937")
+    title_font = Font(bold=True, size=13)
+
+    ws["A1"] = f"SmartBESS EMS — Neural Price Predictor: прогноз ціни за {start_date} — {end_date}"
+    ws["A1"].font = title_font
+    ws["A2"] = f"{n_days} діб, погодинно"
+    ws["A2"].font = Font(italic=True, color="6B7280")
+
+    headers = [
+        "Дата", "Година", "Прогноз ціни, ₴/МВт·год", "P10 (нижня межа), ₴/МВт·год",
+        "P90 (верхня межа), ₴/МВт·год", "Факт ціни, ₴/МВт·год", "Різниця Факт-Прогноз, ₴/МВт·год", "Похибка, %",
+    ]
+    header_row = 4
+    for col_idx, title in enumerate(headers, start=1):
+        cell = ws.cell(row=header_row, column=col_idx, value=title)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", wrap_text=True)
+
+    row = header_row
+    abs_diff_sum = 0.0
+    actual_sum = 0.0
+    n_matched_hours = 0
+    n_forecast_hours = 0
+    n_actual_hours = 0
+    for date_str in dates:
+        forecast_by_hour = rows_by_date[date_str]
+        actual = await get_actual_prices(target_date=date_str)
+        actual_by_hour = (
+            dict(zip(actual["hours"], actual["actual_prices_uah"])) if actual.get("available") else {}
+        )
+        for hour in range(24):
+            row += 1
+            # Година підписана 1-24 (oree.com.ua "Година 1" = 00:00-01:00), як і export-day.
+            ws.cell(row=row, column=1, value=date_str)
+            ws.cell(row=row, column=2, value=hour + 1).number_format = "0"
+            fc, lo, hi = forecast_by_hour.get(hour, (None, None, None))
+            if fc is not None:
+                n_forecast_hours += 1
+            ws.cell(row=row, column=3, value=round(fc, 2) if fc is not None else None).number_format = "#,##0.00"
+            ws.cell(row=row, column=4, value=round(lo, 2) if lo is not None else None).number_format = "#,##0.00"
+            ws.cell(row=row, column=5, value=round(hi, 2) if hi is not None else None).number_format = "#,##0.00"
+            ac = actual_by_hour.get(hour)
+            if ac is not None:
+                n_actual_hours += 1
+            ws.cell(row=row, column=6, value=round(ac, 2) if ac is not None else None).number_format = "#,##0.00"
+            if ac is not None and fc is not None:
+                diff = ac - fc
+                ws.cell(row=row, column=7, value=round(diff, 2)).number_format = "+#,##0.00;-#,##0.00"
+                if ac != 0:
+                    ws.cell(row=row, column=8, value=round(abs(diff) / abs(ac) * 100.0, 1)).number_format = "0.0"
+                abs_diff_sum += abs(diff)
+                actual_sum += abs(ac)
+                n_matched_hours += 1
+            else:
+                ws.cell(row=row, column=7, value=None)
+                ws.cell(row=row, column=8, value=None)
+
+    widths = [12, 10, 22, 22, 22, 18, 24, 12]
+    for col_idx, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(col_idx)].width = w
+
+    last_row = row
+    ws.freeze_panes = ws.cell(row=header_row + 1, column=1)
+
+    # Чесний підсумковий WAPE — лише по годинах, де реально є і прогноз, і
+    # факт; якщо жодної такої години нема, явний діагностичний текст (чого
+    # саме бракує — прогнозу чи факту), а не вигадана цифра чи однакове
+    # для обох випадків "немає даних".
+    summary_row = last_row + 2
+    ws.cell(row=summary_row, column=1, value="Підсумковий WAPE за період:").font = Font(bold=True)
+    if n_matched_hours > 0 and actual_sum > 0:
+        wape = abs_diff_sum / actual_sum * 100.0
+        ws.cell(row=summary_row, column=3, value=round(wape, 2)).number_format = "0.00"
+        ws.cell(row=summary_row, column=4, value=f"({n_matched_hours} годин з фактом і прогнозом одночасно із {n_days * 24})").font = Font(italic=True, color="6B7280")
+    elif n_forecast_hours == 0:
+        msg = "немає розрахованого прогнозу за цей період" + (f" (факт є для {n_actual_hours} годин)" if n_actual_hours else "")
+        ws.cell(row=summary_row, column=3, value=msg).font = Font(italic=True, color="6B7280")
+    else:
+        ws.cell(row=summary_row, column=3, value="немає фактичних даних за цей період").font = Font(italic=True, color="6B7280")
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    filename = f"smartbess_forecast_{start_date}_{end_date}.xlsx"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
