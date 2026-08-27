@@ -467,7 +467,19 @@ def reschedule_virtual_dispatcher_jobs():
             scheduler.remove_job(job_id)
     print(f"[{datetime.datetime.now()}] Virtual dispatcher schedule applied: {[j for j in seen_ids]}")
 
-scheduler = BackgroundScheduler()
+# 2026-08-27: знайдено користувачем наживо — контейнер працює на UTC (жодного
+# TZ env var не виставлено), а BackgroundScheduler() без явного timezone
+# реєструє cron 'hour'/'minute' у ЛОКАЛЬНОМУ часі КОНТЕЙНЕРА, тобто UTC, а не
+# Kyiv. Усі "13:00" в сценарії диспетчера (і всі інші cron-джоби нижче: 02:00,
+# 10:00, 07:30) РЕАЛЬНО спрацьовували на 2-3г пізніше (EEST/EET) за те, що
+# планувалось — конкретний живий випадок: reconcile_bids, налаштований на
+# 13:00, ще не спрацював о 13:31 Kyiv, бо реально чекав 13:00 UTC = 16:00
+# Kyiv. Цей ризик був відомий і задокументований коментарями нижче ("НЕ
+# перевірено") ще з 2026-08-06/17/24, але залишався неперевіреним, доки не
+# проявився на практиці. Виправлено раз, тут — `timezone` на самому
+# BackgroundScheduler застосовується до ВСІХ джоб, зареєстрованих на ньому,
+# без потреби чіпати кожен окремий add_job.
+scheduler = BackgroundScheduler(timezone='Europe/Kyiv')
 
 def start_scheduler():
     if not scheduler.running:
@@ -487,12 +499,12 @@ def start_scheduler():
         # (sync 673.6s dominated by external API latency + train_models 132.1s +
         # train_quantile_models 13.8s) — comfortably inside the window.
         scheduler.add_job(run_nightly_model_retrain, 'cron', hour=2, minute=0, id='nightly_model_retrain')
-        # 10:00 — ~2 год запасу до закриття воріт РДН (12:00), достатньо часу,
-        # щоб заявки на завтра вже були сформовані (диспетчер робить це вручну
-        # після 06:00). Як і для 06:00/02:00 джоб: відповідність "10:00
-        # контейнера" реальному київському часу НЕ перевірена (те саме
-        # застереження, що в CLAUDE.md п.17) — якщо контейнер працює не в
-        # Europe/Kyiv, скоригувати hour вручну.
+        # 10:00 Kyiv — ~2 год запасу до закриття воріт РДН (12:00), достатньо
+        # часу, щоб заявки на завтра вже були сформовані (диспетчер робить це
+        # вручну після 06:00). Раніше тут було застереження "відповідність
+        # контейнера реальному київському часу НЕ перевірена" — перевірено й
+        # виправлено 2026-08-27 (`timezone='Europe/Kyiv'` на самому
+        # scheduler'і вище), тепер `hour=10` дійсно означає 10:00 Kyiv.
         scheduler.add_job(run_bid_reminder_check, 'cron', hour=10, minute=0, id='bid_reminder_check')
         # 07:30 — через годину після ранкового прогнозу (06:00), достатньо
         # часу, щоб свіжий PriceForecast уже був у БД. Дешева перевірка —
