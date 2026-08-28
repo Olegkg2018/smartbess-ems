@@ -96,6 +96,7 @@ interface AppState {
   generateBidsNow: () => Promise<void>;
   settleBidsNow: () => Promise<void>;
   acknowledgeIdmFallbackNow: (hour: number) => Promise<void>;
+  submitIdmFallbackBidNow: (hour: number, priceUah: number | null) => Promise<void>;
 
   dispatcherSchedule: api.DispatcherScheduleItem[] | null;
   dispatcherActions: api.DispatcherAction[];
@@ -620,6 +621,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [activeRole, activeAssetId, targetDate, addLog, refreshBids, refreshActionSummary]);
 
+  // priceUah=null — подати за запропонованою ціною без правок; вказано —
+  // диспетчерська корекція (2026-08-28, "подача заявки на ВДР з можливістю
+  // скоригувати ціну").
+  const submitIdmFallbackBidNow = useCallback(async (hour: number, priceUah: number | null) => {
+    if (!activeAssetId) return;
+    try {
+      const result: any = await api.submitIdmFallbackBid(activeRole, activeAssetId, targetDate, hour, priceUah);
+      if (result?.price_clamped) {
+        addLog('BIDS', `Година ${hour} на ${targetDate}: ціну ВДР-заявки скориговано до легальних меж OREE.`, 'warn');
+      }
+      addLog('BIDS', `Година ${hour} на ${targetDate}: заявку на ВДР подано.`, 'success');
+      await refreshBids();
+      await refreshActionSummary();
+    } catch (e: any) {
+      addLog('API', `Помилка подачі заявки на ВДР: ${e.message}`, 'error');
+    }
+  }, [activeRole, activeAssetId, targetDate, addLog, refreshBids, refreshActionSummary]);
+
   const refreshDispatcherSchedule = useCallback(async () => {
     try {
       const r = await api.fetchDispatcherSchedule(activeRole);
@@ -781,7 +800,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     initialSoc, saveInitialSocAndRecalculate, clearInitialSocAndRecalculate,
     gridStress, saveGridStressOverride, clearGridStressOverride,
     bidMargin, saveBidMarginAndRegenerate, clearBidMarginAndRegenerate,
-    bids, refreshBids, actionSummary, refreshActionSummary, generateBidsNow, settleBidsNow, acknowledgeIdmFallbackNow,
+    bids, refreshBids, actionSummary, refreshActionSummary, generateBidsNow, settleBidsNow, acknowledgeIdmFallbackNow, submitIdmFallbackBidNow,
     dispatcherSchedule, dispatcherActions, refreshDispatcherSchedule, saveDispatcherScheduleNow,
     osr, setOsr, voltageClass, setVoltageClass, margin, setMargin,
     capacity, setCapacity, power, setPower, efficiency, setEfficiency,
@@ -807,7 +826,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     initialSoc, saveInitialSocAndRecalculate, clearInitialSocAndRecalculate,
     gridStress, saveGridStressOverride, clearGridStressOverride,
     bidMargin, saveBidMarginAndRegenerate, clearBidMarginAndRegenerate,
-    bids, refreshBids, actionSummary, refreshActionSummary, generateBidsNow, settleBidsNow, acknowledgeIdmFallbackNow,
+    bids, refreshBids, actionSummary, refreshActionSummary, generateBidsNow, settleBidsNow, acknowledgeIdmFallbackNow, submitIdmFallbackBidNow,
     dispatcherSchedule, dispatcherActions, refreshDispatcherSchedule, saveDispatcherScheduleNow,
     osr, voltageClass, margin, capacity, power, efficiency, maxCyclesPerDay, bidReminderTelegramEnabled, autoDispatchEnabled, launchDate, saveSettings,
     bessConnectionType, bessTcpHost, bessTcpPort, bessSerialPort, bessSerialBaudrate, bessSerialParity, bessSerialStopbits, bessSerialBytesize, bessModbusUnitId,

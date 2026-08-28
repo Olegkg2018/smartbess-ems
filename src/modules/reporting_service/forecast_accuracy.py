@@ -106,6 +106,55 @@ def sync_today_market_prices_from_oree(db):
     return len(objects)
 
 
+def sync_today_idm_prices_from_oree(db):
+    """
+    Той самий легкий інтрадей-досинк, що sync_today_market_prices_from_oree
+    вище, але для ВДР (2026-08-28, "Загальний дохід" у звіті) — реальна
+    погодинна середньозважена ціна ВДР з oree.com.ua у нову таблицю
+    IdmPrice (окрема від MarketPrice, ВДР — безперервні торги, не аукціон
+    єдиної ціни, MEMORY.md §8). Використовує ту саму
+    src.modules.external_data_service.intraday_market.fetch_idm_prices_for_month
+    (вже перевірений шлях, застосовується для навчання моделі через
+    historical_data_merged.csv — тут лише перший раз пише в оперативну БД,
+    не CSV). Повертає кількість доданих рядків.
+    """
+    from src.database.models import IdmPrice
+    import src.modules.external_data_service.intraday_market as idm
+    from src.core.time_utils import utc_to_kyiv, kyiv_day_bounds
+
+    today_kyiv_str = utc_to_kyiv(datetime.datetime.utcnow()).strftime('%Y-%m-%d')
+    day_start, day_end = kyiv_day_bounds(today_kyiv_str)
+
+    df = idm.fetch_idm_prices_for_month(day_start.month, day_start.year)
+    df_month_next = idm.fetch_idm_prices_for_month(day_end.month, day_end.year)
+    if not df_month_next.empty:
+        df = pd.concat([df, df_month_next]).drop_duplicates(subset=['Datetime'])
+    if df.empty:
+        return 0
+    df['Datetime'] = pd.to_datetime(df['Datetime'])
+    df_day = df[(df['Datetime'] >= day_start) & (df['Datetime'] < day_end)].dropna(subset=['IDM_Price'])
+    if df_day.empty:
+        return 0
+
+    existing_hours = {
+        r[0] for r in db.query(IdmPrice.timestamp).filter(
+            IdmPrice.timestamp >= day_start, IdmPrice.timestamp < day_end,
+        ).all()
+    }
+
+    objects = [
+        IdmPrice(timestamp=row.Datetime.to_pydatetime(), price_uah=float(row.IDM_Price), area="UA_IPS")
+        for row in df_day.itertuples()
+        if row.Datetime.to_pydatetime() not in existing_hours
+    ]
+    if not objects:
+        return 0
+
+    db.bulk_save_objects(objects)
+    db.commit()
+    return len(objects)
+
+
 def _calc_mape_wape(y_true, y_pred):
     import numpy as np
     y_true = np.array(y_true)

@@ -12,8 +12,18 @@ from src.core.security import RoleChecker
 from src.api.v1.endpoints.optimization import get_manual_overrides
 from src.api.v1.endpoints.forecast import get_actual_prices
 from src.core.time_utils import kyiv_to_utc, kyiv_day_bounds, utc_to_kyiv
+from src.modules.bidding_service.services import TARIFF_KWARGS
 
 router = APIRouter()
+
+# Реальні тарифи мережі (той самий склад, що settle_bids_for_date реально
+# використовує через evaluate_schedule_profit/TARIFF_KWARGS) — перевикористано
+# тут для окремої колонки "Тарифи мережі" у export_forecast_period_excel, не
+# задубльовано літералами.
+TOTAL_TARIFFS_UAH_PER_MWH = (
+    TARIFF_KWARGS["transmission_tariff"] + TARIFF_KWARGS["distribution_tariff"]
+    + TARIFF_KWARGS["dispatch_tariff"] + TARIFF_KWARGS["supplier_margin"]
+)
 
 @router.get("/executive-summary", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
 async def get_executive_summary(
@@ -337,12 +347,27 @@ async def export_forecast_period_excel(asset_id: str, start_date: str, end_date:
         "Дата", "Година", "Прогноз ціни, ₴/МВт·год", "P10 (нижня межа), ₴/МВт·год",
         "P90 (верхня межа), ₴/МВт·год", "Факт ціни, ₴/МВт·год", "Різниця Факт-Прогноз, ₴/МВт·год", "Похибка, %",
         "Тип заявки", "Ціна заявки, ₴/МВт·год", "Виконано",
-        # 2026-08-27: "Плановий прибуток" — за ЦІНОЮ ЗАЯВКИ (яка МОГЛА б
-        # бути), для КОЖНОЇ заявки незалежно від executed — на відміну від
-        # "Реалізований прибуток" (лише реальна ціна закриття, 0 для
-        # невиконаних). Обидва поруч — щоб бачити розрив між "розраховували
-        # заробити" і "реально заробили".
-        "Плановий прибуток, ₴", "Реалізований прибуток, ₴", "Заряд, МВт", "Розряд, МВт",
+        # 2026-08-28 (переглянуто): "Плановий прибуток" — гіпотеза "якби
+        # ЗІГРАЛИ ВСІ заявки", тобто за РЕАЛЬНОЮ факт-ціною (не ціною заявки —
+        # та лише визначає, чи виконається, аукціон єдиної ціни), для КОЖНОЇ
+        # заявки незалежно від executed. Чиста енергія, БЕЗ тарифів мережі —
+        # тарифи винесені в окрему колонку "Тарифи мережі" (щоб не змішувати
+        # ринковий P&L з вартістю доставки). "Реалізований прибуток" —
+        # реальний факт (0 для невиконаних, тарифи законно всередині, читається
+        # з bid.realized_profit_uah). Порожньо в "Плановий"/"Тарифи", коли
+        # факт-ціни ще нема (доба не звірена) — той самий принцип чесного NaN,
+        # що й колонка "Факт ціни".
+        "Плановий прибуток, ₴", "Тарифи мережі, ₴", "Реалізований прибуток, ₴",
+        # 2026-08-28: "Загальний дохід" — реальний P&L активу з урахуванням
+        # ВДР-фолбеку (заявки, які не зіграли на РДН, але все одно потрібно
+        # купити/продати на ВДР) — саме ця цифра, а не "Реалізований
+        # прибуток" (0 для невиконаних на РДН), придатна для розрахунку
+        # окупності. ВДР-частина — наближення (безперервні торги, не
+        # аукціон єдиної ціни, MEMORY.md §8; реального виконання взагалі
+        # немає, MockOreeClient) — "Джерело доходу" чесно позначає, звідки
+        # число: РДН (факт) / ВДР (факт — реальна звірена середня ціна) /
+        # ВДР (оцінка — ще не звірено з реальними даними) / не реалізовано.
+        "Загальний дохід, ₴", "Джерело доходу", "Заряд, МВт", "Розряд, МВт",
     ]
     header_row = 4
     for col_idx, title in enumerate(headers, start=1):
@@ -403,18 +428,63 @@ async def export_forecast_period_excel(asset_id: str, start_date: str, end_date:
                     executed_label = "так" if bid.executed else "ні"
                 ws.cell(row=row, column=11, value=executed_label).alignment = Alignment(horizontal="center")
 
-                # Плановий прибуток — за ціною ЗАЯВКИ, для ВСІХ заявок
-                # (виконаних і невиконаних однаково), а не лише за фактом.
+                # Плановий прибуток — гіпотеза "якби зіграли ВСІ заявки", за
+                # РЕАЛЬНОЮ факт-ціною (ac, вже обчислена вище для колонки
+                # "Факт ціни"), не ціною заявки — навмисно ігнорує
+                # bid.executed. Чиста енергія, без тарифів (див. наступну
+                # колонку). Порожньо, якщо факт-ціни ще нема (доба не
+                # звірена) — не підміняти прогнозом чи нулем.
                 volume_mw = bid.volume_kw / 1000.0
-                if bid.bid_type == "sell":
-                    planned_profit = bid.bid_price_uah * volume_mw
-                elif bid.bid_type == "buy":
-                    planned_profit = -bid.bid_price_uah * volume_mw
-                else:
-                    planned_profit = 0.0
-                ws.cell(row=row, column=12, value=round(planned_profit, 2)).number_format = "+#,##0.00;-#,##0.00"
+                if ac is not None:
+                    if bid.bid_type == "sell":
+                        planned_profit = ac * volume_mw
+                    elif bid.bid_type == "buy":
+                        planned_profit = -ac * volume_mw
+                    else:
+                        planned_profit = 0.0
+                    ws.cell(row=row, column=12, value=round(planned_profit, 2)).number_format = "+#,##0.00;-#,##0.00"
 
-                ws.cell(row=row, column=13, value=round(bid.realized_profit_uah, 2) if bid.realized_profit_uah is not None else None).number_format = "+#,##0.00;-#,##0.00"
+                    # Тарифи мережі за ту саму гіпотезу повного виконання —
+                    # окремо від "Плановий прибуток", щоб не змішувати
+                    # ринковий P&L з вартістю доставки. arbitrage-режим
+                    # (TARIFF_KWARGS) не нараховує тарифи на продаж.
+                    if bid.bid_type == "buy":
+                        tariff_cost = -TOTAL_TARIFFS_UAH_PER_MWH / 1000.0 * bid.volume_kw
+                    else:
+                        tariff_cost = 0.0
+                    ws.cell(row=row, column=13, value=round(tariff_cost, 2)).number_format = "+#,##0.00;-#,##0.00"
+                else:
+                    ws.cell(row=row, column=12, value=None)
+                    ws.cell(row=row, column=13, value=None)
+
+                ws.cell(row=row, column=14, value=round(bid.realized_profit_uah, 2) if bid.realized_profit_uah is not None else None).number_format = "+#,##0.00;-#,##0.00"
+
+                # Загальний дохід — реальний P&L з урахуванням ВДР-фолбеку.
+                # standby завжди 0 (не торгувались); виконано на РДН — сама
+                # realized_profit_uah; не виконано на РДН, але є
+                # ВДР-пропозиція — idm_fallback_profit_uah (вже включає
+                # тарифи, evaluate_schedule_profit/TARIFF_KWARGS, той самий
+                # склад, що для РДН); не виконано і ВДР-пропозиції нема —
+                # 0 (як і realized_profit_uah); ще не звірено — порожньо.
+                if bid.bid_type == "standby":
+                    total_income = bid.realized_profit_uah
+                    income_source = "Очікування" if bid.realized_profit_uah is not None else None
+                elif bid.executed:
+                    total_income = bid.realized_profit_uah
+                    income_source = "РДН"
+                elif bid.executed is False:
+                    if bid.idm_fallback_suggested and bid.idm_fallback_profit_uah is not None:
+                        total_income = bid.idm_fallback_profit_uah
+                        income_source = "ВДР (факт)" if bid.idm_fallback_price_is_actual else "ВДР (оцінка)"
+                    else:
+                        total_income = bid.realized_profit_uah if bid.realized_profit_uah is not None else 0.0
+                        income_source = "не реалізовано"
+                else:
+                    total_income = None
+                    income_source = None
+                ws.cell(row=row, column=15, value=round(total_income, 2) if total_income is not None else None).number_format = "+#,##0.00;-#,##0.00"
+                ws.cell(row=row, column=16, value=income_source).alignment = Alignment(horizontal="center")
+
                 if bid.bid_type == "buy":
                     charge_mw = bid.volume_kw / 1000.0
                 elif bid.bid_type == "sell":
@@ -425,10 +495,13 @@ async def export_forecast_period_excel(asset_id: str, start_date: str, end_date:
                 ws.cell(row=row, column=11, value=None)
                 ws.cell(row=row, column=12, value=None)
                 ws.cell(row=row, column=13, value=None)
-            ws.cell(row=row, column=14, value=round(charge_mw, 3)).number_format = "#,##0.000"
-            ws.cell(row=row, column=15, value=round(discharge_mw, 3)).number_format = "#,##0.000"
+                ws.cell(row=row, column=14, value=None)
+                ws.cell(row=row, column=15, value=None)
+                ws.cell(row=row, column=16, value=None)
+            ws.cell(row=row, column=17, value=round(charge_mw, 3)).number_format = "#,##0.000"
+            ws.cell(row=row, column=18, value=round(discharge_mw, 3)).number_format = "#,##0.000"
 
-    widths = [12, 10, 20, 20, 20, 16, 22, 12, 14, 18, 14, 18, 20, 12, 12]
+    widths = [12, 10, 20, 20, 20, 16, 22, 12, 14, 18, 14, 18, 16, 20, 18, 16, 12, 12]
     for col_idx, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(col_idx)].width = w
 
@@ -438,8 +511,8 @@ async def export_forecast_period_excel(asset_id: str, start_date: str, end_date:
     # Data Bars на Заряд/Розряд — та сама ідіома, що й export-day/"Ручне
     # коригування заявок" (Optimization Schedule): "стовпчик заряду
     # батареї" прямо в комірці, не окрема діаграма збоку.
-    charge_range = f"N{header_row + 1}:N{last_row}"
-    discharge_range = f"O{header_row + 1}:O{last_row}"
+    charge_range = f"Q{header_row + 1}:Q{last_row}"
+    discharge_range = f"R{header_row + 1}:R{last_row}"
     charge_rule = DataBarRule(start_type="num", start_value=0, end_type="num", end_value=power_limit_mw, color="3B82F6", showValue=True)
     discharge_rule = DataBarRule(start_type="num", start_value=0, end_type="num", end_value=power_limit_mw, color="059669", showValue=True)
     ws.conditional_formatting.add(charge_range, charge_rule)

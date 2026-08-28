@@ -310,6 +310,16 @@ export interface MarketBid {
   idm_fallback_acknowledged: boolean | null;
   idm_external_order_id: string | null;
   idm_submitted_at: string | null;
+  // True — реальна звірена ціна ВДР (reconcile_idm_fallback_for_date);
+  // False/None — усе ще лише оцінка, ВДР для цієї години ще не відбувся
+  // або ще не досинканий (2026-08-28).
+  idm_fallback_price_is_actual: boolean | null;
+  // Ціна, яку диспетчер свідомо обрав подати на ВДР (submit_single_idm_fallback_bid,
+  // "подача заявки на ВДР з можливістю скоригувати ціну", 2026-08-28) —
+  // None, доки не подано цим шляхом. Окремо від idm_fallback_price_uah
+  // (те лишається ринковим сигналом, диспетчер його не редагує).
+  idm_bid_price_uah: number | null;
+  idm_bid_price_legally_clamped: boolean;
 }
 
 export async function fetchBids(role: UserRole, assetId: string, date: string): Promise<{ date: string; asset_id: string; bids: MarketBid[] }> {
@@ -356,6 +366,16 @@ export async function acknowledgeIdmFallback(role: UserRole, assetId: string, da
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ asset_id: assetId, date, hour }),
+  });
+}
+
+// priceUah=null — подати за запропонованою ціною без правок; вказано —
+// диспетчерська корекція (2026-08-28).
+export async function submitIdmFallbackBid(role: UserRole, assetId: string, date: string, hour: number, priceUah: number | null) {
+  return authJson(role, '/api/v1/bids/idm-fallback/submit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ asset_id: assetId, date, hour, price_uah: priceUah }),
   });
 }
 

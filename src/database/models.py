@@ -44,6 +44,25 @@ class MarketPrice(Base):
     volume_mwh = Column(Float, nullable=True)
     area = Column(String(10), default="UA_IPS")
 
+class IdmPrice(Base):
+    """
+    Реальна погодинна середньозважена ціна ВДР з oree.com.ua (2026-08-28,
+    "Загальний дохід" у звіті) — окрема таблиця від MarketPrice (РДН), не
+    нова колонка: ВДР не має жодного стосунку до МЕХАНІЗМУ РДН (безперервні
+    торги, MEMORY.md §8), і синхронізується окремою джобою
+    (run_intraday_price_sync → sync_today_idm_prices_from_oree). Дані реальні
+    (той самий intraday_market.py, вже використовується для навчання моделі
+    через historical_data_merged.csv), але це погодинна СЕРЕДНЯ ціна ринку,
+    не гарантована ціна виконання конкретного нашого ордера — ВДР не є
+    аукціоном єдиної ціни, тож це залишається наближенням, не фактом
+    виконання (bidding_service/services.py::reconcile_idm_fallback_for_date).
+    """
+    __tablename__ = "idm_prices"
+
+    timestamp = Column(DateTime, primary_key=True, nullable=False)
+    price_uah = Column(Float, nullable=False)
+    area = Column(String(10), default="UA_IPS")
+
 class PriceForecast(Base):
     __tablename__ = "price_forecasts"
 
@@ -292,6 +311,24 @@ class MarketBid(Base):
     idm_fallback_acknowledged = Column(Boolean, nullable=True)
     idm_external_order_id = Column(String(64), nullable=True)
     idm_submitted_at = Column(DateTime, nullable=True)
+    # "Загальний дохід" у звіті (2026-08-28) — idm_fallback_price_uah/profit_uah
+    # спочатку записуються як ОЦІНКА (settle_bids_for_date, ВДР ще не відбувся
+    # на момент звірки РДН). Коли реальна середньозважена ціна ВДР на цю
+    # годину стає доступна (IdmPrice), reconcile_idm_fallback_for_date
+    # перезаписує обидва поля РЕАЛЬНИМ значенням і виставляє цей прапорець —
+    # звіт може чесно розрізнити "оцінка" від "факт ВДР" (все одно наближення,
+    # не гарантоване виконання — ВДР не є аукціоном єдиної ціни).
+    idm_fallback_price_is_actual = Column(Boolean, nullable=True)
+    # Ціна, яку диспетчер СВІДОМО обрав подати на ВДР (2026-08-28,
+    # "подача заявки на ВДР з можливістю скоригувати ціну") — НЕ те саме,
+    # що idm_fallback_price_uah (ринковий сигнал: оцінка/факт середньої
+    # ціни ВДР, керується settle_bids_for_date/reconcile_idm_fallback_for_date,
+    # диспетчер його не редагує). idm_bid_price_uah заповнюється лише через
+    # submit_single_idm_fallback_bid — якщо диспетчер натиснув "Подати" без
+    # правки, тут опиниться те саме значення idm_fallback_price_uah на
+    # момент подачі (скопійоване, не посилання — застигає як факт того, що
+    # реально "подали"). Nullable — доки не подано вручну через цей шлях.
+    idm_bid_price_uah = Column(Float, nullable=True)
 
 class MarketBidSocFeasibility(Base):
     """

@@ -9,7 +9,7 @@ from src.core.security import RoleChecker
 import src.modules.market_data_service.data_manager as dm
 from src.modules.bidding_service.services import (
     generate_bids_for_date, settle_bids_for_date, get_margin_pct, DEFAULT_MARGIN_PCT, _bid_to_dict,
-    build_daily_action_summary,
+    build_daily_action_summary, submit_single_idm_fallback_bid,
 )
 from src.core.time_utils import kyiv_to_utc, kyiv_day_bounds, utc_to_kyiv
 
@@ -40,6 +40,15 @@ class AcknowledgeIdmFallbackRequest(BaseModel):
     asset_id: str
     date: str
     hour: int  # реальна київська година (0-23) — той самий патерн, що GenerateBidsRequest/SettleBidsRequest
+
+
+class SubmitIdmFallbackRequest(BaseModel):
+    asset_id: str
+    date: str
+    hour: int
+    # None — подати за запропонованою ціною (idm_fallback_price_uah) без
+    # правок; вказано — диспетчерська корекція (2026-08-28).
+    price_uah: Optional[float] = None
 
 
 @router.get("/margin", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
@@ -221,5 +230,28 @@ async def acknowledge_idm_fallback(req: AcknowledgeIdmFallbackRequest):
         bid.idm_fallback_acknowledged = True
         db.commit()
         return {'status': 'ok', 'bid': _bid_to_dict(bid)}
+    finally:
+        db.close()
+
+
+@router.post("/idm-fallback/submit", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
+async def submit_idm_fallback(req: SubmitIdmFallbackRequest):
+    """
+    Диспетчер вручну подає ОДНУ ВДР-заявку (емуляція, MockOreeClient) —
+    на відміну від автоматичної подачі за розкладом віртуального
+    диспетчера (auto_submit_idm_fallback), можна скоригувати запропоновану
+    ціну (req.price_uah) перед подачею, а не лише погодитись з нею
+    (2026-08-28).
+    """
+    db = SessionLocal()
+    try:
+        asset = db.query(Asset).filter(Asset.id == req.asset_id).first()
+        if not asset:
+            raise HTTPException(status_code=404, detail="Asset not found")
+        target_dt = kyiv_to_utc(req.date, 0)
+        result = submit_single_idm_fallback_bid(db, asset, target_dt, req.hour, req.price_uah)
+        if result['status'] not in ('ok', 'already_submitted'):
+            raise HTTPException(status_code=400, detail=result.get('message', 'Помилка подачі заявки на ВДР'))
+        return result
     finally:
         db.close()

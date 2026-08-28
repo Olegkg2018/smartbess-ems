@@ -15,7 +15,7 @@ from src.modules.optimization_service.milp_model import evaluate_schedule_profit
 from src.modules.scada_service.soc_state import get_current_soc_fraction
 from src.modules.bidding_service.oree_client import get_oree_client
 import src.modules.forecast_service.ml_pipeline as mt
-from src.core.time_utils import kyiv_day_bounds, utc_to_kyiv
+from src.core.time_utils import kyiv_day_bounds, utc_to_kyiv, kyiv_to_utc
 
 DEFAULT_MARGIN_PCT = 2.0
 
@@ -139,6 +139,8 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
         row.idm_fallback_suggested = False
         row.idm_fallback_price_uah = None
         row.idm_fallback_profit_uah = None
+        row.idm_fallback_price_is_actual = None
+        row.idm_bid_price_uah = None
         row.settled_at = None
         # Заявка перерахована — стара емульована подача (якщо була) більше
         # не відповідає новим цифрам, submit_bids_for_date подасть заново.
@@ -237,6 +239,57 @@ def submit_idm_fallback_bids_for_date(db, asset, target_date: datetime.datetime)
         'date': utc_to_kyiv(target_date).date().isoformat(),
         'n_submitted': len(bids),
     }
+
+
+def submit_single_idm_fallback_bid(db, asset, target_date: datetime.datetime, hour: int, price_uah: float = None) -> dict:
+    """
+    Ручна (диспетчерська) подача ОДНІЄЇ ВДР-заявки на конкретну годину —
+    на відміну від submit_idm_fallback_bids_for_date вище (масова, за
+    розкладом віртуального диспетчера), тут диспетчер явно натискає кнопку
+    і МОЖЕ скоригувати запропоновану ціну (2026-08-28).
+
+    price_uah=None — диспетчер погодився з пропозицією без правок,
+    використовується idm_fallback_price_uah (ринкова оцінка/факт) як є.
+    price_uah заданий — диспетчерська корекція, обмежується тими самими
+    легальними межами OREE (clamp_bid_price_to_oree_bounds), що й РДН.
+
+    ВАЖЛИВО: результат записується в ОКРЕМЕ поле idm_bid_price_uah — НЕ
+    ідм_fallback_price_uah (те лишається чистим ринковим сигналом,
+    reconcile_idm_fallback_for_date і надалі вільно оновлює його реальною
+    ціною, не змішуючи з диспетчерською рішенням).
+
+    Ідемпотентно: якщо вже подано (idm_external_order_id заповнено) —
+    повертає status='already_submitted', нічого не змінює.
+    """
+    date_str = utc_to_kyiv(target_date).strftime('%Y-%m-%d')
+    ts = kyiv_to_utc(date_str, hour)
+    bid = db.query(MarketBid).filter(
+        MarketBid.asset_id == asset.id, MarketBid.timestamp == ts,
+    ).first()
+    if not bid:
+        return {'status': 'not_found', 'message': f'Заявку на {date_str} годину {hour} не знайдено'}
+    if not bid.idm_fallback_suggested:
+        return {'status': 'not_applicable', 'message': 'ВДР-фолбек для цієї години не пропонувався (заявка виконалась на РДН, або ще не звірена)'}
+    if bid.idm_external_order_id:
+        return {'status': 'already_submitted', 'message': 'Заявку на ВДР вже подано', 'bid': _bid_to_dict(bid)}
+
+    raw_price = price_uah if price_uah is not None else bid.idm_fallback_price_uah
+    if raw_price is None:
+        return {'status': 'no_price', 'message': 'Немає ні запропонованої, ні вказаної ціни для подачі'}
+    clamped_price, was_clamped = clamp_bid_price_to_oree_bounds(raw_price)
+    bid.idm_bid_price_uah = clamped_price
+
+    client = get_oree_client()
+    result = client.submit_bid(bid)
+    bid.idm_external_order_id = result['external_order_id']
+    bid.idm_submitted_at = result['submitted_at']
+    # Диспетчер щойно сам подав через цю дію — авто-фолбек (заплановану
+    # джобу) більше не потрібно турбувати цю годину, той самий прапорець,
+    # що й ручне "Позначити виконаним вручну".
+    bid.idm_fallback_acknowledged = True
+
+    db.commit()
+    return {'status': 'ok', 'price_clamped': was_clamped, 'bid': _bid_to_dict(bid)}
 
 
 def _replay_soc_feasibility(db, asset, target_date: datetime.datetime, settled_bids) -> dict:
@@ -401,6 +454,69 @@ def settle_bids_for_date(db, asset, target_date: datetime.datetime, actual_price
     }
 
 
+def reconcile_idm_fallback_for_date(db, asset, target_date: datetime.datetime) -> dict:
+    """
+    Другий прохід звірки (2026-08-28, "Загальний дохід" у звіті) — ЛИШЕ для
+    заявок, де ВДР-фолбек вже запропоновано (idm_fallback_suggested=True,
+    settle_bids_for_date), замінює ОЦІНКУ (mt.estimate_idm_price_for_hour,
+    порахована заздалегідь, до реальних торгів ВДР) на РЕАЛЬНУ погодинну
+    середньозважену ціну ВДР (IdmPrice), щойно вона стає доступна —
+    sync_today_idm_prices_from_oree, run_intraday_price_sync (scheduler.py).
+
+    Ідемпотентно: чіпає лише idm_fallback_price_is_actual != True, ніколи не
+    перезаписує вже звірену годину повторно. НЕ гарантія виконання — ВДР
+    безперервні торги (MEMORY.md §8), не аукціон єдиної ціни, тож навіть
+    "реальна" тут — це реальна СЕРЕДНЯ ціна ринку за годину, не підтверджена
+    ціна конкретної нашої угоди (MockOreeClient — реального виконання немає
+    взагалі). Позначається idm_fallback_price_is_actual=True, щоб звіт міг
+    чесно розрізнити "оцінка" від "факт ВДР".
+    """
+    from src.database.models import IdmPrice
+
+    date_str = utc_to_kyiv(target_date).strftime('%Y-%m-%d')
+    day_start, day_end = kyiv_day_bounds(date_str)
+    bids = db.query(MarketBid).filter(
+        MarketBid.asset_id == asset.id,
+        MarketBid.timestamp >= day_start, MarketBid.timestamp < day_end,
+        MarketBid.idm_fallback_suggested.is_(True),
+        MarketBid.idm_fallback_price_is_actual.isnot(True),
+    ).order_by(MarketBid.timestamp).all()
+    if not bids:
+        return {'status': 'nothing_to_reconcile', 'date': date_str, 'n_reconciled': 0, 'n_pending': 0}
+
+    idm_by_hour = {
+        utc_to_kyiv(r.timestamp).hour: r.price_uah
+        for r in db.query(IdmPrice).filter(
+            IdmPrice.timestamp >= day_start, IdmPrice.timestamp < day_end,
+        ).all()
+    }
+
+    deg_cost_kwh = asset.deg_cost_per_mwh / 1000.0
+    n_reconciled = 0
+    for b in bids:
+        hour = utc_to_kyiv(b.timestamp).hour
+        real_idm = idm_by_hour.get(hour)
+        if real_idm is None:
+            continue
+        b.idm_fallback_price_uah = real_idm
+        if b.bid_type == 'sell':
+            b.idm_fallback_profit_uah = evaluate_schedule_profit(
+                [0.0], [b.volume_kw], [real_idm], degradation_cost=deg_cost_kwh, **TARIFF_KWARGS,
+            )
+        elif b.bid_type == 'buy':
+            b.idm_fallback_profit_uah = evaluate_schedule_profit(
+                [b.volume_kw], [0.0], [real_idm], degradation_cost=deg_cost_kwh, **TARIFF_KWARGS,
+            )
+        b.idm_fallback_price_is_actual = True
+        n_reconciled += 1
+
+    db.commit()
+    return {
+        'status': 'ok', 'date': date_str,
+        'n_reconciled': n_reconciled, 'n_pending': len(bids) - n_reconciled,
+    }
+
+
 def _bid_to_dict(b: MarketBid, soc_feasible=None) -> dict:
     """soc_feasible=None означає "не порахований" (заявка ще не проходила
     settle, або викликач не запросив MarketBidSocFeasibility) — не плутати
@@ -425,6 +541,10 @@ def _bid_to_dict(b: MarketBid, soc_feasible=None) -> dict:
         'idm_fallback_suggested': b.idm_fallback_suggested,
         'idm_fallback_price_uah': b.idm_fallback_price_uah,
         'idm_fallback_profit_uah': b.idm_fallback_profit_uah,
+        # True — реальна звірена ціна ВДР (reconcile_idm_fallback_for_date);
+        # False/None — усе ще лише оцінка на момент звірки РДН, ВДР для цієї
+        # години ще не відбувся або ще не досинканий.
+        'idm_fallback_price_is_actual': b.idm_fallback_price_is_actual,
         'bid_price_legally_clamped': price_clamped,
         'oree_bid_price_bounds_uah': {'min': OREE_BID_PRICE_MIN_UAH, 'max': OREE_BID_PRICE_MAX_UAH},
         'forecast_run_id': b.forecast_run_id,
@@ -436,6 +556,16 @@ def _bid_to_dict(b: MarketBid, soc_feasible=None) -> dict:
         'idm_fallback_acknowledged': b.idm_fallback_acknowledged,
         'idm_external_order_id': b.idm_external_order_id,
         'idm_submitted_at': b.idm_submitted_at.isoformat() + 'Z' if b.idm_submitted_at else None,
+        # Ціна, яку диспетчер свідомо обрав подати на ВДР
+        # (submit_single_idm_fallback_bid) — None, доки не подано цим
+        # шляхом. Окремо від idm_fallback_price_uah (ринковий сигнал).
+        'idm_bid_price_uah': b.idm_bid_price_uah,
+        'idm_bid_price_legally_clamped': (
+            b.idm_bid_price_uah is not None and (
+                b.idm_bid_price_uah <= OREE_BID_PRICE_MIN_UAH + 1e-6
+                or b.idm_bid_price_uah >= OREE_BID_PRICE_MAX_UAH - 1e-6
+            )
+        ),
     }
 
 

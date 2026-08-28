@@ -10,11 +10,14 @@ import src.modules.market_data_service.data_manager as dm
 import src.modules.forecast_service.ml_pipeline as mt
 from src.modules.forecast_service.forecast_persistence import persist_forecast_run
 import src.modules.optimization_service.milp_model as opt
-from src.modules.reporting_service.forecast_accuracy import sync_market_prices_to_db, sync_today_market_prices_from_oree
+from src.modules.reporting_service.forecast_accuracy import (
+    sync_market_prices_to_db, sync_today_market_prices_from_oree, sync_today_idm_prices_from_oree,
+)
 import src.modules.external_data_service.telegram_bot as telegram_bot
 from src.modules.scada_service.soc_state import get_current_soc_fraction
 from src.modules.bidding_service.services import (
     generate_bids_for_date, submit_bids_for_date, settle_bids_for_date, submit_idm_fallback_bids_for_date,
+    reconcile_idm_fallback_for_date,
 )
 from src.database.session import SessionLocal
 from src.database.models import Asset, PriceForecast, ChargeDischargePlan, MarketPrice
@@ -239,6 +242,15 @@ def run_intraday_price_sync():
     доби (напр. якщо публікація відбулась частинами), і одразу дописує їх —
     без важкої погоди/gas/Telegram синхронізації. Best-effort: помилка мережі
     не валить процес, наступна спроба через INTRADAY_PRICE_SYNC_MINUTES.
+
+    2026-08-28 ("Загальний дохід" у звіті): та сама логіка тепер ще й для
+    ВДР (sync_today_idm_prices_from_oree, окрема таблиця IdmPrice — ВДР не
+    аукціон єдиної ціни, MEMORY.md §8) — і одразу після цього другий прохід
+    звірки (reconcile_idm_fallback_for_date), який замінює ОЦІНКУ
+    ВДР-фолбека (settle_bids_for_date, порахована заздалегідь) на РЕАЛЬНУ
+    середньозважену ціну, щойно вона з'явилась. Реконсилюється і СЬОГОДНІ,
+    і ВЧОРА — ВДР для останніх годин доби публікується з невеликим лагом,
+    інколи вже після півночі.
     """
     db = SessionLocal()
     try:
@@ -247,8 +259,27 @@ def run_intraday_price_sync():
             print(f"[{datetime.datetime.now()}] Intraday price sync: {n} new MarketPrice rows for today.")
     except Exception as e:
         print(f"Warning: intraday price sync failed: {e}")
-    finally:
-        db.close()
+
+    try:
+        n_idm = sync_today_idm_prices_from_oree(db)
+        if n_idm:
+            print(f"[{datetime.datetime.now()}] Intraday IDM sync: {n_idm} new IdmPrice rows for today.")
+    except Exception as e:
+        print(f"Warning: intraday IDM sync failed: {e}")
+
+    try:
+        asset = db.query(Asset).first()
+        if asset:
+            today = datetime.datetime.utcnow()
+            yesterday = today - datetime.timedelta(days=1)
+            for d in (yesterday, today):
+                result = reconcile_idm_fallback_for_date(db, asset, d)
+                if result.get('n_reconciled'):
+                    print(f"[{datetime.datetime.now()}] IDM fallback reconciled: {result}")
+    except Exception as e:
+        print(f"Warning: IDM fallback reconciliation failed: {e}")
+
+    db.close()
 
 def run_bid_reminder_check():
     """

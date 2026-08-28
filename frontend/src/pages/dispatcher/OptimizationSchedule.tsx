@@ -13,8 +13,14 @@ export default function OptimizationSchedule() {
     optimizationResult, manualOverrides, setManualOverrides, dispatchProfile, targetDate, capacity, power, saveOverrides, resetOverridesToOptimal,
     initialSoc, saveInitialSocAndRecalculate, clearInitialSocAndRecalculate, forecastPrices,
     bidMargin, saveBidMarginAndRegenerate, clearBidMarginAndRegenerate, bids, generateBidsNow, settleBidsNow, acknowledgeIdmFallbackNow,
+    submitIdmFallbackBidNow,
     activeRole, activeAssetId, addLog,
   } = useApp();
+
+  // Чернетка скоригованої ціни заявки на ВДР, за годиною (2026-08-28) —
+  // порожньо = диспетчер ще не правив, "Подати на ВДР" піде за
+  // запропонованою ціною. Той самий "draft + save" патерн, що marginDraft.
+  const [idmPriceDraft, setIdmPriceDraft] = useState<Record<number, string>>({});
 
   const [exporting, setExporting] = useState(false);
   const handleExport = async () => {
@@ -270,24 +276,49 @@ export default function OptimizationSchedule() {
                         <span style={{ color: 'var(--color-emerald)' }}>{Math.round(b.realized_profit_uah ?? 0).toLocaleString()} грн</span>
                       ) : b.idm_fallback_suggested ? (
                         <span style={{ color: 'var(--color-amber)' }}>
-                          ВДР ~{Math.round(b.idm_fallback_price_uah ?? 0).toLocaleString()} грн/МВт·год → {Math.round(b.idm_fallback_profit_uah ?? 0).toLocaleString()} грн
+                          ВДР ({b.idm_fallback_price_is_actual ? 'факт' : 'оцінка'}) ~{Math.round(b.idm_fallback_price_uah ?? 0).toLocaleString()} грн/МВт·год → {Math.round(b.idm_fallback_profit_uah ?? 0).toLocaleString()} грн
                           {b.idm_external_order_id ? (
-                            <span style={{ marginLeft: '6px', color: 'var(--color-emerald)' }} title={`Подано автоматично на ВДР: ${b.idm_external_order_id}`}>
-                              <CheckCircle2 size={12} style={{ verticalAlign: 'middle' }} /> подано
+                            <span style={{ marginLeft: '6px', color: 'var(--color-emerald)' }} title={`Подано на ВДР: ${b.idm_external_order_id}`}>
+                              <CheckCircle2 size={12} style={{ verticalAlign: 'middle' }} />
+                              {b.idm_bid_price_uah != null
+                                ? ` подано за ${Math.round(b.idm_bid_price_uah).toLocaleString()} грн/МВт·год`
+                                : ' подано автоматично'}
                             </span>
                           ) : b.idm_fallback_acknowledged ? (
                             <span style={{ marginLeft: '6px', color: 'var(--text-muted)' }} title="Диспетчер підтвердив, що опрацював цю годину вручну">
                               підтверджено вручну
                             </span>
                           ) : (
-                            <button
-                              className="btn"
-                              style={{ marginLeft: '6px', padding: '3px 8px', fontSize: '11px', backgroundColor: '#4b5563' }}
-                              title="Позначити, що ви самі подали заявку на ВДР (або свідомо вирішили нічого не робити) — автоматична подача цю годину більше не займе"
-                              onClick={() => acknowledgeIdmFallbackNow(b.hour)}
-                            >
-                              Позначити виконаним вручну
-                            </button>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginTop: '4px' }}>
+                              <input
+                                type="number" step="0.01"
+                                className="form-input" style={{ width: '100px', padding: '3px 6px', fontSize: '11px' }}
+                                placeholder={String(Math.round((b.idm_fallback_price_uah ?? 0) * 100) / 100)}
+                                value={idmPriceDraft[b.hour] ?? ''}
+                                onChange={(e) => setIdmPriceDraft({ ...idmPriceDraft, [b.hour]: e.target.value })}
+                                title="Скоригувати ціну заявки на ВДР перед подачею — порожньо = подати за запропонованою ціною"
+                              />
+                              <button
+                                className="btn"
+                                style={{ padding: '3px 8px', fontSize: '11px', backgroundColor: 'var(--color-blue)' }}
+                                title="Подати заявку на ВДР (емуляція) за вказаною, або за запропонованою, якщо поле порожнє"
+                                onClick={() => {
+                                  const draft = idmPriceDraft[b.hour];
+                                  const priceUah = draft && draft.trim() !== '' ? Number(draft) : null;
+                                  submitIdmFallbackBidNow(b.hour, priceUah);
+                                }}
+                              >
+                                Подати на ВДР
+                              </button>
+                              <button
+                                className="btn"
+                                style={{ padding: '3px 8px', fontSize: '11px', backgroundColor: '#4b5563' }}
+                                title="Позначити, що ви самі подали заявку на ВДР (або свідомо вирішили нічого не робити) — автоматична подача цю годину більше не займе"
+                                onClick={() => acknowledgeIdmFallbackNow(b.hour)}
+                              >
+                                Позначити виконаним вручну
+                              </button>
+                            </div>
                           )}
                         </span>
                       ) : '—'}
