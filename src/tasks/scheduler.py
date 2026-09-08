@@ -224,7 +224,18 @@ def run_nightly_model_retrain():
     """
     print(f"[{datetime.datetime.now()}] Background Scheduler: Starting nightly model retrain job...")
     try:
-        dm.sync_realtime_data(force=True)
+        # 2026-09-08: return value раніше ігнорувався — якщо sync мовчки не
+        # оновлював historical_data_merged.csv (мережева помилка oree.com.ua/
+        # Open-Meteo, тепер видима в логах — data_manager.py), train_models()
+        # усе одно тренувався на застарілому файлі, і джоба звітувала
+        # "completed successfully". Знайдено: 8 ночей поспіль (30.08-07.09)
+        # побайтово ідентичні метрики навчання — ознака саме цього. Тепер
+        # хоча б голосно попереджаємо в логах, щоб таке більше не було
+        # непомітним.
+        synced = dm.sync_realtime_data(force=True)
+        if not synced:
+            print(f"[{datetime.datetime.now()}] Warning: sync_realtime_data(force=True) returned False — "
+                  f"historical_data_merged.csv NOT updated, train_models() will train on the existing (possibly stale) file.")
         metrics = mt.train_models()
         print(f"Nightly retrain: train_models metrics: {metrics}")
         qmetrics = mt.train_quantile_models()

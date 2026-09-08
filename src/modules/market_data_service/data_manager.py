@@ -419,6 +419,8 @@ def sync_realtime_data(force=False):
     
     df_prices = fetch_oree_prices_for_month(current_month, current_year)
     if df_prices.empty:
+        print(f"Warning: sync_realtime_data({force=}) aborted — fetch_oree_prices_for_month "
+              f"returned empty for {current_month}/{current_year}; historical_data_merged.csv NOT updated.")
         return False
         
     start_date = f"{current_year}-{current_month:02d}-01"
@@ -472,6 +474,9 @@ def sync_realtime_data(force=False):
 
     new_month_data = pd.merge(df_prices, df_weather, on='Datetime', how='inner')
     if new_month_data.empty:
+        print(f"Warning: sync_realtime_data({force=}) aborted — price/weather inner-merge "
+              f"produced 0 rows (df_prices={len(df_prices)}, df_weather={len(df_weather)}); "
+              f"historical_data_merged.csv NOT updated.")
         return False
 
     new_month_data = add_real_market_factors(new_month_data)
@@ -482,7 +487,18 @@ def sync_realtime_data(force=False):
         try:
             df_hist = pd.read_csv(MERGED_DATA_PATH)
             df_hist['Datetime'] = pd.to_datetime(df_hist['Datetime'])
-            start_of_month = pd.to_datetime(f"{current_year}-{current_month:02d}-01")
+            # kyiv_to_utc, не наївна UTC-північ (2026-09-08, той самий клас
+            # багу, що CLAUDE.md п.26-28) — наївне "2026-08-01 00:00" різало
+            # межу на 3 години РАНІШЕ реальної київської півночі: перші 3
+            # київські години нового місяця (UTC-мітка ще СТАРОГО місяця,
+            # напр. "31 липня 21:00-23:00 UTC" = "1 серпня 00:00-02:00 Kyiv")
+            # одночасно і лишались у df_hist (< наївна межа), і повторно
+            # приходили в new_month_data (fetch поточного місяця, який їх
+            # теж включає — вони календарно належать київському 1-му числу).
+            # Результат — реальні дублі рядків на кожній межі місяця,
+            # знайдено при розслідуванні "3 місяці накопичення даних"
+            # (виявилось при спробі прогнати walk_forward_backtest).
+            start_of_month = kyiv_to_utc(f"{current_year}-{current_month:02d}-01", 0)
             df_hist = df_hist[df_hist['Datetime'] < start_of_month]
 
             # add_real_market_factors вище перерахував PL_/RO_-погоду ЛИШЕ
@@ -512,8 +528,22 @@ def sync_realtime_data(force=False):
             df_updated = pd.concat([df_hist, new_month_data]).sort_values('Datetime').reset_index(drop=True)
             df_updated.to_csv(MERGED_DATA_PATH, index=False)
             return True
-        except:
-            pass
+        except Exception as e:
+            # 2026-09-08: раніше тут був голий `except: pass` — будь-яка
+            # помилка (мердж сусідньої погоди, конкатенація, запис файлу)
+            # мовчки ковтається, historical_data_merged.csv НЕ оновлюється,
+            # а виклик повертає False непоміченим (жоден з двох реальних
+            # викликачів — run_nightly_model_retrain і сам
+            # get_combined_historical_data — не перевіряє return value).
+            # Знайдено при розслідуванні: нічний ретрейн на VPS 8 ночей
+            # поспіль (30.08-07.09) видавав ПОБАЙТОВО ідентичні метрики
+            # навчання попри "completed successfully" в логах — ознака
+            # тренування на замороженому CSV. Живий тест на VPS у момент
+            # розслідування пройшов без помилок (можливо, вже саморозв'язалось),
+            # тому конкретний тригер не відтворено — але тиша сама по собі
+            # неприйнятна: тепер будь-яка помилка тут видима в логах.
+            print(f"Error updating historical_data_merged.csv in sync_realtime_data({force=}): {e}")
+            return False
     return False
 
 def _archive_weather_forecast(df, source):
