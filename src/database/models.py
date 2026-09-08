@@ -241,12 +241,27 @@ class BidMarginOverride(Base):
     margin_pct=0 означає "подавати заявку рівно за прогнозом" (найбільший
     ризик невиконання при помилці прогнозу, але і найбільший потенційний
     прибуток, якщо прогноз точний).
+
+    margin_uah (2026-09-08, "выстрой зависимости... с минимальным процентом
+    буфера безопасности") — АБСОЛЮТНИЙ буфер у ₴/МВт·год, альтернатива
+    margin_pct. Реальний аналіз 323 звірених заявок (29.07-08.09) показав:
+    відсотковий буфер структурно упереджений — buy-заявки подаються на
+    низьких (денний профіцит) цінах, sell — на високих (вечірній пік), тож
+    та сама помилка прогнозу в гривнях — це величезний % від низької ціни
+    й малий % від високої (buy потребував 98.5% для 90%-го виконання, sell —
+    лише 22%). В АБСОЛЮТНИХ гривнях buy/sell вимагають майже однакових сум
+    (p90 ≈1770-1980 ₴) — тому єдиний абсолютний буфер ефективніший і
+    справедливіший для обох напрямків. Коли margin_uah заповнено — ВІН має
+    пріоритет над margin_pct у generate_bids_for_date (не змішуються).
+    NULL (за замовчуванням) — стара поведінка (відсотковий режим), нічого
+    не змінюється для тих, хто цим не користується.
     """
     __tablename__ = "bid_margin_overrides"
 
     date = Column(DateTime, primary_key=True, nullable=False)
     asset_id = Column(String(36), ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True, nullable=False)
     margin_pct = Column(Float, nullable=False, default=2.0)
+    margin_uah = Column(Float, nullable=True)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
 class MarketBid(Base):
@@ -280,6 +295,13 @@ class MarketBid(Base):
     volume_kw = Column(Float, nullable=False)
     forecast_price_uah = Column(Float, nullable=False)
     margin_pct = Column(Float, nullable=False)
+    # 2026-09-08 — коли заявку згенеровано в АБСОЛЮТНОМУ режимі (див.
+    # BidMarginOverride.margin_uah), тут зберігається реально застосований
+    # буфер у ₴/МВт·год; margin_pct вище тоді містить ЕКВІВАЛЕНТНИЙ % (для
+    # зворотної сумісності зі старими звітами/UI, що читають margin_pct) —
+    # не сирий 0. NULL — заявка згенерована у звичайному відсотковому
+    # режимі, margin_pct вище — це і є реально застосоване значення.
+    margin_uah = Column(Float, nullable=True)
     bid_price_uah = Column(Float, nullable=False)
     # Lineage (CODE_REVIEW.md п.7-20, 2026-08-25) — той самий ForecastRun, що
     # дав forecast_price_uah (скопійовано з ChargeDischargePlan.forecast_run_id

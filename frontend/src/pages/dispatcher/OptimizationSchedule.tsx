@@ -110,8 +110,23 @@ export default function OptimizationSchedule() {
   }, [initialSoc]);
 
   const [marginDraft, setMarginDraft] = useState<string>('');
+  // 2026-09-08: АБСОЛЮТНИЙ буфер (₴/МВт·год) — альтернатива відсотковому
+  // режиму, пріоритетна над ним, якщо обрана. Реальний аналіз показав:
+  // buy-заявки (низька денна ціна) потребують у рази більшого % за sell
+  // (висока вечірня ціна) для того самого реального захисту в гривнях —
+  // абсолютний буфер уникає цієї асиметрії.
+  const [marginMode, setMarginMode] = useState<'pct' | 'uah'>('pct');
+  const [marginUahDraft, setMarginUahDraft] = useState<string>('');
   useEffect(() => {
-    if (bidMargin) setMarginDraft(String(bidMargin.margin_pct));
+    if (bidMargin) {
+      setMarginDraft(String(bidMargin.margin_pct));
+      if (bidMargin.margin_uah != null) {
+        setMarginMode('uah');
+        setMarginUahDraft(String(bidMargin.margin_uah));
+      } else {
+        setMarginMode('pct');
+      }
+    }
   }, [bidMargin]);
 
   // Графік і таблиця ручних корективів згорнуті за замовчуванням — на добу
@@ -192,15 +207,44 @@ export default function OptimizationSchedule() {
         ) : (
           <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: '14px' }}>
             <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="form-label">Відсоток буфера безпеки (Safety Buffer %)</label>
-              <input
-                type="number" min={0} max={50} step={0.5} className="form-input" style={{ width: '140px' }}
-                value={marginDraft}
-                onChange={(e) => setMarginDraft(e.target.value)}
-              />
+              <label className="form-label">Тип буфера</label>
+              <select
+                className="form-input" style={{ width: '160px' }}
+                value={marginMode}
+                onChange={(e) => setMarginMode(e.target.value as 'pct' | 'uah')}
+                title="Відсоток — стара поведінка, але систематично упереджений: buy подається на низькій ціні, sell на високій, та сама помилка прогнозу в гривнях — це великий % від низької ціни й малий від високої. Абсолютний буфер (₴/МВт·год) уникає цієї асиметрії — рекомендовано."
+              >
+                <option value="pct">Відсоток (%)</option>
+                <option value="uah">Абсолютний, ₴/МВт·год</option>
+              </select>
             </div>
-            <button className="btn" onClick={() => saveBidMarginAndRegenerate(Number(marginDraft))}>
-              Зберегти маржу і сформувати заявки
+            {marginMode === 'pct' ? (
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Відсоток буфера безпеки (Safety Buffer %)</label>
+                <input
+                  type="number" min={0} max={50} step={0.5} className="form-input" style={{ width: '140px' }}
+                  value={marginDraft}
+                  onChange={(e) => setMarginDraft(e.target.value)}
+                />
+              </div>
+            ) : (
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Абсолютний буфер, ₴/МВт·год</label>
+                <input
+                  type="number" min={0} step={50} className="form-input" style={{ width: '160px' }}
+                  value={marginUahDraft}
+                  onChange={(e) => setMarginUahDraft(e.target.value)}
+                  title="Реальний аналіз (2026-09-08): ~2000-2500 ₴/МВт·год дає ~90-95% виконання заявок і для купівлі, і для продажу"
+                />
+              </div>
+            )}
+            <button
+              className="btn"
+              onClick={() => marginMode === 'uah'
+                ? saveBidMarginAndRegenerate(Number(marginDraft), Number(marginUahDraft))
+                : saveBidMarginAndRegenerate(Number(marginDraft), null)}
+            >
+              Зберегти буфер і сформувати заявки
             </button>
             {bidMargin.source === 'manual' && (
               <button className="btn btn-danger" onClick={clearBidMarginAndRegenerate}>

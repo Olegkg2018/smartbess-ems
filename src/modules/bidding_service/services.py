@@ -49,12 +49,24 @@ def get_margin_pct(db, asset_id: str, target_date: datetime.datetime) -> float:
     return override.margin_pct if override else DEFAULT_MARGIN_PCT
 
 
-def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct: float = None, force_full_day: bool = False) -> dict:
+def get_margin_uah(db, asset_id: str, target_date: datetime.datetime):
+    """Абсолютний буфер (₴/МВт·год) на цю добу, якщо диспетчер його зберіг —
+    None, якщо ще не налаштовано (тоді generate_bids_for_date лишається на
+    відсотковому режимі, стара поведінка без змін)."""
+    override = db.query(BidMarginOverride).filter(
+        BidMarginOverride.asset_id == asset_id, BidMarginOverride.date == target_date,
+    ).first()
+    return override.margin_uah if override else None
+
+
+def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct: float = None, margin_uah: float = None, force_full_day: bool = False) -> dict:
     """
     Будує заявки РДН на target_date з уже порахованого MILP-графіка
     (ChargeDischargePlan) + прогнозної ціни (PriceForecast) на ту саму добу,
-    зсунутих на margin_pct (bid_margin_overrides, якщо збережено дispatcher'ом,
-    інакше DEFAULT_MARGIN_PCT). Не запускає прогноз/оптимізацію заново —
+    зсунутих на буфер безпеки — або відсотковий (margin_pct,
+    bid_margin_overrides, інакше DEFAULT_MARGIN_PCT), або, якщо збережено,
+    АБСОЛЮТНИЙ у ₴/МВт·год (margin_uah — має пріоритет, 2026-09-08, див.
+    докстрінг BidMarginOverride). Не запускає прогноз/оптимізацію заново —
     вимагає, щоб вони вже були пораховані (як і /optimization/plans).
 
     force_full_day=True — свідомий вихід із заморозки минулих годин (як і
@@ -63,6 +75,8 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
     """
     if margin_pct is None:
         margin_pct = get_margin_pct(db, asset.id, target_date)
+    if margin_uah is None:
+        margin_uah = get_margin_uah(db, asset.id, target_date)
 
     plans = db.query(ChargeDischargePlan).filter(
         ChargeDischargePlan.asset_id == asset.id,
@@ -105,15 +119,40 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
         if p.target_power_mw > 0.001:
             bid_type = 'sell'
             volume_kw = p.target_power_mw * 1000.0
-            bid_price_raw = forecast_price * (1.0 - margin_pct / 100.0)
         elif p.target_power_mw < -0.001:
             bid_type = 'buy'
             volume_kw = -p.target_power_mw * 1000.0
-            bid_price_raw = forecast_price * (1.0 + margin_pct / 100.0)
         else:
             bid_type = 'standby'
             volume_kw = 0.0
-            bid_price_raw = forecast_price
+
+        # Буфер безпеки — АБСОЛЮТНИЙ (₴/МВт·год), якщо налаштовано, інакше
+        # відсотковий (стара поведінка). Реальний аналіз 323 звірених заявок
+        # (2026-09-08) показав: відсотковий буфер структурно упереджений —
+        # buy подається на низьких (денний профіцит) цінах, sell — на
+        # високих (вечірній пік), тож та сама помилка прогнозу в гривнях —
+        # величезний % від низької ціни й малий % від високої. В абсолютних
+        # гривнях buy/sell вимагають майже однакової суми — тому єдиний
+        # margin_uah ефективніший для обох напрямків одночасно.
+        if margin_uah is not None:
+            if bid_type == 'sell':
+                bid_price_raw = forecast_price - margin_uah
+            elif bid_type == 'buy':
+                bid_price_raw = forecast_price + margin_uah
+            else:
+                bid_price_raw = forecast_price
+            # Еквівалентний % — лише для читабельності старих звітів/UI, що
+            # й досі показують margin_pct; сам розрахунок вище вже
+            # відбувся в абсолютних гривнях, це не подвійне застосування.
+            applied_margin_pct = (margin_uah / forecast_price * 100.0) if forecast_price else 0.0
+        else:
+            if bid_type == 'sell':
+                bid_price_raw = forecast_price * (1.0 - margin_pct / 100.0)
+            elif bid_type == 'buy':
+                bid_price_raw = forecast_price * (1.0 + margin_pct / 100.0)
+            else:
+                bid_price_raw = forecast_price
+            applied_margin_pct = margin_pct
 
         bid_price, _ = clamp_bid_price_to_oree_bounds(bid_price_raw)
 
@@ -126,7 +165,8 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
         row.bid_type = bid_type
         row.volume_kw = volume_kw
         row.forecast_price_uah = forecast_price
-        row.margin_pct = margin_pct
+        row.margin_pct = applied_margin_pct
+        row.margin_uah = margin_uah
         row.bid_price_uah = bid_price
         # Lineage (CODE_REVIEW.md п.7-20) — той самий ForecastRun, що дав
         # forecast_price вище (p — той самий ChargeDischargePlan рядок).
@@ -164,6 +204,7 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
         # всіх функціях цього файлу, що повертають 'date'.
         'date': utc_to_kyiv(target_date).date().isoformat(),
         'margin_pct': margin_pct,
+        'margin_uah': margin_uah,
         'n_bids': len(bids),
         'n_price_clamped': sum(1 for d in bid_dicts if d['bid_price_legally_clamped']),
         'bids': bid_dicts,
@@ -533,6 +574,11 @@ def _bid_to_dict(b: MarketBid, soc_feasible=None) -> dict:
         'volume_kw': b.volume_kw,
         'forecast_price_uah': b.forecast_price_uah,
         'margin_pct': b.margin_pct,
+        # None — стандартний відсотковий режим (margin_pct вище й є реально
+        # застосованим значенням). Заповнено — застосований АБСОЛЮТНИЙ буфер
+        # (₴/МВт·год); margin_pct тоді містить лише еквівалентний %, для
+        # зворотної сумісності зі старими звітами.
+        'margin_uah': b.margin_uah,
         'bid_price_uah': b.bid_price_uah,
         'actual_price_uah': b.actual_price_uah,
         'executed': b.executed,

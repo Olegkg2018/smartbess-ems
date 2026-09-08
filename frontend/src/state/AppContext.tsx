@@ -87,7 +87,7 @@ interface AppState {
   // виконання за прогнозом). Заявки (bids) — окремо, з реальним статусом
   // виконання/фактичною ціною OREE після звірки.
   bidMargin: BidMargin | null;
-  saveBidMarginAndRegenerate: (marginPct: number) => Promise<void>;
+  saveBidMarginAndRegenerate: (marginPct: number, marginUah?: number | null) => Promise<void>;
   clearBidMarginAndRegenerate: () => Promise<void>;
   bids: MarketBid[] | null;
   refreshBids: () => Promise<void>;
@@ -669,11 +669,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [activeRole, activeAssetId, targetDate]);
 
-  const saveBidMarginAndRegenerate = useCallback(async (marginPct: number) => {
+  // marginUah=null — звичайний відсотковий режим; задано — АБСОЛЮТНИЙ буфер
+  // ₴/МВт·год, пріоритетний над marginPct (2026-09-08).
+  const saveBidMarginAndRegenerate = useCallback(async (marginPct: number, marginUah: number | null = null) => {
     if (!activeAssetId) return;
     try {
-      await api.saveBidMargin(activeRole, activeAssetId, targetDate, marginPct);
-      addLog('SETTINGS', `Маржу заявки на ${targetDate} збережено: ${marginPct}%.`, 'success');
+      await api.saveBidMargin(activeRole, activeAssetId, targetDate, marginPct, marginUah);
+      addLog('SETTINGS', marginUah != null
+        ? `Абсолютний буфер заявки на ${targetDate} збережено: ${marginUah} ₴/МВт·год.`
+        : `Маржу заявки на ${targetDate} збережено: ${marginPct}%.`, 'success');
       await refreshBidMargin();
       await generateBidsNow();
     } catch (e: any) {

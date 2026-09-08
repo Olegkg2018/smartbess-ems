@@ -263,19 +263,25 @@ export async function clearInitialSoc(role: UserRole, assetId: string, date: str
 export interface BidMargin {
   date: string;
   margin_pct: number;
+  // 2026-09-08: АБСОЛЮТНИЙ буфер (₴/МВт·год) — якщо не null, має пріоритет
+  // над margin_pct при генерації заявок. null = звичайний відсотковий режим.
+  margin_uah: number | null;
   source: 'manual' | 'default';
 }
 
-/** Маржа заявки РДН на добу: sell = прогноз*(1-маржа), buy = прогноз*(1+маржа) — керує ймовірністю виконання. */
+/** Маржа заявки РДН на добу: sell = прогноз*(1-маржа), buy = прогноз*(1+маржа) — керує ймовірністю виконання.
+ *  Або, якщо marginUah задано, sell = прогноз-буфер, buy = прогноз+буфер (АБСОЛЮТНИЙ режим, пріоритетний). */
 export async function fetchBidMargin(role: UserRole, assetId: string, date: string): Promise<BidMargin> {
   return authJson<BidMargin>(role, `/api/v1/bids/margin?asset_id=${assetId}&date=${date}`);
 }
 
-export async function saveBidMargin(role: UserRole, assetId: string, date: string, marginPct: number) {
+// marginUah=null — звичайний відсотковий режим (стара поведінка); задано —
+// АБСОЛЮТНИЙ буфер ₴/МВт·год, пріоритетний над marginPct (2026-09-08).
+export async function saveBidMargin(role: UserRole, assetId: string, date: string, marginPct: number, marginUah: number | null = null) {
   return authJson(role, '/api/v1/bids/margin', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ asset_id: assetId, date, margin_pct: marginPct }),
+    body: JSON.stringify({ asset_id: assetId, date, margin_pct: marginPct, margin_uah: marginUah }),
   });
 }
 
@@ -291,6 +297,10 @@ export interface MarketBid {
   volume_kw: number;
   forecast_price_uah: number;
   margin_pct: number;
+  // null — звичайний відсотковий режим (margin_pct вище і є реально
+  // застосованим значенням); задано — реально застосований АБСОЛЮТНИЙ
+  // буфер ₴/МВт·год (margin_pct тоді — лише еквівалентний %, 2026-09-08).
+  margin_uah: number | null;
   bid_price_uah: number;
   actual_price_uah: number | null;
   executed: boolean | null;
@@ -330,6 +340,7 @@ export interface GenerateBidsResult {
   status: string;
   date: string;
   margin_pct: number;
+  margin_uah: number | null;
   n_bids: number;
   n_price_clamped: number;
   bids: MarketBid[];

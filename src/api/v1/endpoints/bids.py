@@ -20,12 +20,17 @@ class MarginOverrideModel(BaseModel):
     asset_id: str
     date: str
     margin_pct: float
+    # 2026-09-08: АБСОЛЮТНИЙ буфер (₴/МВт·год) — якщо вказано, має пріоритет
+    # над margin_pct при генерації заявок (BidMarginOverride.margin_uah).
+    # None — звичайний відсотковий режим (стара поведінка).
+    margin_uah: Optional[float] = None
 
 
 class GenerateBidsRequest(BaseModel):
     asset_id: str
     date: str
     margin_pct: Optional[float] = None
+    margin_uah: Optional[float] = None
     # 2026-08-26: свідомий вихід із заморозки минулих годин — див.
     # RunOptimizationRequest.force_full_day (optimization.py).
     force_full_day: Optional[bool] = False
@@ -62,6 +67,7 @@ async def get_margin(asset_id: str, date: str):
         ).first()
         return {
             "date": date, "margin_pct": override.margin_pct if override else DEFAULT_MARGIN_PCT,
+            "margin_uah": override.margin_uah if override else None,
             "source": "manual" if override else "default",
         }
     finally:
@@ -70,6 +76,12 @@ async def get_margin(asset_id: str, date: str):
 
 @router.post("/margin", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
 async def save_margin(req: MarginOverrideModel):
+    """
+    margin_uah заповнено — АБСОЛЮТНИЙ буфер (₴/МВт·год), пріоритетний над
+    margin_pct (2026-09-08). Ендпоінт завжди зберігає ОБИДВА поля саме так,
+    як прислані — щоб скинути назад на відсотковий режим, надішліть
+    margin_uah: null (не пропускайте поле).
+    """
     db = SessionLocal()
     try:
         target_dt = kyiv_to_utc(req.date, 0)
@@ -80,8 +92,11 @@ async def save_margin(req: MarginOverrideModel):
             row = BidMarginOverride(asset_id=req.asset_id, date=target_dt)
             db.add(row)
         row.margin_pct = req.margin_pct
+        row.margin_uah = req.margin_uah
         db.commit()
-        return {"status": "success", "message": f"Маржу заявки на {req.date} збережено: {req.margin_pct}%."}
+        msg = f"Абсолютний буфер заявки на {req.date} збережено: {req.margin_uah} ₴/МВт·год." if req.margin_uah is not None \
+            else f"Маржу заявки на {req.date} збережено: {req.margin_pct}%."
+        return {"status": "success", "message": msg}
     finally:
         db.close()
 
@@ -152,7 +167,7 @@ async def generate_bids(req: GenerateBidsRequest):
         if not asset:
             raise HTTPException(status_code=404, detail="Asset not found")
         target_dt = kyiv_to_utc(req.date, 0)
-        result = generate_bids_for_date(db, asset, target_dt, margin_pct=req.margin_pct, force_full_day=req.force_full_day or False)
+        result = generate_bids_for_date(db, asset, target_dt, margin_pct=req.margin_pct, margin_uah=req.margin_uah, force_full_day=req.force_full_day or False)
         if result['status'] != 'ok':
             raise HTTPException(status_code=400, detail=result['message'])
         return result
