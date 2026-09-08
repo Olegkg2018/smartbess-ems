@@ -18,12 +18,81 @@ router = APIRouter()
 
 # Реальні тарифи мережі (той самий склад, що settle_bids_for_date реально
 # використовує через evaluate_schedule_profit/TARIFF_KWARGS) — перевикористано
-# тут для окремої колонки "Тарифи мережі" у export_forecast_period_excel, не
-# задубльовано літералами.
+# тут для окремої колонки "Витрати на доставку" у export_forecast_period_excel
+# та /reports/day-bid-report, не задубльовано літералами.
 TOTAL_TARIFFS_UAH_PER_MWH = (
     TARIFF_KWARGS["transmission_tariff"] + TARIFF_KWARGS["distribution_tariff"]
     + TARIFF_KWARGS["dispatch_tariff"] + TARIFF_KWARGS["supplier_margin"]
 )
+
+
+def _bid_hour_financials(bid: MarketBid, ac, asset: Asset) -> dict:
+    """
+    Одна точка правди для погодинних фінансових колонок — використовується і
+    Excel-звітом за період (export_forecast_period_excel), і живою JSON-
+    таблицею за добу (/reports/day-bid-report, "Ручне коригування заявок",
+    2026-09-08). "Плановий прибуток"/"Витрати на доставку"/"Деградація" —
+    гіпотеза "якби ЗІГРАЛА ця заявка", за РЕАЛЬНОЮ факт-ціною (ac), незалежно
+    від executed (той самий принцип, що вже був для "Плановий
+    прибуток"/"Тарифи мережі", 2026-08-28) — тепер розщеплено на ТРИ
+    компоненти замість двох, щоб деградація теж була видна окремим
+    стовпцем, а не змішана з ринковим P&L чи тарифами.
+
+    Ці витрати НЕ впливають на саму заявку (bid_price_uah/executed уже
+    визначені раніше, generate_bids_for_date/settle_bids_for_date) — суто
+    похідні для обліку фінансового результату.
+
+    Точна тотожність для ВИКОНАНОЇ заявки: planned_profit_uah +
+    delivery_cost_uah + degradation_cost_uah == realized_profit_uah (обидві
+    сторони — той самий evaluate_schedule_profit з тими самими
+    TARIFF_KWARGS/asset.deg_cost_per_mwh, arbitrage-режим — тарифи лише на
+    купівлю, деградація лише на продаж). "Реалізований прибуток"/
+    "Загальний дохід" — реальний факт (0 для невиконаних), читаються
+    напряму з bid, тут НЕ перераховуються.
+    """
+    volume_mw = bid.volume_kw / 1000.0
+    if ac is None:
+        planned_profit = delivery_cost = degradation_cost = None
+    elif bid.bid_type == "sell":
+        planned_profit = ac * volume_mw
+        delivery_cost = 0.0
+        degradation_cost = -(asset.deg_cost_per_mwh / 1000.0) * bid.volume_kw
+    elif bid.bid_type == "buy":
+        planned_profit = -ac * volume_mw
+        delivery_cost = -TOTAL_TARIFFS_UAH_PER_MWH / 1000.0 * bid.volume_kw
+        degradation_cost = 0.0
+    else:  # standby
+        planned_profit = 0.0
+        delivery_cost = 0.0
+        degradation_cost = 0.0
+
+    if bid.bid_type == "standby":
+        total_income = bid.realized_profit_uah
+        income_source = "Очікування" if bid.realized_profit_uah is not None else None
+    elif bid.executed:
+        total_income = bid.realized_profit_uah
+        income_source = "РДН"
+    elif bid.executed is False:
+        if bid.idm_fallback_suggested and bid.idm_fallback_profit_uah is not None:
+            total_income = bid.idm_fallback_profit_uah
+            income_source = "ВДР (факт)" if bid.idm_fallback_price_is_actual else "ВДР (оцінка)"
+        else:
+            total_income = bid.realized_profit_uah if bid.realized_profit_uah is not None else 0.0
+            income_source = "не реалізовано"
+    else:
+        total_income = None
+        income_source = None
+
+    return {
+        "planned_profit_uah": round(planned_profit, 2) if planned_profit is not None else None,
+        "delivery_cost_uah": round(delivery_cost, 2) if delivery_cost is not None else None,
+        "degradation_cost_uah": round(degradation_cost, 2) if degradation_cost is not None else None,
+        "realized_profit_uah": round(bid.realized_profit_uah, 2) if bid.realized_profit_uah is not None else None,
+        "total_income_uah": round(total_income, 2) if total_income is not None else None,
+        "income_source": income_source,
+        "charge_mw": round(volume_mw, 3) if bid.bid_type == "buy" else 0.0,
+        "discharge_mw": round(volume_mw, 3) if bid.bid_type == "sell" else 0.0,
+    }
 
 @router.get("/executive-summary", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
 async def get_executive_summary(
@@ -350,14 +419,23 @@ async def export_forecast_period_excel(asset_id: str, start_date: str, end_date:
         # 2026-08-28 (переглянуто): "Плановий прибуток" — гіпотеза "якби
         # ЗІГРАЛИ ВСІ заявки", тобто за РЕАЛЬНОЮ факт-ціною (не ціною заявки —
         # та лише визначає, чи виконається, аукціон єдиної ціни), для КОЖНОЇ
-        # заявки незалежно від executed. Чиста енергія, БЕЗ тарифів мережі —
-        # тарифи винесені в окрему колонку "Тарифи мережі" (щоб не змішувати
-        # ринковий P&L з вартістю доставки). "Реалізований прибуток" —
-        # реальний факт (0 для невиконаних, тарифи законно всередині, читається
-        # з bid.realized_profit_uah). Порожньо в "Плановий"/"Тарифи", коли
-        # факт-ціни ще нема (доба не звірена) — той самий принцип чесного NaN,
-        # що й колонка "Факт ціни".
-        "Плановий прибуток, ₴", "Тарифи мережі, ₴", "Реалізований прибуток, ₴",
+        # заявки незалежно від executed. Чиста енергія, БЕЗ витрат на
+        # доставку і без деградації — обидві винесені в окремі колонки
+        # (щоб не змішувати ринковий P&L з вартістю доставки/зносом).
+        # "Реалізований прибуток" — реальний факт (0 для невиконаних,
+        # витрати законно всередині, читається з bid.realized_profit_uah).
+        # Порожньо в трьох гіпотетичних колонках, коли факт-ціни ще нема
+        # (доба не звірена) — той самий принцип чесного NaN, що й колонка
+        # "Факт ціни".
+        "Плановий прибуток, ₴",
+        # 2026-09-08: перейменовано з "Тарифи мережі, ₴" на прохання
+        # користувача — та сама величина (TOTAL_TARIFFS_UAH_PER_MWH на
+        # обсяг купівлі, 0 для продажу в arbitrage-режимі), лише зрозуміліша
+        # назва. Деградація виділена в окрему колонку поруч (раніше взагалі
+        # не показувалась у цьому звіті, хоча реально впливає на
+        # "Реалізований прибуток" продажу так само, як витрати на доставку —
+        # на купівлю).
+        "Витрати на доставку, ₴", "Деградація, ₴", "Реалізований прибуток, ₴",
         # 2026-08-28: "Загальний дохід" — реальний P&L активу з урахуванням
         # ВДР-фолбеку (заявки, які не зіграли на РДН, але все одно потрібно
         # купити/продати на ВДР) — саме ця цифра, а не "Реалізований
@@ -417,8 +495,6 @@ async def export_forecast_period_excel(asset_id: str, start_date: str, end_date:
                 ws.cell(row=row, column=8, value=None)
 
             bid = bid_by_hour.get(hour)
-            charge_mw = 0.0
-            discharge_mw = 0.0
             if bid is not None:
                 ws.cell(row=row, column=9, value=BID_TYPE_LABELS.get(bid.bid_type, bid.bid_type)).alignment = Alignment(horizontal="center")
                 ws.cell(row=row, column=10, value=round(bid.bid_price_uah, 2)).number_format = "#,##0.00"
@@ -428,80 +504,22 @@ async def export_forecast_period_excel(asset_id: str, start_date: str, end_date:
                     executed_label = "так" if bid.executed else "ні"
                 ws.cell(row=row, column=11, value=executed_label).alignment = Alignment(horizontal="center")
 
-                # Плановий прибуток — гіпотеза "якби зіграли ВСІ заявки", за
-                # РЕАЛЬНОЮ факт-ціною (ac, вже обчислена вище для колонки
-                # "Факт ціни"), не ціною заявки — навмисно ігнорує
-                # bid.executed. Чиста енергія, без тарифів (див. наступну
-                # колонку). Порожньо, якщо факт-ціни ще нема (доба не
-                # звірена) — не підміняти прогнозом чи нулем.
-                volume_mw = bid.volume_kw / 1000.0
-                if ac is not None:
-                    if bid.bid_type == "sell":
-                        planned_profit = ac * volume_mw
-                    elif bid.bid_type == "buy":
-                        planned_profit = -ac * volume_mw
-                    else:
-                        planned_profit = 0.0
-                    ws.cell(row=row, column=12, value=round(planned_profit, 2)).number_format = "+#,##0.00;-#,##0.00"
-
-                    # Тарифи мережі за ту саму гіпотезу повного виконання —
-                    # окремо від "Плановий прибуток", щоб не змішувати
-                    # ринковий P&L з вартістю доставки. arbitrage-режим
-                    # (TARIFF_KWARGS) не нараховує тарифи на продаж.
-                    if bid.bid_type == "buy":
-                        tariff_cost = -TOTAL_TARIFFS_UAH_PER_MWH / 1000.0 * bid.volume_kw
-                    else:
-                        tariff_cost = 0.0
-                    ws.cell(row=row, column=13, value=round(tariff_cost, 2)).number_format = "+#,##0.00;-#,##0.00"
-                else:
-                    ws.cell(row=row, column=12, value=None)
-                    ws.cell(row=row, column=13, value=None)
-
-                ws.cell(row=row, column=14, value=round(bid.realized_profit_uah, 2) if bid.realized_profit_uah is not None else None).number_format = "+#,##0.00;-#,##0.00"
-
-                # Загальний дохід — реальний P&L з урахуванням ВДР-фолбеку.
-                # standby завжди 0 (не торгувались); виконано на РДН — сама
-                # realized_profit_uah; не виконано на РДН, але є
-                # ВДР-пропозиція — idm_fallback_profit_uah (вже включає
-                # тарифи, evaluate_schedule_profit/TARIFF_KWARGS, той самий
-                # склад, що для РДН); не виконано і ВДР-пропозиції нема —
-                # 0 (як і realized_profit_uah); ще не звірено — порожньо.
-                if bid.bid_type == "standby":
-                    total_income = bid.realized_profit_uah
-                    income_source = "Очікування" if bid.realized_profit_uah is not None else None
-                elif bid.executed:
-                    total_income = bid.realized_profit_uah
-                    income_source = "РДН"
-                elif bid.executed is False:
-                    if bid.idm_fallback_suggested and bid.idm_fallback_profit_uah is not None:
-                        total_income = bid.idm_fallback_profit_uah
-                        income_source = "ВДР (факт)" if bid.idm_fallback_price_is_actual else "ВДР (оцінка)"
-                    else:
-                        total_income = bid.realized_profit_uah if bid.realized_profit_uah is not None else 0.0
-                        income_source = "не реалізовано"
-                else:
-                    total_income = None
-                    income_source = None
-                ws.cell(row=row, column=15, value=round(total_income, 2) if total_income is not None else None).number_format = "+#,##0.00;-#,##0.00"
-                ws.cell(row=row, column=16, value=income_source).alignment = Alignment(horizontal="center")
-
-                if bid.bid_type == "buy":
-                    charge_mw = bid.volume_kw / 1000.0
-                elif bid.bid_type == "sell":
-                    discharge_mw = bid.volume_kw / 1000.0
+                fin = _bid_hour_financials(bid, ac, asset)
+                ws.cell(row=row, column=12, value=fin["planned_profit_uah"]).number_format = "+#,##0.00;-#,##0.00"
+                ws.cell(row=row, column=13, value=fin["delivery_cost_uah"]).number_format = "+#,##0.00;-#,##0.00"
+                ws.cell(row=row, column=14, value=fin["degradation_cost_uah"]).number_format = "+#,##0.00;-#,##0.00"
+                ws.cell(row=row, column=15, value=fin["realized_profit_uah"]).number_format = "+#,##0.00;-#,##0.00"
+                ws.cell(row=row, column=16, value=fin["total_income_uah"]).number_format = "+#,##0.00;-#,##0.00"
+                ws.cell(row=row, column=17, value=fin["income_source"]).alignment = Alignment(horizontal="center")
+                ws.cell(row=row, column=18, value=fin["charge_mw"]).number_format = "#,##0.000"
+                ws.cell(row=row, column=19, value=fin["discharge_mw"]).number_format = "#,##0.000"
             else:
-                ws.cell(row=row, column=9, value=None)
-                ws.cell(row=row, column=10, value=None)
-                ws.cell(row=row, column=11, value=None)
-                ws.cell(row=row, column=12, value=None)
-                ws.cell(row=row, column=13, value=None)
-                ws.cell(row=row, column=14, value=None)
-                ws.cell(row=row, column=15, value=None)
-                ws.cell(row=row, column=16, value=None)
-            ws.cell(row=row, column=17, value=round(charge_mw, 3)).number_format = "#,##0.000"
-            ws.cell(row=row, column=18, value=round(discharge_mw, 3)).number_format = "#,##0.000"
+                for col_idx in range(9, 18):
+                    ws.cell(row=row, column=col_idx, value=None)
+                ws.cell(row=row, column=18, value=0.0).number_format = "#,##0.000"
+                ws.cell(row=row, column=19, value=0.0).number_format = "#,##0.000"
 
-    widths = [12, 10, 20, 20, 20, 16, 22, 12, 14, 18, 14, 18, 16, 20, 18, 16, 12, 12]
+    widths = [12, 10, 20, 20, 20, 16, 22, 12, 14, 18, 14, 18, 16, 16, 20, 18, 16, 12, 12]
     for col_idx, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(col_idx)].width = w
 
@@ -511,8 +529,8 @@ async def export_forecast_period_excel(asset_id: str, start_date: str, end_date:
     # Data Bars на Заряд/Розряд — та сама ідіома, що й export-day/"Ручне
     # коригування заявок" (Optimization Schedule): "стовпчик заряду
     # батареї" прямо в комірці, не окрема діаграма збоку.
-    charge_range = f"Q{header_row + 1}:Q{last_row}"
-    discharge_range = f"R{header_row + 1}:R{last_row}"
+    charge_range = f"R{header_row + 1}:R{last_row}"
+    discharge_range = f"S{header_row + 1}:S{last_row}"
     charge_rule = DataBarRule(start_type="num", start_value=0, end_type="num", end_value=power_limit_mw, color="3B82F6", showValue=True)
     discharge_rule = DataBarRule(start_type="num", start_value=0, end_type="num", end_value=power_limit_mw, color="059669", showValue=True)
     ws.conditional_formatting.add(charge_range, charge_rule)
@@ -544,3 +562,96 @@ async def export_forecast_period_excel(asset_id: str, start_date: str, end_date:
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/day-bid-report", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
+async def get_day_bid_report(asset_id: str, date: str):
+    """
+    Погодинний звіт прогноз+заявки за ОДНУ добу як JSON (не .xlsx) — та сама
+    точка правди (_bid_hour_financials), що й export_forecast_period_excel
+    (start_date==end_date для періоду в 1 добу дав би побайтово ті самі
+    числа) — для живої таблиці "Ручне коригування заявок" на Optimization
+    Schedule (2026-09-08), щоб показати ті самі поля, що й Excel-звіт за
+    період, без завантаження файлу, і дати диспетчеру подати/підтвердити
+    ВДР-фолбек прямо з цієї таблиці (ідм_* поля нижче).
+    """
+    try:
+        datetime.datetime.strptime(date, '%Y-%m-%d')
+    except ValueError:
+        raise HTTPException(status_code=400, detail="date має бути у форматі YYYY-MM-DD")
+
+    db = SessionLocal()
+    try:
+        asset = db.query(Asset).filter(Asset.id == asset_id).first()
+        if not asset:
+            raise HTTPException(status_code=404, detail="Asset not found")
+
+        target_dt = kyiv_to_utc(date, 0)
+        forecasts = db.query(PriceForecast).filter(
+            PriceForecast.forecast_run_at == target_dt
+        ).order_by(PriceForecast.timestamp).all()
+        forecast_by_hour = {
+            utc_to_kyiv(f.timestamp).hour: (f.predicted_price_uah, f.lower_bound_uah, f.upper_bound_uah)
+            for f in forecasts
+        }
+
+        day_start, day_end = kyiv_day_bounds(date)
+        bids = db.query(MarketBid).filter(
+            MarketBid.asset_id == asset_id,
+            MarketBid.timestamp >= day_start,
+            MarketBid.timestamp < day_end,
+        ).order_by(MarketBid.timestamp).all()
+        bid_by_hour = {utc_to_kyiv(b.timestamp).hour: b for b in bids}
+    finally:
+        db.close()
+
+    actual = await get_actual_prices(target_date=date)
+    actual_by_hour = (
+        dict(zip(actual["hours"], actual["actual_prices_uah"])) if actual.get("available") else {}
+    )
+
+    hours_out = []
+    for hour in range(24):
+        fc, lo, hi = forecast_by_hour.get(hour, (None, None, None))
+        ac = actual_by_hour.get(hour)
+        row = {
+            "hour": hour,
+            "forecast_price_uah": round(fc, 2) if fc is not None else None,
+            "p10_uah": round(lo, 2) if lo is not None else None,
+            "p90_uah": round(hi, 2) if hi is not None else None,
+            "actual_price_uah": round(ac, 2) if ac is not None else None,
+            "diff_uah": round(ac - fc, 2) if (ac is not None and fc is not None) else None,
+            "error_pct": (
+                round(abs(ac - fc) / abs(ac) * 100.0, 1)
+                if (ac is not None and fc is not None and ac != 0) else None
+            ),
+        }
+        bid = bid_by_hour.get(hour)
+        if bid is not None:
+            row["bid_type"] = bid.bid_type
+            row["volume_kw"] = bid.volume_kw
+            row["bid_price_uah"] = round(bid.bid_price_uah, 2)
+            row["executed"] = bid.executed
+            # ВДР-фолбек — ті самі поля, що вже повертає /bids, потрібні тут,
+            # щоб таблиця "Ручне коригування заявок" могла подати/підтвердити
+            # заявку на ВДР без окремого запиту до /bids.
+            row["idm_fallback_suggested"] = bid.idm_fallback_suggested
+            row["idm_fallback_price_uah"] = bid.idm_fallback_price_uah
+            row["idm_fallback_price_is_actual"] = bid.idm_fallback_price_is_actual
+            row["idm_external_order_id"] = bid.idm_external_order_id
+            row["idm_fallback_acknowledged"] = bid.idm_fallback_acknowledged
+            row["idm_bid_price_uah"] = bid.idm_bid_price_uah
+            row.update(_bid_hour_financials(bid, ac, asset))
+        else:
+            row.update({
+                "bid_type": None, "volume_kw": None, "bid_price_uah": None, "executed": None,
+                "idm_fallback_suggested": False, "idm_fallback_price_uah": None,
+                "idm_fallback_price_is_actual": None, "idm_external_order_id": None,
+                "idm_fallback_acknowledged": None, "idm_bid_price_uah": None,
+                "planned_profit_uah": None, "delivery_cost_uah": None, "degradation_cost_uah": None,
+                "realized_profit_uah": None, "total_income_uah": None, "income_source": None,
+                "charge_mw": 0.0, "discharge_mw": 0.0,
+            })
+        hours_out.append(row)
+
+    return {"date": date, "asset_id": asset_id, "hours": hours_out}

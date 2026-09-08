@@ -14,6 +14,11 @@ export type DispatchHour = {
   isManual: boolean;
   revenueUah: number;
   costUah: number;
+  // 2026-09-08: раніше costUah включав мережевий тариф на купівлю
+  // (плюсувався мовчки) — за проханням користувача винесено в окреме поле,
+  // щоб "Заявка РДН"/KPI показували чисту вартість купленої енергії окремо
+  // від витрат на доставку (для обліку, не впливає на саму заявку/диспетчеризацію).
+  deliveryCostUah: number;
   degradationUah: number;
 };
 
@@ -487,24 +492,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const chargeKW = commandedKW < 0 ? Math.abs(commandedKW) : 0;
         const dischargeKW = commandedKW > 0 ? commandedKW : 0;
         const revenueUah = dischargeKW * priceKWh;
-        const costUah = chargeKW * (priceKWh + TARIFF_UAH_PER_KWH);
+        const costUah = chargeKW * priceKWh;
+        const deliveryCostUah = chargeKW * TARIFF_UAH_PER_KWH;
         const degradationUah = dischargeKW * DEGRADATION_UAH_PER_KWH;
         runningSoc = o.expected_soc_mwh * 1000.0;
         return {
           hour: o.hour, charge: chargeKW, discharge: dischargeKW, soc: runningSoc,
-          price: o.price_uah, isManual: false, revenueUah, costUah, degradationUah,
+          price: o.price_uah, isManual: false, revenueUah, costUah, deliveryCostUah, degradationUah,
         };
       }
       diverged = true;
 
-      let chargeKW = 0, dischargeKW = 0, revenueUah = 0, costUah = 0, degradationUah = 0;
+      let chargeKW = 0, dischargeKW = 0, revenueUah = 0, costUah = 0, deliveryCostUah = 0, degradationUah = 0;
 
       if (commandedKW < 0) {
         // Реально виконана потужність — якщо батарея вже на межі SoC (90%),
         // подальший заряд фізично неможливий, навіть якщо команда більша.
         const maxChargeKW = Math.max(0, (maxSocKwh - runningSoc) / effRatio);
         chargeKW = Math.min(Math.abs(commandedKW), maxChargeKW);
-        costUah = chargeKW * (priceKWh + TARIFF_UAH_PER_KWH);
+        costUah = chargeKW * priceKWh;
+        deliveryCostUah = chargeKW * TARIFF_UAH_PER_KWH;
         runningSoc = Math.min(maxSocKwh, runningSoc + chargeKW * effRatio);
       } else if (commandedKW > 0) {
         const maxDischargeKW = Math.max(0, (runningSoc - minSocKwh) * effRatio);
@@ -525,7 +532,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         soc: runningSoc,
         price: o.price_uah,
         isManual: !!o.is_overridden,
-        revenueUah, costUah, degradationUah,
+        revenueUah, costUah, deliveryCostUah, degradationUah,
       };
     });
   }, [manualOverrides, capacity, power, efficiency, initialSoc]);

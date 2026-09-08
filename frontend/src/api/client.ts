@@ -528,25 +528,48 @@ export async function fetchDataAudit(role: UserRole, date: string): Promise<Data
 }
 
 /**
- * Погодинний Excel-звіт за добу (прогноз/факт ціни, заряд/розряд, ціна
- * виконання) — завантажує .xlsx і одразу ініціює скачування у браузері.
- * Саме .xlsx, а не .csv, щоб Excel не "вгадував" типи комірок при відкритті.
+ * Погодинний звіт прогноз+заявки за ОДНУ добу як JSON (не .xlsx) — та сама
+ * точка правди (бекенд _bid_hour_financials), що й exportForecastPeriodExcel
+ * (2026-09-08), для живої таблиці "Ручне коригування заявок" на Optimization
+ * Schedule. Експорт у .xlsx за добу окремою кнопкою прибрано — тепер
+ * єдиний експортер (exportForecastPeriodExcel) обслуговує і добу (start===end),
+ * і довільний період.
  */
-export async function exportDayExcel(role: UserRole, assetId: string, date: string): Promise<void> {
-  const res = await authFetch(role, `/api/v1/reports/export-day?asset_id=${assetId}&date=${date}`);
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`${res.status} ${res.statusText}: ${body.slice(0, 200)}`);
-  }
-  const blob = await res.blob();
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `smartbess_${date}.xlsx`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  window.URL.revokeObjectURL(url);
+export interface DayBidReportHour {
+  hour: number;
+  forecast_price_uah: number | null;
+  p10_uah: number | null;
+  p90_uah: number | null;
+  actual_price_uah: number | null;
+  diff_uah: number | null;
+  error_pct: number | null;
+  bid_type: 'sell' | 'buy' | 'standby' | null;
+  volume_kw: number | null;
+  bid_price_uah: number | null;
+  executed: boolean | null;
+  idm_fallback_suggested: boolean;
+  idm_fallback_price_uah: number | null;
+  idm_fallback_price_is_actual: boolean | null;
+  idm_external_order_id: string | null;
+  idm_fallback_acknowledged: boolean | null;
+  idm_bid_price_uah: number | null;
+  // Плановий прибуток/Витрати на доставку/Деградація — гіпотеза "якби
+  // ЗІГРАЛА ця заявка" за реальною факт-ціною, розщеплена на 3 компоненти
+  // (2026-09-08, "затрати не впливають на заявку" — суто для обліку):
+  // planned_profit_uah + delivery_cost_uah + degradation_cost_uah ==
+  // realized_profit_uah для ВИКОНАНОЇ заявки.
+  planned_profit_uah: number | null;
+  delivery_cost_uah: number | null;
+  degradation_cost_uah: number | null;
+  realized_profit_uah: number | null;
+  total_income_uah: number | null;
+  income_source: string | null;
+  charge_mw: number;
+  discharge_mw: number;
+}
+
+export async function fetchDayBidReport(role: UserRole, assetId: string, date: string): Promise<{ date: string; asset_id: string; hours: DayBidReportHour[] }> {
+  return authJson(role, `/api/v1/reports/day-bid-report?asset_id=${assetId}&date=${date}`);
 }
 
 export async function exportForecastPeriodExcel(role: UserRole, assetId: string, startDate: string, endDate: string): Promise<void> {

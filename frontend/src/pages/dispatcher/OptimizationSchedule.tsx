@@ -7,6 +7,7 @@ import BidGateCountdown from '../../components/BidGateCountdown';
 import BidActionCenter from '../../components/BidActionCenter';
 import ConfirmModal from '../../components/ConfirmModal';
 import * as api from '../../api/client';
+import type { DayBidReportHour } from '../../api/client';
 
 export default function OptimizationSchedule() {
   const {
@@ -20,19 +21,52 @@ export default function OptimizationSchedule() {
   // Чернетка скоригованої ціни заявки на ВДР, за годиною (2026-08-28) —
   // порожньо = диспетчер ще не правив, "Подати на ВДР" піде за
   // запропонованою ціною. Той самий "draft + save" патерн, що marginDraft.
+  // Використовується і в "Заявка РДН", і тепер у "Ручне коригування заявок"
+  // (2026-09-08) — та сама годинна карта чернеток, одна на диспетчера/добу.
   const [idmPriceDraft, setIdmPriceDraft] = useState<Record<number, string>>({});
 
-  const [exporting, setExporting] = useState(false);
-  const handleExport = async () => {
-    if (!activeAssetId) return;
-    setExporting(true);
+  // Погодинний звіт прогноз+заявки за поточну добу (ті самі поля, що й
+  // Excel-звіт за період, "тільки за добу", 2026-09-08) — для розширеної
+  // таблиці "Ручне коригування заявок" нижче. null = ще не завантажено/
+  // немає що показати (напр. заявки ще не сформовано).
+  const [dayBidReport, setDayBidReport] = useState<DayBidReportHour[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!activeAssetId || !targetDate) { setDayBidReport(null); return; }
+    api.fetchDayBidReport(activeRole, activeAssetId, targetDate)
+      .then((res) => { if (!cancelled) setDayBidReport(res.hours); })
+      .catch(() => { if (!cancelled) setDayBidReport(null); });
+    return () => { cancelled = true; };
+  }, [activeRole, activeAssetId, targetDate]);
+  const dayBidReportByHour = new Map<number, DayBidReportHour>((dayBidReport || []).map((h) => [h.hour, h]));
+
+  // Звіт за добу/період (Excel) — перенесено сюди з Price Forecast
+  // (2026-09-08), єдиний експортер тепер обслуговує і одну добу
+  // (за замовчуванням — поточна), і довільний діапазон: раніше тут була
+  // окрема кнопка "Експорт в Excel" лише за поточну добу
+  // (/reports/export-day) — прибрано, той самий .xlsx-формат/поля тепер
+  // дає export-forecast-period при start===end.
+  const [periodStart, setPeriodStart] = useState('');
+  const [periodEnd, setPeriodEnd] = useState('');
+  useEffect(() => {
+    if (targetDate && !periodEnd) {
+      setPeriodStart(targetDate);
+      setPeriodEnd(targetDate);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetDate]);
+  const [exportingPeriod, setExportingPeriod] = useState(false);
+  const handleExportPeriod = async () => {
+    if (!periodStart || !periodEnd || !activeAssetId) return;
+    setExportingPeriod(true);
     try {
-      await api.exportDayExcel(activeRole, activeAssetId, targetDate);
-      addLog('EXPORT', `Excel-звіт за ${targetDate} завантажено.`, 'success');
+      await api.exportForecastPeriodExcel(activeRole, activeAssetId, periodStart, periodEnd);
+      const label = periodStart === periodEnd ? periodStart : `${periodStart} — ${periodEnd}`;
+      addLog('EXPORT', `Excel-звіт по прогнозу та заявках за ${label} завантажено.`, 'success');
     } catch (e: any) {
-      addLog('API', `Помилка експорту в Excel: ${e.message}`, 'error');
+      addLog('API', `Помилка експорту звіту: ${e.message}`, 'error');
     } finally {
-      setExporting(false);
+      setExportingPeriod(false);
     }
   };
 
@@ -101,8 +135,12 @@ export default function OptimizationSchedule() {
 
   const dailyRevenue = dispatchProfile.reduce((s, d) => s + d.revenueUah, 0);
   const dailyCost = dispatchProfile.reduce((s, d) => s + d.costUah, 0);
+  // 2026-09-08: раніше "плюсувалась" у dailyCost мовчки — тепер окрема
+  // KPI-картка (за проханням користувача: витрати на доставку і деградацію
+  // показувати окремим стовпчиком/карткою, суто для обліку).
+  const dailyDeliveryCost = dispatchProfile.reduce((s, d) => s + d.deliveryCostUah, 0);
   const dailyDegradation = dispatchProfile.reduce((s, d) => s + d.degradationUah, 0);
-  const dailyNetProfit = dailyRevenue - dailyCost - dailyDegradation;
+  const dailyNetProfit = dailyRevenue - dailyCost - dailyDeliveryCost - dailyDegradation;
 
   const [socDraft, setSocDraft] = useState<string>('');
   useEffect(() => {
@@ -386,8 +424,14 @@ export default function OptimizationSchedule() {
           <span className="kpi-value" style={{ color: 'var(--color-emerald)' }}>{Math.round(dailyRevenue).toLocaleString()} грн</span>
         </div>
         <div className="kpi-card">
-          <span className="kpi-title">Витрати заряду (Купівля + Тарифи)</span>
+          <span className="kpi-title">Витрати заряду (Купівля)</span>
           <span className="kpi-value" style={{ color: 'var(--color-rose)' }}>{Math.round(dailyCost).toLocaleString()} грн</span>
+        </div>
+        <div className="kpi-card">
+          <span className="kpi-title">Витрати на доставку</span>
+          <span className="kpi-value" style={{ color: 'var(--color-rose)' }} title="Мережеві тарифи (передача/розподіл/диспетчеризація/маржа постачальника) на куплену енергію — не впливають на саму заявку, лише на облік фінансового результату.">
+            {Math.round(dailyDeliveryCost).toLocaleString()} грн
+          </span>
         </div>
         <div className="kpi-card">
           <span className="kpi-title">Знос батареї (Деградація)</span>
@@ -446,12 +490,10 @@ export default function OptimizationSchedule() {
             <h3 className="card-title" style={{ margin: 0 }}>Ручне коригування заявок (Manual Dispatch Schedule)</h3>
             <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: 'var(--text-secondary)' }}>
               Введіть потужність (МВт: розряд +, заряд -) та реальну ціну заявки (грн/МВт-год) для кожної години на {targetDate}.
+              Права частина таблиці (прогноз/факт/заявка РДН/ВДР-фолбек/фінансовий результат) — довідково, ті самі поля, що й в Excel-звіті нижче.
             </p>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-            <button className="btn btn-secondary" onClick={handleExport} disabled={exporting} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <FileDown size={14} /> {exporting ? 'Експорт...' : 'Експорт в Excel'}
-            </button>
             <button className="btn" onClick={saveOverrides}>Зберегти ручний графік</button>
             <button className="btn btn-danger" onClick={() => setShowResetConfirm(true)}>
               Скинути до оптимального
@@ -460,6 +502,33 @@ export default function OptimizationSchedule() {
               {overridesOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />} {overridesOpen ? 'Сховати таблицю' : 'Показати таблицю'}
             </button>
           </div>
+        </div>
+
+        {/* Звіт по прогнозу та заявках (Excel) — перенесено з Price Forecast
+            (2026-09-08): один експортер за добу (за замовчуванням поточна)
+            або довільний період, замість окремої кнопки "Експорт в Excel"
+            лише за поточну добу. */}
+        <div style={{
+          display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: '16px',
+          padding: '12px', borderRadius: '6px', background: 'rgba(148, 163, 184, 0.06)', border: '1px solid rgba(148, 163, 184, 0.15)',
+        }}>
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="form-label">Звіт по прогнозу та заявках (Excel), з</label>
+            <input type="date" className="form-input" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} />
+          </div>
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="form-label">по</label>
+            <input type="date" className="form-input" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} />
+          </div>
+          <button
+            className="btn btn-secondary"
+            style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+            onClick={handleExportPeriod}
+            disabled={exportingPeriod || !periodStart || !periodEnd || !activeAssetId}
+            title="Однакові дати 'з'/'по' — звіт лише за одну добу; різні — за весь вказаний період."
+          >
+            <FileDown size={16} /> {exportingPeriod ? 'Формується...' : 'Завантажити Excel'}
+          </button>
         </div>
 
         {overridesOpen && (
@@ -479,7 +548,7 @@ export default function OptimizationSchedule() {
               </div>
             )}
 
-            <div style={{ maxHeight: '450px', overflowY: 'auto' }}>
+            <div style={{ maxHeight: '520px', overflow: 'auto' }}>
               <table className="audit-table" style={{ width: '100%' }}>
                 <thead>
                   <tr>
@@ -488,12 +557,29 @@ export default function OptimizationSchedule() {
                     <th>Ручна потужність (МВт)</th>
                     <th>Швидкі дії</th>
                     <th>Ціна заявки (грн/МВт-год)</th>
+                    <th>Прогноз ціни</th>
+                    <th>P10 / P90</th>
+                    <th>Факт ціни</th>
+                    <th>Різниця Факт-Прогноз</th>
+                    <th>Похибка, %</th>
+                    <th>Тип заявки РДН</th>
+                    <th>Ціна заявки РДН</th>
+                    <th>Виконано</th>
+                    <th>Плановий прибуток, ₴</th>
+                    <th>Витрати на доставку, ₴</th>
+                    <th>Деградація, ₴</th>
+                    <th>Реалізований прибуток, ₴</th>
+                    <th>Загальний дохід, ₴</th>
+                    <th>Джерело доходу</th>
+                    <th>Купівля/продаж на ВДР</th>
                   </tr>
                 </thead>
                 <tbody>
                   {manualOverrides.map((o: any, idx: number) => {
                     const sched = baseSchedule[idx];
                     const recPower = sched ? sched.power_kw / 1000.0 : 0.0;
+                    const h = dayBidReportByHour.get(idx);
+                    const fmt = (v: number | null | undefined) => (v == null ? '—' : Math.round(v).toLocaleString());
                     return (
                       <tr key={idx}>
                         <td>Година {idx + 1} ({String(idx).padStart(2, '0')}:00–{String(idx + 1).padStart(2, '0')}:00)</td>
@@ -539,6 +625,74 @@ export default function OptimizationSchedule() {
                               setManualOverrides(manualOverrides.map((it: any, i: number) => (i === idx ? { ...it, price_uah: val } : it)));
                             }}
                           />
+                        </td>
+                        <td>{fmt(h?.forecast_price_uah)}</td>
+                        <td style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{fmt(h?.p10_uah)} / {fmt(h?.p90_uah)}</td>
+                        <td>{fmt(h?.actual_price_uah)}</td>
+                        <td>{h?.diff_uah == null ? '—' : (h.diff_uah > 0 ? '+' : '') + Math.round(h.diff_uah).toLocaleString()}</td>
+                        <td>{h?.error_pct == null ? '—' : `${h.error_pct}%`}</td>
+                        <td>
+                          {h?.bid_type == null ? '—' : h.bid_type === 'sell' ? 'Продаж' : h.bid_type === 'buy' ? 'Купівля' : 'Очікування'}
+                        </td>
+                        <td>{fmt(h?.bid_price_uah)}</td>
+                        <td>
+                          {h?.executed == null ? '—' : h.executed ? (
+                            <span className="status-badge online"><CheckCircle2 size={12} /> так</span>
+                          ) : (
+                            <span className="status-badge offline"><XCircle size={12} /> ні</span>
+                          )}
+                        </td>
+                        <td>{fmt(h?.planned_profit_uah)}</td>
+                        <td style={{ color: h?.delivery_cost_uah ? 'var(--color-rose)' : undefined }}>{fmt(h?.delivery_cost_uah)}</td>
+                        <td style={{ color: h?.degradation_cost_uah ? 'var(--color-rose)' : undefined }}>{fmt(h?.degradation_cost_uah)}</td>
+                        <td>{fmt(h?.realized_profit_uah)}</td>
+                        <td style={{ fontWeight: 600 }}>{fmt(h?.total_income_uah)}</td>
+                        <td style={{ fontSize: '12px' }}>{h?.income_source ?? '—'}</td>
+                        <td style={{ minWidth: '220px' }}>
+                          {!h?.idm_fallback_suggested ? '—' : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                              <span style={{ fontSize: '11px', color: 'var(--color-amber)' }}>
+                                {h.bid_type === 'buy' ? 'Купівля' : 'Продаж'} на ВДР ({h.idm_fallback_price_is_actual ? 'факт' : 'оцінка'}) ~{fmt(h.idm_fallback_price_uah)} ₴/МВт·год
+                              </span>
+                              {h.idm_external_order_id ? (
+                                <span style={{ fontSize: '11px', color: 'var(--color-emerald)' }} title={`Подано на ВДР: ${h.idm_external_order_id}`}>
+                                  <CheckCircle2 size={12} style={{ verticalAlign: 'middle' }} />
+                                  {h.idm_bid_price_uah != null ? ` подано за ${fmt(h.idm_bid_price_uah)}` : ' подано автоматично'}
+                                </span>
+                              ) : h.idm_fallback_acknowledged ? (
+                                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>підтверджено вручну</span>
+                              ) : (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                  <input
+                                    type="number" step="0.01"
+                                    className="form-input" style={{ width: '90px', padding: '3px 6px', fontSize: '11px' }}
+                                    placeholder={String(Math.round((h.idm_fallback_price_uah ?? 0) * 100) / 100)}
+                                    value={idmPriceDraft[idx] ?? ''}
+                                    onChange={(e) => setIdmPriceDraft({ ...idmPriceDraft, [idx]: e.target.value })}
+                                    title="Скоригувати ціну заявки на ВДР перед подачею — порожньо = подати за запропонованою ціною"
+                                  />
+                                  <button
+                                    className="btn" style={{ padding: '2px 6px', fontSize: '10px', backgroundColor: 'var(--color-blue)' }}
+                                    title="Подати заявку на ВДР (емуляція)"
+                                    onClick={() => {
+                                      const draft = idmPriceDraft[idx];
+                                      const priceUah = draft && draft.trim() !== '' ? Number(draft) : null;
+                                      submitIdmFallbackBidNow(idx, priceUah);
+                                    }}
+                                  >
+                                    Подати
+                                  </button>
+                                  <button
+                                    className="btn" style={{ padding: '2px 6px', fontSize: '10px', backgroundColor: '#4b5563' }}
+                                    title="Позначити, що ви самі подали заявку на ВДР (або свідомо вирішили нічого не робити)"
+                                    onClick={() => acknowledgeIdmFallbackNow(idx)}
+                                  >
+                                    Вручну
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </td>
                       </tr>
                     );
