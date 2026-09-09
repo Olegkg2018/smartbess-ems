@@ -6,7 +6,7 @@ export default function Settings() {
   const {
     osr, setOsr, voltageClass, setVoltageClass, margin, setMargin,
     capacity, setCapacity, power, setPower, efficiency, setEfficiency,
-    maxCyclesPerDay, setMaxCyclesPerDay,
+    maxCyclesPerDay, setMaxCyclesPerDay, degradationCostUahPerMwh, setDegradationCostUahPerMwh,
     bidReminderTelegramEnabled, setBidReminderTelegramEnabled,
     autoDispatchEnabled, setAutoDispatchEnabled,
     exciseDutyPct, setExciseDutyPct, transformerLossPct, setTransformerLossPct,
@@ -80,7 +80,10 @@ export default function Settings() {
             title="Реально застосовується до розрахунку P&L заявок РДН/ВДР (Реалізований прибуток, Загальний дохід) — на відміну від ОСР/класу напруги/маржі вище, які поки не підключені до жодного розрахунку. Не впливає на саму заявку (ціну/виконання) — лише на облік фінансового результату після звірки."
           />
           <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '6px', lineHeight: 1.5 }}>
-            2026-09-09: раніше захардкоджена сума (528.57+1500.0+104.57+100.0=2233.14) — тепер редагована.
+            2026-09-09: раніше захардкоджена сума (528.57+1500.0+104.57+100.0=2233.14). За рішенням користувача
+            дефолт тепер 0 — реальний розрахунок на практиці йде на НЕТТО-споживанні (куплено мінус продано,
+            яке при чистому арбітражі прямує до нуля), а не на повному обсязі купівлі, як тут — точної формули/
+            цифр поки нема, тож чесніше не враховувати цю статтю, ніж застосовувати вигадане наближення.
             Не впливає на ціну/виконання заявки в "Заявка РДН" (диспетчер бачить чисту вартість енергії) —
             додається лише в підсумковому фінансовому результаті (Реалізований прибуток/Загальний дохід,
             "Ручне коригування заявок", Executive Summary).
@@ -103,7 +106,20 @@ export default function Settings() {
 
         <div className="form-group">
           <label className="form-label">КПД циклу (%)</label>
-          <input type="number" className="form-input" value={efficiency} onChange={(e) => setEfficiency(Number(e.target.value))} />
+          <input
+            type="number" className="form-input" value={efficiency} onChange={(e) => setEfficiency(Number(e.target.value))}
+            title="Реальний ККД заряду/розряду батареї (Asset.efficiency_charge/discharge, одне значення на обидва) — вже застосовується в MILP-плануванні: через це купити треба БІЛЬШЕ, а продати вдасться МЕНШЕ, ніж 'ідеальний' об'єм (round-trip втрата = ККД²)."
+          />
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Вартість деградації батареї (₴/МВт·год розряду)</label>
+          <input
+            type="number" min={0} step={50} className="form-input"
+            value={degradationCostUahPerMwh}
+            onChange={(e) => setDegradationCostUahPerMwh(Number(e.target.value))}
+            title="Реально застосовується до MILP-плану і P&L заявок (Реалізований прибуток/Загальний дохід) — 0 означає не враховувати знос взагалі. Не впливає на ціну/виконання самої заявки в 'Заявка РДН' (диспетчер бачить чисту вартість енергії)."
+          />
         </div>
 
         <div className="form-group">

@@ -612,6 +612,15 @@ class SystemSettingsModel(BaseModel):
     # відрізняється від того, що було зашито в коді). Дефолт зберігає
     # старе число, щоб нічого не зламати, доки диспетчер не введе реальне.
     delivery_tariff_uah_per_mwh: Optional[float] = None
+    # 2026-09-09: вартість деградації батареї (₴/МВт·год розряду) — раніше
+    # взагалі НЕ була доступна для редагування ніде в UI (лише пряме
+    # редагування Asset у БД), хоча реально впливає на МILP-план і
+    # settlement (Asset.deg_cost_per_mwh). За проханням користувача
+    # ("указываем цена=0" для доставки і деградації, поки немає реальних
+    # цифр) — тепер редагована, як і тариф на доставку. Читається/пишеться
+    # напряму в Asset (як capacity_kw/power_kw/efficiency_pct нижче), а не
+    # в JSON — це реальний технічний параметр активу, не довідкове число.
+    degradation_cost_uah_per_mwh: Optional[float] = None
     # Підключення реальної батареї (2026-08-26) — "simulator"|"tcp"|"serial"|
     # "disabled". У "simulator" tcp_host/tcp_port ігноруються (завжди
     # внутрішній 127.0.0.1:5020) — поля лишаються заповненими лише як
@@ -683,16 +692,19 @@ DEFAULT_BESS_MODBUS_UNIT_ID = 1
 DEFAULT_EXCISE_DUTY_PCT = 0.0
 DEFAULT_TRANSFORMER_LOSS_PCT = 0.0
 
-# Тариф на доставку (2026-09-09) — те саме число, що й СУМА старого
-# захардкодженого TARIFF_KWARGS (528.57+1500.0+104.57+100.0=2233.14
-# ₴/МВт·год) у bidding_service.py, тепер редаговане в Settings. Реальний
-# спосіб розрахунку тарифу на доставку на практиці інший (роздрібний
-# постачальник рахує по-своєму) — це число лишається наближенням, доки
-# диспетчер не введе реальне з рахунку/договору. Читається окремо
+# Тариф на доставку (2026-09-09, оновлено того ж дня за проханням
+# користувача) — раніше дефолт зберігав стару захардкоджену суму
+# TARIFF_KWARGS (528.57+1500.0+104.57+100.0=2233.14 ₴/МВт·год), тепер
+# ЗА ЗАМОВЧУВАННЯМ 0.0: реальний спосіб розрахунку тарифу на доставку
+# на практиці інший (роздрібний постачальник рахує на нетто-споживанні,
+# не на повному обсязі купівлі — не вигадуємо наближення без реальних
+# цифр), користувач свідомо вирішив НЕ враховувати цю статтю витрат,
+# доки не з'являться реальні дані/формула. Диспетчер може ввести реальне
+# число з рахунку/договору в будь-який момент. Читається окремо
 # `bidding_service.py::get_delivery_tariff_uah_per_mwh` (не звідси
 # напряму, щоб уникнути циклічного імпорту) — значення тут лише дефолт
 # для форми Settings.
-DEFAULT_DELIVERY_TARIFF_UAH_PER_MWH = 2233.14
+DEFAULT_DELIVERY_TARIFF_UAH_PER_MWH = 0.0
 
 @router.get("/settings", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
 async def get_system_settings():
@@ -751,11 +763,13 @@ async def get_system_settings():
             data["power_kw"] = asset.power_mw * 1000.0
             data["efficiency_pct"] = ((asset.efficiency_charge + asset.efficiency_discharge) / 2.0) * 100.0
             data["max_cycles_per_day"] = asset.max_cycles_per_day
+            data["degradation_cost_uah_per_mwh"] = asset.deg_cost_per_mwh
         else:
             data["capacity_kw"] = 2000.0
             data["power_kw"] = 1000.0
             data["efficiency_pct"] = 95.0
             data["max_cycles_per_day"] = 1.5
+            data["degradation_cost_uah_per_mwh"] = 1200.0
     finally:
         db.close()
 
@@ -826,6 +840,11 @@ async def save_system_settings(req: SystemSettingsModel):
                 # для мережевого BESS нереалістично навіть як ліміт-можливість,
                 # нижче 0.5 практично забороняє арбітраж).
                 asset.max_cycles_per_day = max(0.5, min(5.0, req.max_cycles_per_day))
+            if req.degradation_cost_uah_per_mwh is not None:
+                # Клип лише знизу (0) — 0 означає "не враховувати деградацію
+                # взагалі" (свідомий вибір користувача, 2026-09-09), верхньої
+                # реалістичної стелі нема сенсу вигадувати.
+                asset.deg_cost_per_mwh = max(0.0, req.degradation_cost_uah_per_mwh)
             db.commit()
 
         # Invalidate executive cache file

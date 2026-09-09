@@ -116,6 +116,9 @@ interface AppState {
   power: number; setPower: (v: number) => void;
   efficiency: number; setEfficiency: (v: number) => void;
   maxCyclesPerDay: number; setMaxCyclesPerDay: (v: number) => void;
+  // 2026-09-09: вартість деградації (₴/МВт·год розряду) — раніше взагалі
+  // не редагувалась в UI (лише напряму в Asset у БД).
+  degradationCostUahPerMwh: number; setDegradationCostUahPerMwh: (v: number) => void;
   bidReminderTelegramEnabled: boolean; setBidReminderTelegramEnabled: (v: boolean) => void;
   autoDispatchEnabled: boolean; setAutoDispatchEnabled: (v: boolean) => void;
   bessConnectionType: string; setBessConnectionType: (v: string) => void;
@@ -200,6 +203,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [power, setPower] = useState(250);
   const [efficiency, setEfficiency] = useState(95);
   const [maxCyclesPerDay, setMaxCyclesPerDay] = useState(1.5);
+  const [degradationCostUahPerMwh, setDegradationCostUahPerMwh] = useState(1200.0);
   const [bidReminderTelegramEnabled, setBidReminderTelegramEnabled] = useState(true);
   // За замовчуванням ВИМКНЕНО — власник батареї свідомо вмикає повну
   // автоматизацію подачі заявок (2026-08-26, "віртуальний диспетчер").
@@ -276,6 +280,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setPower(data.power_kw);
       setEfficiency(data.efficiency_pct);
       if (data.max_cycles_per_day != null) setMaxCyclesPerDay(data.max_cycles_per_day);
+      if (data.degradation_cost_uah_per_mwh != null) setDegradationCostUahPerMwh(data.degradation_cost_uah_per_mwh);
       if (data.bid_reminder_telegram_enabled != null) setBidReminderTelegramEnabled(data.bid_reminder_telegram_enabled);
       if (data.auto_dispatch_enabled != null) setAutoDispatchEnabled(data.auto_dispatch_enabled);
       if (data.bess_connection_type != null) setBessConnectionType(data.bess_connection_type);
@@ -368,6 +373,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         launch_date: launchDate, osr, voltage_class: voltageClass, margin,
         capacity_kw: capacity, power_kw: power, efficiency_pct: efficiency,
         max_cycles_per_day: maxCyclesPerDay,
+        degradation_cost_uah_per_mwh: degradationCostUahPerMwh,
         bid_reminder_telegram_enabled: bidReminderTelegramEnabled,
         auto_dispatch_enabled: autoDispatchEnabled,
         excise_duty_pct: exciseDutyPct,
@@ -387,7 +393,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } catch (e: any) {
       addLog('API', `Помилка збереження налаштувань: ${e.message}`, 'error');
     }
-  }, [activeRole, launchDate, osr, voltageClass, margin, capacity, power, efficiency, maxCyclesPerDay, bidReminderTelegramEnabled, autoDispatchEnabled, exciseDutyPct, transformerLossPct, deliveryTariffUahPerMwh, bessConnectionType, bessTcpHost, bessTcpPort, bessSerialPort, bessSerialBaudrate, bessSerialParity, bessSerialStopbits, bessSerialBytesize, bessModbusUnitId, addLog]);
+  }, [activeRole, launchDate, osr, voltageClass, margin, capacity, power, efficiency, maxCyclesPerDay, bidReminderTelegramEnabled, autoDispatchEnabled, exciseDutyPct, transformerLossPct, deliveryTariffUahPerMwh, degradationCostUahPerMwh, bessConnectionType, bessTcpHost, bessTcpPort, bessSerialPort, bessSerialBaudrate, bessSerialParity, bessSerialStopbits, bessSerialBytesize, bessModbusUnitId, addLog]);
 
   useEffect(() => {
     if (!activeAssetId) return;
@@ -821,7 +827,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dispatcherSchedule, dispatcherActions, refreshDispatcherSchedule, saveDispatcherScheduleNow,
     osr, setOsr, voltageClass, setVoltageClass, margin, setMargin,
     capacity, setCapacity, power, setPower, efficiency, setEfficiency,
-    maxCyclesPerDay, setMaxCyclesPerDay, bidReminderTelegramEnabled, setBidReminderTelegramEnabled,
+    maxCyclesPerDay, setMaxCyclesPerDay, degradationCostUahPerMwh, setDegradationCostUahPerMwh,
+    bidReminderTelegramEnabled, setBidReminderTelegramEnabled,
     autoDispatchEnabled, setAutoDispatchEnabled,
     bessConnectionType, setBessConnectionType, bessTcpHost, setBessTcpHost, bessTcpPort, setBessTcpPort,
     bessSerialPort, setBessSerialPort, bessSerialBaudrate, setBessSerialBaudrate,
