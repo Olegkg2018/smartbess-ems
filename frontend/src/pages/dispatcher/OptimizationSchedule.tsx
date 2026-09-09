@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Area, Bar, Line, ReferenceLine, ResponsiveContainer } from 'recharts';
 import { AlertTriangle, Radio, Pencil, CalendarClock, History, FileDown, Clock, CheckCircle2, XCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
@@ -62,15 +62,76 @@ export default function OptimizationSchedule() {
   // таблиці "Ручне коригування заявок" нижче. null = ще не завантажено/
   // немає що показати (напр. заявки ще не сформовано).
   const [dayBidReport, setDayBidReport] = useState<DayBidReportHour[] | null>(null);
-  useEffect(() => {
-    let cancelled = false;
+  const refreshDayBidReport = useCallback(async () => {
     if (!activeAssetId || !targetDate) { setDayBidReport(null); return; }
-    api.fetchDayBidReport(activeRole, activeAssetId, targetDate)
-      .then((res) => { if (!cancelled) setDayBidReport(res.hours); })
-      .catch(() => { if (!cancelled) setDayBidReport(null); });
-    return () => { cancelled = true; };
+    try {
+      const res = await api.fetchDayBidReport(activeRole, activeAssetId, targetDate);
+      setDayBidReport(res.hours);
+    } catch {
+      setDayBidReport(null);
+    }
   }, [activeRole, activeAssetId, targetDate]);
+  useEffect(() => { refreshDayBidReport(); }, [refreshDayBidReport]);
   const dayBidReportByHour = new Map<number, DayBidReportHour>((dayBidReport || []).map((h) => [h.hour, h]));
+
+  // Звірка з балансуючим ринком (БР) — "Факт"-показники лічильника і ціни
+  // небалансу (2026-09-09), диспетчер вводить вручну, коли отримує
+  // реальний рахунок звірки (склад полів/формула небалансу відтворені з
+  // реального облікового Excel-файлу справжнього підприємства з
+  // батареєю, наданого користувачем). Той самий "draft, синхронізований з
+  // бекендом при завантаженні, надсилається одним запитом за всю добу"
+  // патерн, що manualOverrides.
+  type SettlementDraft = {
+    actualCharge: string; actualDischarge: string; actualOwnConsumption: string;
+    balancingSellPrice: string; balancingBuyPrice: string;
+  };
+  const [settlementDraft, setSettlementDraft] = useState<Record<number, SettlementDraft>>({});
+  useEffect(() => {
+    if (!dayBidReport) return;
+    const next: Record<number, SettlementDraft> = {};
+    dayBidReport.forEach((h) => {
+      next[h.hour] = {
+        actualCharge: h.actual_charge_mwh != null ? String(h.actual_charge_mwh) : '',
+        actualDischarge: h.actual_discharge_mwh != null ? String(h.actual_discharge_mwh) : '',
+        actualOwnConsumption: h.actual_own_consumption_mwh != null ? String(h.actual_own_consumption_mwh) : '',
+        balancingSellPrice: h.balancing_sell_price_uah != null ? String(h.balancing_sell_price_uah) : '',
+        balancingBuyPrice: h.balancing_buy_price_uah != null ? String(h.balancing_buy_price_uah) : '',
+      };
+    });
+    setSettlementDraft(next);
+  }, [dayBidReport]);
+
+  const updateSettlementDraft = (hour: number, patch: Partial<SettlementDraft>) => {
+    setSettlementDraft((prev) => ({
+      ...prev,
+      [hour]: { ...(prev[hour] ?? { actualCharge: '', actualDischarge: '', actualOwnConsumption: '', balancingSellPrice: '', balancingBuyPrice: '' }), ...patch },
+    }));
+  };
+
+  const [savingSettlement, setSavingSettlement] = useState(false);
+  const handleSaveSettlement = async () => {
+    if (!activeAssetId) return;
+    setSavingSettlement(true);
+    try {
+      const toNumOrNull = (s: string) => (s.trim() === '' ? null : Number(s));
+      const hours = Object.entries(settlementDraft).map(([hourStr, d]) => ({
+        hour: Number(hourStr),
+        actual_charge_mwh: toNumOrNull(d.actualCharge),
+        actual_discharge_mwh: toNumOrNull(d.actualDischarge),
+        actual_own_consumption_mwh: toNumOrNull(d.actualOwnConsumption),
+        balancing_sell_price_uah: toNumOrNull(d.balancingSellPrice),
+        balancing_buy_price_uah: toNumOrNull(d.balancingBuyPrice),
+      }));
+      const result = await api.saveActualSettlement(activeRole, activeAssetId, targetDate, hours);
+      addLog('API', `Звірку з БР збережено (${result.n_updated}/24 год)${result.n_not_found ? `, ${result.n_not_found} без заявки` : ''}.`, 'success');
+      await refreshDayBidReport();
+    } catch (e: any) {
+      addLog('API', `Помилка збереження звірки з БР: ${e.message}`, 'error');
+    } finally {
+      setSavingSettlement(false);
+    }
+  };
+  const [settlementOpen, setSettlementOpen] = useState(false);
 
   // Звіт за добу/період (Excel) — перенесено сюди з Price Forecast
   // (2026-09-08), єдиний експортер тепер обслуговує і одну добу
@@ -731,6 +792,105 @@ export default function OptimizationSchedule() {
                             </div>
                           )}
                         </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="glass-card" style={{ marginTop: '24px' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+          <div>
+            <h3 className="card-title" style={{ margin: 0 }}>Небаланс та звірка з БР (Факт лічильника)</h3>
+            <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: 'var(--text-secondary)' }}>
+              Введіть реальні показники лічильника (Факт Заряд/Розряд/Власні потреби) і ціни небалансу з рахунку
+              звірки балансуючого ринку (БР) — зазвичай доступні з затримкою (рахунок за добу/місяць), не одразу.
+              Небаланс і повний фінрезультат розраховуються автоматично.
+            </p>
+          </div>
+          <button className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '6px' }} onClick={() => setSettlementOpen((v) => !v)}>
+            {settlementOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />} {settlementOpen ? 'Сховати таблицю' : 'Показати таблицю'}
+          </button>
+        </div>
+
+        {settlementOpen && (
+          <>
+            <div style={{ marginBottom: '16px' }}>
+              <button className="btn" onClick={handleSaveSettlement} disabled={savingSettlement}>
+                {savingSettlement ? 'Збереження...' : 'Зберегти звірку з БР'}
+              </button>
+            </div>
+            <div style={{ maxHeight: '450px', overflow: 'auto' }}>
+              <table className="audit-table" style={{ width: '100%' }}>
+                <thead>
+                  <tr>
+                    <th>Година</th>
+                    <th title="Реальний лічильник, МВт·год">Факт Заряд</th>
+                    <th title="Реальний лічильник, МВт·год">Факт Розряд</th>
+                    <th title="Реальний лічильник, МВт·год — постійне власне споживання (контролер/охолодження/освітлення) навіть без активності РДН/ВДР">Факт Власні потреби</th>
+                    <th title="₴/МВт·год, за профіцит-небаланс, з рахунку звірки">Ціна продажу БР</th>
+                    <th title="₴/МВт·год, за дефіцит-небаланс, з рахунку звірки">Ціна докупки БР</th>
+                    <th>Небаланс купівля, МВт·год</th>
+                    <th>Небаланс продаж, МВт·год</th>
+                    <th>Вартість небалансу, ₴</th>
+                    <th title="Загальний дохід (РДН/ВДР) + небаланс — порожньо, доки хоч щось не звірено">Повний прибуток, ₴</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Array.from({ length: 24 }, (_, hour) => hour).map((hour) => {
+                    const h = dayBidReportByHour.get(hour);
+                    const d = settlementDraft[hour] ?? { actualCharge: '', actualDischarge: '', actualOwnConsumption: '', balancingSellPrice: '', balancingBuyPrice: '' };
+                    const fmt = (v: number | null | undefined, digits = 0) => (v == null ? '—' : v.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits }));
+                    const imbalanceCost = (h?.imbalance_buy_cost_uah ?? 0) + (h?.imbalance_sell_revenue_uah ?? 0);
+                    const hasImbalanceCost = h?.imbalance_buy_cost_uah != null || h?.imbalance_sell_revenue_uah != null;
+                    return (
+                      <tr key={hour}>
+                        <td>Година {hour + 1} ({String(hour).padStart(2, '0')}:00–{String(hour + 1).padStart(2, '0')}:00)</td>
+                        <td>
+                          <input
+                            type="number" step="0.001" className="form-input" style={{ width: '100px', padding: '4px 6px', fontSize: '13px' }}
+                            value={d.actualCharge}
+                            onChange={(e) => updateSettlementDraft(hour, { actualCharge: e.target.value })}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number" step="0.001" className="form-input" style={{ width: '100px', padding: '4px 6px', fontSize: '13px' }}
+                            value={d.actualDischarge}
+                            onChange={(e) => updateSettlementDraft(hour, { actualDischarge: e.target.value })}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number" step="0.0001" className="form-input" style={{ width: '100px', padding: '4px 6px', fontSize: '13px' }}
+                            value={d.actualOwnConsumption}
+                            onChange={(e) => updateSettlementDraft(hour, { actualOwnConsumption: e.target.value })}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number" step="0.01" className="form-input" style={{ width: '100px', padding: '4px 6px', fontSize: '13px' }}
+                            value={d.balancingSellPrice}
+                            onChange={(e) => updateSettlementDraft(hour, { balancingSellPrice: e.target.value })}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number" step="0.01" className="form-input" style={{ width: '100px', padding: '4px 6px', fontSize: '13px' }}
+                            value={d.balancingBuyPrice}
+                            onChange={(e) => updateSettlementDraft(hour, { balancingBuyPrice: e.target.value })}
+                          />
+                        </td>
+                        <td>{fmt(h?.imbalance_buy_mwh, 4)}</td>
+                        <td>{fmt(h?.imbalance_sell_mwh, 4)}</td>
+                        <td style={{ color: hasImbalanceCost && imbalanceCost < 0 ? 'var(--color-rose)' : hasImbalanceCost && imbalanceCost > 0 ? 'var(--color-emerald)' : undefined }}>
+                          {hasImbalanceCost ? fmt(imbalanceCost, 2) : '—'}
+                        </td>
+                        <td style={{ fontWeight: 600 }}>{fmt(h?.full_profit_uah, 2)}</td>
                       </tr>
                     );
                   })}

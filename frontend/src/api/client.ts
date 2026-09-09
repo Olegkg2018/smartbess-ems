@@ -338,6 +338,16 @@ export interface MarketBid {
   // (те лишається ринковим сигналом, диспетчер його не редагує).
   idm_bid_price_uah: number | null;
   idm_bid_price_legally_clamped: boolean;
+  // Звірка з БР (2026-09-09) — див. DayBidReportHour, той самий склад полів.
+  actual_charge_mwh: number | null;
+  actual_discharge_mwh: number | null;
+  actual_own_consumption_mwh: number | null;
+  balancing_sell_price_uah: number | null;
+  balancing_buy_price_uah: number | null;
+  imbalance_buy_mwh: number | null;
+  imbalance_sell_mwh: number | null;
+  imbalance_buy_cost_uah: number | null;
+  imbalance_sell_revenue_uah: number | null;
 }
 
 export async function fetchBids(role: UserRole, assetId: string, date: string): Promise<{ date: string; asset_id: string; bids: MarketBid[] }> {
@@ -574,10 +584,58 @@ export interface DayBidReportHour {
   income_source: string | null;
   charge_mw: number;
   discharge_mw: number;
+  // 2026-09-09: звірка з балансуючим ринком (БР) — склад полів і формула
+  // небалансу відтворені з реального облікового Excel-файлу справжнього
+  // підприємства з батареєю ("УЗЕ Флора", наданий користувачем). Перші 5 —
+  // "Факт"-показники лічильника і ціни БР, диспетчер вводить їх вручну
+  // (saveActualSettlement), коли отримує реальний рахунок звірки —
+  // офіційного живого джерела цих даних немає. null — ще не введено
+  // (чесно "не звірено", не 0).
+  actual_charge_mwh: number | null;
+  actual_discharge_mwh: number | null;
+  actual_own_consumption_mwh: number | null;
+  balancing_sell_price_uah: number | null;
+  balancing_buy_price_uah: number | null;
+  imbalance_buy_mwh: number | null;
+  imbalance_sell_mwh: number | null;
+  imbalance_buy_cost_uah: number | null;
+  imbalance_sell_revenue_uah: number | null;
+  // total_income_uah + небаланс — null, доки хоч щось не звірено.
+  full_profit_uah: number | null;
 }
 
 export async function fetchDayBidReport(role: UserRole, assetId: string, date: string): Promise<{ date: string; asset_id: string; hours: DayBidReportHour[] }> {
   return authJson(role, `/api/v1/reports/day-bid-report?asset_id=${assetId}&date=${date}`);
+}
+
+/** Одна година для saveActualSettlement — усі поля, крім hour, опціональні;
+ *  переданий null явно ОЧИЩАЄ поле, відсутній ключ поле НЕ чіпає. */
+export interface ActualSettlementHourInput {
+  hour: number;
+  actual_charge_mwh?: number | null;
+  actual_discharge_mwh?: number | null;
+  actual_own_consumption_mwh?: number | null;
+  balancing_sell_price_uah?: number | null;
+  balancing_buy_price_uah?: number | null;
+}
+
+export interface SaveActualSettlementResult {
+  status: string;
+  date: string;
+  n_updated: number;
+  n_not_found: number;
+  not_found_hours: number[];
+}
+
+/** Зберігає реальні "Факт"-показники лічильника і ціни небалансу БР за
+ *  всю добу одним запитом — той самий "весь день одразу" патерн, що
+ *  saveOverrides (manual-overrides). */
+export async function saveActualSettlement(role: UserRole, assetId: string, date: string, hours: ActualSettlementHourInput[]): Promise<SaveActualSettlementResult> {
+  return authJson<SaveActualSettlementResult>(role, '/api/v1/bids/actual-settlement', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ asset_id: assetId, date, hours }),
+  });
 }
 
 export async function exportForecastPeriodExcel(role: UserRole, assetId: string, startDate: string, endDate: string): Promise<void> {

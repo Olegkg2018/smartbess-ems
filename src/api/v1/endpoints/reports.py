@@ -12,7 +12,7 @@ from src.core.security import RoleChecker
 from src.api.v1.endpoints.optimization import get_manual_overrides
 from src.api.v1.endpoints.forecast import get_actual_prices
 from src.core.time_utils import kyiv_to_utc, kyiv_day_bounds, utc_to_kyiv
-from src.modules.bidding_service.services import get_delivery_tariff_uah_per_mwh
+from src.modules.bidding_service.services import get_delivery_tariff_uah_per_mwh, compute_imbalance_financials
 
 router = APIRouter()
 
@@ -75,6 +75,15 @@ def _bid_hour_financials(bid: MarketBid, ac, asset: Asset) -> dict:
         total_income = None
         income_source = None
 
+    # Небаланс БР (2026-09-09) — реальні "Факт"-показники лічильника і ціни
+    # небалансу, які диспетчер вводить вручну, коли отримує реальний
+    # рахунок звірки (див. bidding_service.py::compute_imbalance_financials).
+    # None, доки не введено — чесно "ще не звірено", не 0.
+    imbalance = compute_imbalance_financials(bid)
+    full_profit_uah = None
+    if total_income is not None and imbalance["imbalance_buy_cost_uah"] is not None and imbalance["imbalance_sell_revenue_uah"] is not None:
+        full_profit_uah = round(total_income + imbalance["imbalance_buy_cost_uah"] + imbalance["imbalance_sell_revenue_uah"], 2)
+
     return {
         "planned_profit_uah": round(planned_profit, 2) if planned_profit is not None else None,
         "delivery_cost_uah": round(delivery_cost, 2) if delivery_cost is not None else None,
@@ -84,6 +93,19 @@ def _bid_hour_financials(bid: MarketBid, ac, asset: Asset) -> dict:
         "income_source": income_source,
         "charge_mw": round(volume_mw, 3) if bid.bid_type == "buy" else 0.0,
         "discharge_mw": round(volume_mw, 3) if bid.bid_type == "sell" else 0.0,
+        # Звірка з БР — "Факт" лічильника (введено вручну) і похідний небаланс.
+        "actual_charge_mwh": bid.actual_charge_mwh,
+        "actual_discharge_mwh": bid.actual_discharge_mwh,
+        "actual_own_consumption_mwh": bid.actual_own_consumption_mwh,
+        "balancing_sell_price_uah": bid.balancing_sell_price_uah,
+        "balancing_buy_price_uah": bid.balancing_buy_price_uah,
+        "imbalance_buy_mwh": imbalance["imbalance_buy_mwh"],
+        "imbalance_sell_mwh": imbalance["imbalance_sell_mwh"],
+        "imbalance_buy_cost_uah": imbalance["imbalance_buy_cost_uah"],
+        "imbalance_sell_revenue_uah": imbalance["imbalance_sell_revenue_uah"],
+        # Повний фінрезультат ЛИШЕ коли й РДН/ВДР-дохід, і небаланс відомі —
+        # None, доки хоч щось не звірено (не змішуємо частково вигадане).
+        "full_profit_uah": full_profit_uah,
     }
 
 @router.get("/executive-summary", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
@@ -438,6 +460,22 @@ async def export_forecast_period_excel(asset_id: str, start_date: str, end_date:
         # число: РДН (факт) / ВДР (факт — реальна звірена середня ціна) /
         # ВДР (оцінка — ще не звірено з реальними даними) / не реалізовано.
         "Загальний дохід, ₴", "Джерело доходу", "Заряд, МВт", "Розряд, МВт",
+        # 2026-09-09: звірка з балансуючим ринком (БР) — склад полів і
+        # формула небалансу відтворені з реального облікового Excel-файлу
+        # справжнього підприємства з батареєю ("УЗЕ Флора", наданий
+        # користувачем). "Факт"-показники лічильника і ціни БР диспетчер
+        # вводить вручну (POST /bids/actual-settlement), коли отримує
+        # реальний рахунок звірки — офіційного живого джерела цих даних
+        # немає. Порожньо, доки не введено (чесний NaN, не 0) — див.
+        # bidding_service.py::compute_imbalance_financials.
+        "Факт Заряд, МВт·год", "Факт Розряд, МВт·год", "Факт Власні потреби, МВт·год",
+        "Ціна продажу БР, ₴/МВт·год", "Ціна докупки БР, ₴/МВт·год",
+        "Небаланс купівля БР, МВт·год", "Небаланс продаж БР, МВт·год",
+        "Вартість небалансу купівля, ₴", "Вартість небалансу продаж, ₴",
+        # "Повний прибуток" — total_income_uah (уже включає РДН/ВДР) плюс
+        # небаланс; None, доки будь-яка складова ще не звірена (не змішуємо
+        # частково вигадане з реальним).
+        "Повний прибуток (з небалансом), ₴",
     ]
     header_row = 4
     for col_idx, title in enumerate(headers, start=1):
@@ -505,13 +543,25 @@ async def export_forecast_period_excel(asset_id: str, start_date: str, end_date:
                 ws.cell(row=row, column=17, value=fin["income_source"]).alignment = Alignment(horizontal="center")
                 ws.cell(row=row, column=18, value=fin["charge_mw"]).number_format = "#,##0.000"
                 ws.cell(row=row, column=19, value=fin["discharge_mw"]).number_format = "#,##0.000"
+                ws.cell(row=row, column=20, value=fin["actual_charge_mwh"]).number_format = "#,##0.000"
+                ws.cell(row=row, column=21, value=fin["actual_discharge_mwh"]).number_format = "#,##0.000"
+                ws.cell(row=row, column=22, value=fin["actual_own_consumption_mwh"]).number_format = "#,##0.000"
+                ws.cell(row=row, column=23, value=fin["balancing_sell_price_uah"]).number_format = "#,##0.00"
+                ws.cell(row=row, column=24, value=fin["balancing_buy_price_uah"]).number_format = "#,##0.00"
+                ws.cell(row=row, column=25, value=fin["imbalance_buy_mwh"]).number_format = "#,##0.000"
+                ws.cell(row=row, column=26, value=fin["imbalance_sell_mwh"]).number_format = "#,##0.000"
+                ws.cell(row=row, column=27, value=fin["imbalance_buy_cost_uah"]).number_format = "+#,##0.00;-#,##0.00"
+                ws.cell(row=row, column=28, value=fin["imbalance_sell_revenue_uah"]).number_format = "+#,##0.00;-#,##0.00"
+                ws.cell(row=row, column=29, value=fin["full_profit_uah"]).number_format = "+#,##0.00;-#,##0.00"
             else:
                 for col_idx in range(9, 18):
                     ws.cell(row=row, column=col_idx, value=None)
                 ws.cell(row=row, column=18, value=0.0).number_format = "#,##0.000"
                 ws.cell(row=row, column=19, value=0.0).number_format = "#,##0.000"
+                for col_idx in range(20, 30):
+                    ws.cell(row=row, column=col_idx, value=None)
 
-    widths = [12, 10, 20, 20, 20, 16, 22, 12, 14, 18, 14, 18, 16, 16, 20, 18, 16, 12, 12]
+    widths = [12, 10, 20, 20, 20, 16, 22, 12, 14, 18, 14, 18, 16, 16, 20, 18, 16, 12, 12, 16, 16, 18, 18, 18, 18, 18, 18, 18, 20]
     for col_idx, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(col_idx)].width = w
 
@@ -643,6 +693,11 @@ async def get_day_bid_report(asset_id: str, date: str):
                 "planned_profit_uah": None, "delivery_cost_uah": None, "degradation_cost_uah": None,
                 "realized_profit_uah": None, "total_income_uah": None, "income_source": None,
                 "charge_mw": 0.0, "discharge_mw": 0.0,
+                "actual_charge_mwh": None, "actual_discharge_mwh": None, "actual_own_consumption_mwh": None,
+                "balancing_sell_price_uah": None, "balancing_buy_price_uah": None,
+                "imbalance_buy_mwh": None, "imbalance_sell_mwh": None,
+                "imbalance_buy_cost_uah": None, "imbalance_sell_revenue_uah": None,
+                "full_profit_uah": None,
             })
         hours_out.append(row)
 

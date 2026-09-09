@@ -9,7 +9,7 @@ from src.core.security import RoleChecker
 import src.modules.market_data_service.data_manager as dm
 from src.modules.bidding_service.services import (
     generate_bids_for_date, settle_bids_for_date, get_margin_pct, DEFAULT_MARGIN_PCT, _bid_to_dict,
-    build_daily_action_summary, submit_single_idm_fallback_bid,
+    build_daily_action_summary, submit_single_idm_fallback_bid, save_actual_settlement_for_date,
 )
 from src.core.time_utils import kyiv_to_utc, kyiv_day_bounds, utc_to_kyiv
 
@@ -54,6 +54,25 @@ class SubmitIdmFallbackRequest(BaseModel):
     # None — подати за запропонованою ціною (idm_fallback_price_uah) без
     # правок; вказано — диспетчерська корекція (2026-08-28).
     price_uah: Optional[float] = None
+
+
+class ActualSettlementHourItem(BaseModel):
+    hour: int  # реальна київська година (0-23)
+    # Усі 5 — Optional і БЕЗ дефолту в моделі: якщо ключ взагалі відсутній
+    # у прийшлому JSON, поле лишається None тут, АЛЕ ендпоінт нижче working
+    # з .dict(exclude_unset=True) — щоб відрізнити "не передали" (не чіпати
+    # старе значення) від "явно передали null" (очистити). Див. save_bids_actual_settlement.
+    actual_charge_mwh: Optional[float] = None
+    actual_discharge_mwh: Optional[float] = None
+    actual_own_consumption_mwh: Optional[float] = None
+    balancing_sell_price_uah: Optional[float] = None
+    balancing_buy_price_uah: Optional[float] = None
+
+
+class SaveActualSettlementRequest(BaseModel):
+    asset_id: str
+    date: str
+    hours: list[ActualSettlementHourItem]
 
 
 @router.get("/margin", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
@@ -267,6 +286,36 @@ async def submit_idm_fallback(req: SubmitIdmFallbackRequest):
         result = submit_single_idm_fallback_bid(db, asset, target_dt, req.hour, req.price_uah)
         if result['status'] not in ('ok', 'already_submitted'):
             raise HTTPException(status_code=400, detail=result.get('message', 'Помилка подачі заявки на ВДР'))
+        return result
+    finally:
+        db.close()
+
+
+@router.post("/actual-settlement", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
+async def save_actual_settlement(req: SaveActualSettlementRequest):
+    """
+    Зберігає реальні "Факт"-показники лічильника (заряд/розряд/власні
+    потреби) і ціни небалансу БР, які диспетчер вводить вручну, коли
+    отримує реальний рахунок/акт звірки від постачальника чи оператора
+    системи передачі (2026-09-09, звірка з небалансом — див. докстрінг
+    MarketBid.actual_charge_mwh у models.py). Одним запитом за всю добу
+    (24 години), той самий "весь день одразу" патерн, що
+    POST /optimization/manual-overrides.
+
+    Кожна година в `hours` оновлює ЛИШЕ явно передані поля
+    (`exclude_unset` — не чіпає поля, яких не було в JSON; передане
+    `null` явно ОЧИЩАЄ поле). Години без вже сформованої заявки на цю
+    добу чесно пропускаються (не вигадують рядок) — повертаються в
+    `not_found_hours`.
+    """
+    db = SessionLocal()
+    try:
+        asset = db.query(Asset).filter(Asset.id == req.asset_id).first()
+        if not asset:
+            raise HTTPException(status_code=404, detail="Asset not found")
+        target_dt = kyiv_to_utc(req.date, 0)
+        hourly_entries = [item.model_dump(exclude_unset=True) for item in req.hours]
+        result = save_actual_settlement_for_date(db, asset, target_dt, hourly_entries)
         return result
     finally:
         db.close()

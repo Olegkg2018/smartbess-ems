@@ -596,6 +596,128 @@ def reconcile_idm_fallback_for_date(db, asset, target_date: datetime.datetime) -
     }
 
 
+def compute_imbalance_financials(b: MarketBid) -> dict:
+    """
+    Розрахунок небалансу з балансуючим ринком (БР) — формула й склад
+    полів відтворені з реального облікового Excel-файлу справжнього
+    підприємства з батареєю ("УЗЕ Флора", наданий користувачем 2026-09-09):
+
+        небаланс_купівля = max(0, Факт_Заряд - РДН_купівля - ВДР_купівля
+                                   - Факт_Розряд + РДН_продаж + ВДР_продаж
+                                   + Факт_Власні_потреби)
+        небаланс_продаж  = max(0, Факт_Розряд - ВДР_продаж - РДН_продаж
+                                   - Факт_Заряд - Факт_Власні_потреби
+                                   + ВДР_купівля + РДН_купівля)
+
+    Тобто: дефіцит (реально спожито/недопоставлено більше, ніж заявлено на
+    РДН+ВДР) закривається купівлею на БР за `balancing_buy_price_uah`;
+    профіцит (реально віддано більше, ніж заявлено) продається на БР за
+    `balancing_sell_price_uah`. Реальна знахідка з наданого файлу: НАВІТЬ
+    при нульовій активності РДН/ВДР "Факт Власні потреби" (постійне власне
+    споживання батареї — контролер/охолодження/освітлення) щогодини
+    створює маленький дефіцит, який доводиться закривати на БР — те саме
+    "собственные нужды", що обговорювалось з користувачем 2026-09-09.
+
+    РДН/ВДР обсяги беруться з уже наявних полів цієї ж заявки (не
+    вигадуються): РДН — volume_kw, якщо executed; ВДР — volume_kw, якщо
+    РДН не виконалась і ВДР-фолбек реально подано/підтверджено
+    (idm_external_order_id або idm_fallback_acknowledged).
+
+    Повертає None для всіх полів, доки диспетчер не ввів реальні "Факт"-
+    показники лічильника (actual_charge_mwh/actual_discharge_mwh/
+    actual_own_consumption_mwh) — чесно "ще не звірено", а не вигаданий
+    нуль. Ціни (`balancing_*_price_uah`) окремо nullable — обсяг небалансу
+    можна порахувати одразу після внесення "Факт"-показників, а вартість
+    з'явиться пізніше, коли прийде реальний рахунок з ціною.
+    """
+    if b.actual_charge_mwh is None or b.actual_discharge_mwh is None or b.actual_own_consumption_mwh is None:
+        return {
+            'imbalance_buy_mwh': None, 'imbalance_sell_mwh': None,
+            'imbalance_buy_cost_uah': None, 'imbalance_sell_revenue_uah': None,
+        }
+
+    rdn_buy_mwh = b.volume_kw / 1000.0 if b.bid_type == 'buy' and b.executed else 0.0
+    rdn_sell_mwh = b.volume_kw / 1000.0 if b.bid_type == 'sell' and b.executed else 0.0
+    vdr_confirmed = bool(b.idm_external_order_id) or bool(b.idm_fallback_acknowledged)
+    vdr_buy_mwh = b.volume_kw / 1000.0 if b.bid_type == 'buy' and b.executed is False and vdr_confirmed else 0.0
+    vdr_sell_mwh = b.volume_kw / 1000.0 if b.bid_type == 'sell' and b.executed is False and vdr_confirmed else 0.0
+
+    m, n, o = b.actual_charge_mwh, b.actual_discharge_mwh, b.actual_own_consumption_mwh
+    imbalance_buy_mwh = max(0.0, m - rdn_buy_mwh - vdr_buy_mwh - n + rdn_sell_mwh + vdr_sell_mwh + o)
+    imbalance_sell_mwh = max(0.0, n - vdr_sell_mwh - rdn_sell_mwh - m - o + vdr_buy_mwh + rdn_buy_mwh)
+
+    # Знак — узгоджено з рештою проєкту (costUah/delivery_cost_uah тощо
+    # завжди від'ємні, дохід — додатний), а не з сирим Excel (там усе
+    # додатне, і "Прибуток" віднімає купівлю окремо).
+    imbalance_buy_cost_uah = (
+        -round(imbalance_buy_mwh * b.balancing_buy_price_uah, 2)
+        if b.balancing_buy_price_uah is not None else None
+    )
+    imbalance_sell_revenue_uah = (
+        round(imbalance_sell_mwh * b.balancing_sell_price_uah, 2)
+        if b.balancing_sell_price_uah is not None else None
+    )
+    return {
+        'imbalance_buy_mwh': round(imbalance_buy_mwh, 6),
+        'imbalance_sell_mwh': round(imbalance_sell_mwh, 6),
+        'imbalance_buy_cost_uah': imbalance_buy_cost_uah,
+        'imbalance_sell_revenue_uah': imbalance_sell_revenue_uah,
+    }
+
+
+def save_actual_settlement_for_date(db, asset, target_date: datetime.datetime, hourly_entries: list) -> dict:
+    """
+    Зберігає реальні дані звірки з БР (Факт Заряд/Розряд/Власні потреби,
+    Ціна продажу/докупки БР) для вже наявних заявок (MarketBid) на цю
+    добу — той самий "delete-then-insert за добу" дух, що й
+    save_manual_overrides (optimization.py), але тут UPSERT в наявний
+    рядок заявки (не створює нових рядків): звірка з БР має сенс лише для
+    години, де вже є заявка (bid_type/executed відомі — потрібні для
+    формули небалансу). `hourly_entries` — список dict з ключами `hour`
+    (0-23, реальна київська година) і будь-якою підмножиною
+    `actual_charge_mwh`/`actual_discharge_mwh`/`actual_own_consumption_mwh`/
+    `balancing_sell_price_uah`/`balancing_buy_price_uah` (None очищає
+    поле назад, ключ відсутній — поле не чіпається, часткове оновлення).
+
+    Повертає {'status': 'ok', 'n_updated': ..., 'n_not_found': ...,
+    'not_found_hours': [...]} — години без заявки (напр. заявки на цю
+    добу ще не формувались) чесно пропускаються, а не вигадують рядок.
+    """
+    date_str = utc_to_kyiv(target_date).strftime('%Y-%m-%d')
+    day_start, day_end = kyiv_day_bounds(date_str)
+    bids_by_hour = {
+        utc_to_kyiv(b.timestamp).hour: b
+        for b in db.query(MarketBid).filter(
+            MarketBid.asset_id == asset.id,
+            MarketBid.timestamp >= day_start, MarketBid.timestamp < day_end,
+        ).all()
+    }
+
+    FIELDS = (
+        'actual_charge_mwh', 'actual_discharge_mwh', 'actual_own_consumption_mwh',
+        'balancing_sell_price_uah', 'balancing_buy_price_uah',
+    )
+    n_updated = 0
+    not_found_hours = []
+    for entry in hourly_entries:
+        hour = entry.get('hour')
+        bid = bids_by_hour.get(hour)
+        if bid is None:
+            not_found_hours.append(hour)
+            continue
+        for field in FIELDS:
+            if field in entry:
+                setattr(bid, field, entry[field])
+        n_updated += 1
+
+    db.commit()
+    return {
+        'status': 'ok', 'date': date_str,
+        'n_updated': n_updated, 'n_not_found': len(not_found_hours),
+        'not_found_hours': not_found_hours,
+    }
+
+
 def _bid_to_dict(b: MarketBid, soc_feasible=None) -> dict:
     """soc_feasible=None означає "не порахований" (заявка ще не проходила
     settle, або викликач не запросив MarketBidSocFeasibility) — не плутати
@@ -680,6 +802,15 @@ def _bid_to_dict(b: MarketBid, soc_feasible=None) -> dict:
                 or b.idm_bid_price_uah >= OREE_BID_PRICE_MAX_UAH - 1e-6
             )
         ),
+        # Звірка з БР (2026-09-09) — реальні "Факт"-показники лічильника і
+        # ціни небалансу, введені диспетчером вручну (див. докстрінг
+        # compute_imbalance_financials). None — ще не введено.
+        'actual_charge_mwh': b.actual_charge_mwh,
+        'actual_discharge_mwh': b.actual_discharge_mwh,
+        'actual_own_consumption_mwh': b.actual_own_consumption_mwh,
+        'balancing_sell_price_uah': b.balancing_sell_price_uah,
+        'balancing_buy_price_uah': b.balancing_buy_price_uah,
+        **compute_imbalance_financials(b),
     }
 
 
