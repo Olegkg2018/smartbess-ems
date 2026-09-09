@@ -22,9 +22,6 @@ export type DispatchHour = {
   degradationUah: number;
 };
 
-const TARIFF_UAH_PER_KWH = (528.57 + 1500.0 + 104.57 + 100.0) / 1000.0;
-const DEGRADATION_UAH_PER_KWH = 1.2;
-
 interface AppState {
   activeRole: UserRole;
   setActiveRole: (r: UserRole) => void;
@@ -223,7 +220,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [bessModbusUnitId, setBessModbusUnitId] = useState(1);
   const [exciseDutyPct, setExciseDutyPct] = useState(0);
   const [transformerLossPct, setTransformerLossPct] = useState(0);
-  const [deliveryTariffUahPerMwh, setDeliveryTariffUahPerMwh] = useState(2233.14);
+  const [deliveryTariffUahPerMwh, setDeliveryTariffUahPerMwh] = useState(0.0);
   const [launchDate, setLaunchDate] = useState('2026-01-01');
 
   const [capex, setCapex] = useState(15200000);
@@ -481,6 +478,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const effRatio = efficiency / 100.0;
     const maxSocKwh = capacity * 0.9;
     const minSocKwh = capacity * 0.1;
+    // 2026-09-09: реальний баг, знайдений диспетчером — ця функція й далі
+    // рахувала витрати на доставку/деградацію по ЗАХАРДКОДЖЕНИХ константах
+    // (TARIFF_UAH_PER_KWH/DEGRADATION_UAH_PER_KWH), ІГНОРУЮЧИ Settings
+    // (deliveryTariffUahPerMwh/degradationCostUahPerMwh), хоча ці поля вже
+    // редаговані (2026-09-09, п.54/55) — зміна тарифу на 0 у Settings ніяк
+    // не відбивалась на KPI-картці "Витрати на доставку" тут. Тепер читає
+    // реальні (можливо, щойно змінені) значення з контексту.
+    const deliveryTariffUahPerKwh = deliveryTariffUahPerMwh / 1000.0;
+    const degradationUahPerKwh = degradationCostUahPerMwh / 1000.0;
     let runningSoc = initialSoc?.capacity_kwh ?? capacity * 0.2;
     // 2026-08-26: раніше ця функція ЗАВЖДИ сама перераховувала SoC "з опівночі"
     // для всіх 24 годин, ігноруючи `expected_soc_mwh`, який бекенд уже
@@ -505,8 +511,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const dischargeKW = commandedKW > 0 ? commandedKW : 0;
         const revenueUah = dischargeKW * priceKWh;
         const costUah = chargeKW * priceKWh;
-        const deliveryCostUah = chargeKW * TARIFF_UAH_PER_KWH;
-        const degradationUah = dischargeKW * DEGRADATION_UAH_PER_KWH;
+        const deliveryCostUah = chargeKW * deliveryTariffUahPerKwh;
+        const degradationUah = dischargeKW * degradationUahPerKwh;
         runningSoc = o.expected_soc_mwh * 1000.0;
         return {
           hour: o.hour, charge: chargeKW, discharge: dischargeKW, soc: runningSoc,
@@ -523,13 +529,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const maxChargeKW = Math.max(0, (maxSocKwh - runningSoc) / effRatio);
         chargeKW = Math.min(Math.abs(commandedKW), maxChargeKW);
         costUah = chargeKW * priceKWh;
-        deliveryCostUah = chargeKW * TARIFF_UAH_PER_KWH;
+        deliveryCostUah = chargeKW * deliveryTariffUahPerKwh;
         runningSoc = Math.min(maxSocKwh, runningSoc + chargeKW * effRatio);
       } else if (commandedKW > 0) {
         const maxDischargeKW = Math.max(0, (runningSoc - minSocKwh) * effRatio);
         dischargeKW = Math.min(commandedKW, maxDischargeKW);
         revenueUah = dischargeKW * priceKWh;
-        degradationUah = dischargeKW * DEGRADATION_UAH_PER_KWH;
+        degradationUah = dischargeKW * degradationUahPerKwh;
         runningSoc = Math.max(minSocKwh, runningSoc - dischargeKW / effRatio);
       }
 
@@ -547,7 +553,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         revenueUah, costUah, deliveryCostUah, degradationUah,
       };
     });
-  }, [manualOverrides, capacity, power, efficiency, initialSoc]);
+  }, [manualOverrides, capacity, power, efficiency, initialSoc, deliveryTariffUahPerMwh, degradationCostUahPerMwh]);
 
   const refreshInitialSoc = useCallback(async () => {
     if (!activeAssetId) return;
