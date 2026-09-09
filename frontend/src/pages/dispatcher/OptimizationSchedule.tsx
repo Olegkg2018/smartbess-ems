@@ -167,12 +167,12 @@ export default function OptimizationSchedule() {
 
   const dailyRevenue = dispatchProfile.reduce((s, d) => s + d.revenueUah, 0);
   const dailyCost = dispatchProfile.reduce((s, d) => s + d.costUah, 0);
-  // 2026-09-08: раніше "плюсувалась" у dailyCost мовчки — тепер окрема
-  // KPI-картка (за проханням користувача: витрати на доставку і деградацію
-  // показувати окремим стовпчиком/карткою, суто для обліку).
-  const dailyDeliveryCost = dispatchProfile.reduce((s, d) => s + d.deliveryCostUah, 0);
-  const dailyDegradation = dispatchProfile.reduce((s, d) => s + d.degradationUah, 0);
-  const dailyNetProfit = dailyRevenue - dailyCost - dailyDeliveryCost - dailyDegradation;
+  // 2026-09-09: за проханням диспетчера картки "Витрати на доставку"/"Знос
+  // батареї (Деградація)" прибрано з цієї сторінки повністю — обидві статті
+  // не впливають на рішення "по чому купити/продати" для диспетчера, повний
+  // фінрезультат (з тарифами/зносом) лишається в Executive Summary/Director
+  // Dashboard. "Чистий прибуток" тут — чиста купівля-продаж, без відрахувань.
+  const dailyNetProfit = dailyRevenue - dailyCost;
 
   const [socDraft, setSocDraft] = useState<string>('');
   useEffect(() => {
@@ -455,9 +455,11 @@ export default function OptimizationSchedule() {
 
       <div className="kpi-container" style={{ marginBottom: '24px' }}>
         <div className="kpi-card">
-          <span className="kpi-title">Чистий прибуток за добу (з урахуванням втрат)</span>
+          <span className="kpi-title">Чистий прибуток за добу (купівля-продаж)</span>
           <span className="kpi-value" style={{ color: dailyNetProfit >= 0 ? 'var(--color-emerald)' : 'var(--color-rose)' }}>{Math.round(dailyNetProfit).toLocaleString()} грн</span>
-          <span className="kpi-change neutral">Дохід мінус Витрати та Знос</span>
+          <span className="kpi-change neutral" title="Тарифи на доставку і знос батареї сюди не входять — вони не впливають на рішення 'по чому купити/продати', повний фінрезультат з їх урахуванням — в Executive Summary (Director Dashboard).">
+            Дохід мінус Витрати (без тарифів/зносу)
+          </span>
         </div>
         <div className="kpi-card">
           <span className="kpi-title">Дохід від розряду (Продаж)</span>
@@ -466,16 +468,6 @@ export default function OptimizationSchedule() {
         <div className="kpi-card">
           <span className="kpi-title">Витрати заряду (Купівля)</span>
           <span className="kpi-value" style={{ color: 'var(--color-rose)' }}>{Math.round(dailyCost).toLocaleString()} грн</span>
-        </div>
-        <div className="kpi-card">
-          <span className="kpi-title">Витрати на доставку</span>
-          <span className="kpi-value" style={{ color: 'var(--color-rose)' }} title="Мережеві тарифи (передача/розподіл/диспетчеризація/маржа постачальника) на куплену енергію — не впливають на саму заявку, лише на облік фінансового результату.">
-            {Math.round(dailyDeliveryCost).toLocaleString()} грн
-          </span>
-        </div>
-        <div className="kpi-card">
-          <span className="kpi-title">Знос батареї (Деградація)</span>
-          <span className="kpi-value">{Math.round(dailyDegradation).toLocaleString()} грн</span>
         </div>
       </div>
 
