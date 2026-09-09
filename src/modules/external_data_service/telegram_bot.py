@@ -246,3 +246,55 @@ def check_and_send_drift_alert() -> dict:
         sent_state[dedup_key] = True
         _save_sent_state(sent_state)
     return {"sent": bool(result.get("ok")), "drift": drift, "detail": result}
+
+
+def check_and_send_intraday_sync_alert(dam_consecutive_failures: int, idm_consecutive_failures: int, threshold: int) -> dict:
+    """
+    Сповіщає, якщо `run_intraday_price_sync` (scheduler.py) не може
+    отримати дані з oree.com.ua протягом кількох циклів поспіль —
+    2026-09-09, знайдено при розслідуванні застарілої "оцінки" ВДР-
+    фолбеку (реальна причина ТОГО конкретного випадку виявилась іншою —
+    публікаційний лаг ВДР-архіву на самому oree.com.ua, а не синк, — але
+    сама флакі-поведінка (WAF/бот-виклик замість JSON) реальна й
+    підтверджена живою перевіркою, тож затяжний збій вартий уваги людини).
+
+    `*_consecutive_failures` — лічильники з
+    `sync_today_market_prices_from_oree`/`sync_today_idm_prices_from_oree`
+    (`fetch_ok=False`, тобто сам ЖИВИЙ ЗАПИТ не зміг отримати дані з
+    oree.com.ua після всіх ретраїв) — НЕ плутати з "нових рядків немає"
+    (те може бути легітимним, напр. доба вже повністю синхронізована, або
+    для ВДР — oree ще не опублікував рядок за сьогодні, це нормально до
+    вечора). Дедуп — один алерт на добу (той самий патерн, що
+    check_and_send_drift_alert), окремо не розділяємо DAM/IDM в дедуп-ключі
+    (обидва — про той самий базовий інфраструктурний ризик).
+    """
+    if not CHAT_ID:
+        return {"sent": False, "reason": "TELEGRAM_CHAT_ID не налаштований"}
+
+    problems = []
+    if dam_consecutive_failures >= threshold:
+        problems.append(f"РДН (DAM): {dam_consecutive_failures} невдалих спроб поспіль")
+    if idm_consecutive_failures >= threshold:
+        problems.append(f"ВДР (IDM): {idm_consecutive_failures} невдалих спроб поспіль")
+    if not problems:
+        return {"sent": False, "reason": "Поріг не перевищено"}
+
+    today_str = datetime.date.today().isoformat()
+    sent_state = _load_sent_state()
+    dedup_key = f"intraday_sync_alert_{today_str}"
+    if sent_state.get(dedup_key):
+        return {"sent": False, "reason": "Вже сповіщали про збій синку сьогодні"}
+
+    text = (
+        "⚠️ SmartBESS EMS — інтрадей-синк цін не отримує дані з oree.com.ua\n\n"
+        + "\n".join(problems)
+        + "\n\nЙмовірна причина — інтермітентний WAF/бот-захист на oree.com.ua "
+          "(підтверджено живою перевіркою 2026-09-09). ВДР-фолбек-оцінки для "
+          "сьогоднішніх годин можуть лишатись застарілими, доки синк не "
+          "відновиться."
+    )
+    result = send_notification(CHAT_ID, text)
+    if result.get("ok"):
+        sent_state[dedup_key] = True
+        _save_sent_state(sent_state)
+    return {"sent": bool(result.get("ok")), "detail": result}

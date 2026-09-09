@@ -12,18 +12,9 @@ from src.core.security import RoleChecker
 from src.api.v1.endpoints.optimization import get_manual_overrides
 from src.api.v1.endpoints.forecast import get_actual_prices
 from src.core.time_utils import kyiv_to_utc, kyiv_day_bounds, utc_to_kyiv
-from src.modules.bidding_service.services import TARIFF_KWARGS
+from src.modules.bidding_service.services import get_delivery_tariff_uah_per_mwh
 
 router = APIRouter()
-
-# Реальні тарифи мережі (той самий склад, що settle_bids_for_date реально
-# використовує через evaluate_schedule_profit/TARIFF_KWARGS) — перевикористано
-# тут для окремої колонки "Витрати на доставку" у export_forecast_period_excel
-# та /reports/day-bid-report, не задубльовано літералами.
-TOTAL_TARIFFS_UAH_PER_MWH = (
-    TARIFF_KWARGS["transmission_tariff"] + TARIFF_KWARGS["distribution_tariff"]
-    + TARIFF_KWARGS["dispatch_tariff"] + TARIFF_KWARGS["supplier_margin"]
-)
 
 
 def _bid_hour_financials(bid: MarketBid, ac, asset: Asset) -> dict:
@@ -44,8 +35,9 @@ def _bid_hour_financials(bid: MarketBid, ac, asset: Asset) -> dict:
 
     Точна тотожність для ВИКОНАНОЇ заявки: planned_profit_uah +
     delivery_cost_uah + degradation_cost_uah == realized_profit_uah (обидві
-    сторони — той самий evaluate_schedule_profit з тими самими
-    TARIFF_KWARGS/asset.deg_cost_per_mwh, arbitrage-режим — тарифи лише на
+    сторони — той самий evaluate_schedule_profit з тим самим редагованим
+    тарифом на доставку (`get_delivery_tariff_uah_per_mwh`, Settings,
+    2026-09-09) / asset.deg_cost_per_mwh, arbitrage-режим — тарифи лише на
     купівлю, деградація лише на продаж). "Реалізований прибуток"/
     "Загальний дохід" — реальний факт (0 для невиконаних), читаються
     напряму з bid, тут НЕ перераховуються.
@@ -59,7 +51,7 @@ def _bid_hour_financials(bid: MarketBid, ac, asset: Asset) -> dict:
         degradation_cost = -(asset.deg_cost_per_mwh / 1000.0) * bid.volume_kw
     elif bid.bid_type == "buy":
         planned_profit = -ac * volume_mw
-        delivery_cost = -TOTAL_TARIFFS_UAH_PER_MWH / 1000.0 * bid.volume_kw
+        delivery_cost = -get_delivery_tariff_uah_per_mwh() / 1000.0 * bid.volume_kw
         degradation_cost = 0.0
     else:  # standby
         planned_profit = 0.0

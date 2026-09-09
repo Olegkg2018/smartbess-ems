@@ -10,6 +10,7 @@ export default function Settings() {
     bidReminderTelegramEnabled, setBidReminderTelegramEnabled,
     autoDispatchEnabled, setAutoDispatchEnabled,
     exciseDutyPct, setExciseDutyPct, transformerLossPct, setTransformerLossPct,
+    deliveryTariffUahPerMwh, setDeliveryTariffUahPerMwh,
     launchDate, setLaunchDate, saveSettings,
     bessConnectionType, setBessConnectionType, bessTcpHost, setBessTcpHost, bessTcpPort, setBessTcpPort,
     bessSerialPort, setBessSerialPort, bessSerialBaudrate, setBessSerialBaudrate,
@@ -68,6 +69,22 @@ export default function Settings() {
         <div className="form-group">
           <label className="form-label">Маржа постачальника (грн/МВт-год)</label>
           <input type="number" className="form-input" value={margin} onChange={(e) => setMargin(Number(e.target.value))} />
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Тариф на доставку (₴/МВт·год)</label>
+          <input
+            type="number" min={0} step={10} className="form-input"
+            value={deliveryTariffUahPerMwh}
+            onChange={(e) => setDeliveryTariffUahPerMwh(Number(e.target.value))}
+            title="Реально застосовується до розрахунку P&L заявок РДН/ВДР (Реалізований прибуток, Загальний дохід) — на відміну від ОСР/класу напруги/маржі вище, які поки не підключені до жодного розрахунку. Не впливає на саму заявку (ціну/виконання) — лише на облік фінансового результату після звірки."
+          />
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '6px', lineHeight: 1.5 }}>
+            2026-09-09: раніше захардкоджена сума (528.57+1500.0+104.57+100.0=2233.14) — тепер редагована.
+            Не впливає на ціну/виконання заявки в "Заявка РДН" (диспетчер бачить чисту вартість енергії) —
+            додається лише в підсумковому фінансовому результаті (Реалізований прибуток/Загальний дохід,
+            "Ручне коригування заявок", Executive Summary).
+          </p>
         </div>
       </div>
 

@@ -244,6 +244,31 @@ def run_nightly_model_retrain():
     except Exception as e:
         print(f"Error in nightly model retrain job: {e}")
 
+INTRADAY_SYNC_FAILURE_STATE_PATH = os.path.join(settings.DATA_DIR, "external_cache", "intraday_sync_failure_state.json")
+# ≈2 год без свіжих даних при циклі кожні 30 хв (2026-09-09, розслідування
+# застарілої "оцінки" ВДР-фолбеку) — лічить лише РЕАЛЬНІ невдачі живого
+# запиту (fetch_ok=False), не "нових рядків немає" (те може бути
+# легітимним — доба вже синхронізована, або для ВДР oree ще не
+# опублікував сьогоднішній рядок, що нормально до вечора).
+INTRADAY_SYNC_ALERT_THRESHOLD = 4
+
+
+def _load_intraday_sync_failure_state() -> dict:
+    if os.path.exists(INTRADAY_SYNC_FAILURE_STATE_PATH):
+        try:
+            with open(INTRADAY_SYNC_FAILURE_STATE_PATH, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def _save_intraday_sync_failure_state(state: dict):
+    os.makedirs(os.path.dirname(INTRADAY_SYNC_FAILURE_STATE_PATH), exist_ok=True)
+    with open(INTRADAY_SYNC_FAILURE_STATE_PATH, "w") as f:
+        json.dump(state, f)
+
+
 def run_intraday_price_sync():
     """
     Легкий інтрадей-досинк market_prices за СЬОГОДНІ (CLAUDE.md хронологія
@@ -262,21 +287,63 @@ def run_intraday_price_sync():
     середньозважену ціну, щойно вона з'явилась. Реконсилюється і СЬОГОДНІ,
     і ВЧОРА — ВДР для останніх годин доби публікується з невеликим лагом,
     інколи вже після півночі.
+
+    2026-09-09: обидва sync_today_*_from_oree тепер повертають
+    `{'n_new': int, 'fetch_ok': bool}` (не сирий int) — рахуємо лічильники
+    ПОСЛІДОВНИХ РЕАЛЬНИХ невдач fetch_ok=False окремо для DAM/IDM
+    (переживають рестарт контейнера, `INTRADAY_SYNC_FAILURE_STATE_PATH`) і
+    надсилаємо один Telegram-алерт на добу, якщо поріг перевищено —
+    інакше диспетчер бачить лише мовчазні `Warning:` у логах контейнера,
+    які легко пропустити (той самий клас проблеми, що вже виправлено для
+    sync_realtime_data/нічного ретрейну).
     """
     db = SessionLocal()
+    state = _load_intraday_sync_failure_state()
+
     try:
-        n = sync_today_market_prices_from_oree(db)
-        if n:
-            print(f"[{datetime.datetime.now()}] Intraday price sync: {n} new MarketPrice rows for today.")
+        result = sync_today_market_prices_from_oree(db)
+        if result.get('fetch_ok'):
+            if state.get('dam_consecutive_failures', 0) > 0:
+                print(f"[{datetime.datetime.now()}] Intraday price sync (DAM): recovered after {state['dam_consecutive_failures']} consecutive fetch failures.")
+            state['dam_consecutive_failures'] = 0
+            if result.get('n_new'):
+                print(f"[{datetime.datetime.now()}] Intraday price sync: {result['n_new']} new MarketPrice rows for today.")
+        else:
+            state['dam_consecutive_failures'] = state.get('dam_consecutive_failures', 0) + 1
+            print(f"Warning: intraday price sync (DAM) fetch failed ({state['dam_consecutive_failures']} consecutive cycles) — oree.com.ua did not return valid data.")
     except Exception as e:
+        state['dam_consecutive_failures'] = state.get('dam_consecutive_failures', 0) + 1
         print(f"Warning: intraday price sync failed: {e}")
 
     try:
-        n_idm = sync_today_idm_prices_from_oree(db)
-        if n_idm:
-            print(f"[{datetime.datetime.now()}] Intraday IDM sync: {n_idm} new IdmPrice rows for today.")
+        result_idm = sync_today_idm_prices_from_oree(db)
+        if result_idm.get('fetch_ok'):
+            if state.get('idm_consecutive_failures', 0) > 0:
+                print(f"[{datetime.datetime.now()}] Intraday IDM sync: recovered after {state['idm_consecutive_failures']} consecutive fetch failures.")
+            state['idm_consecutive_failures'] = 0
+            if result_idm.get('n_new'):
+                print(f"[{datetime.datetime.now()}] Intraday IDM sync: {result_idm['n_new']} new IdmPrice rows for today.")
+        else:
+            state['idm_consecutive_failures'] = state.get('idm_consecutive_failures', 0) + 1
+            print(f"Warning: intraday IDM sync fetch failed ({state['idm_consecutive_failures']} consecutive cycles) — oree.com.ua did not return valid data.")
     except Exception as e:
+        state['idm_consecutive_failures'] = state.get('idm_consecutive_failures', 0) + 1
         print(f"Warning: intraday IDM sync failed: {e}")
+
+    _save_intraday_sync_failure_state(state)
+
+    if (state.get('dam_consecutive_failures', 0) >= INTRADAY_SYNC_ALERT_THRESHOLD
+            or state.get('idm_consecutive_failures', 0) >= INTRADAY_SYNC_ALERT_THRESHOLD):
+        try:
+            alert_result = telegram_bot.check_and_send_intraday_sync_alert(
+                dam_consecutive_failures=state.get('dam_consecutive_failures', 0),
+                idm_consecutive_failures=state.get('idm_consecutive_failures', 0),
+                threshold=INTRADAY_SYNC_ALERT_THRESHOLD,
+            )
+            if alert_result.get('sent'):
+                print(f"[{datetime.datetime.now()}] Sent intraday sync failure alert: {alert_result}")
+        except Exception as e:
+            print(f"Warning: failed to send intraday sync failure alert: {e}")
 
     try:
         asset = db.query(Asset).first()

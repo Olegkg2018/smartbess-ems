@@ -305,6 +305,14 @@ export interface MarketBid {
   actual_price_uah: number | null;
   executed: boolean | null;
   realized_profit_uah: number | null;
+  // 2026-09-09: ЧИСТА вартість енергії (ціна × обсяг), БЕЗ тарифу на
+  // доставку і без деградації — саме це показується в "Заявка РДН"
+  // (диспетчер бачить, по чому купує/продає, а не нетто-число з уже
+  // вплетеним тарифом). realized_profit_uah/idm_fallback_profit_uah
+  // лишаються реальним фінансовим підсумком (для звітності/ROI/Executive
+  // Summary), не змінені.
+  energy_profit_uah: number | null;
+  idm_fallback_energy_profit_uah: number | null;
   soc_feasible: boolean | null;
   idm_fallback_suggested: boolean;
   idm_fallback_price_uah: number | null;

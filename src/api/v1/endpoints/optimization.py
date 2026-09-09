@@ -605,6 +605,13 @@ class SystemSettingsModel(BaseModel):
     auto_dispatch_enabled: Optional[bool] = None
     excise_duty_pct: Optional[float] = None
     transformer_loss_pct: Optional[float] = None
+    # 2026-09-09: тариф на доставку (₴/МВт·год), раніше захардкоджений у
+    # bidding_service.py::TARIFF_KWARGS сумою 4 компонентів (528.57+1500.0+
+    # 104.57+100.0=2233.14) — за проханням користувача винесено в
+    # редаговане налаштування (реальний спосіб розрахунку тарифу
+    # відрізняється від того, що було зашито в коді). Дефолт зберігає
+    # старе число, щоб нічого не зламати, доки диспетчер не введе реальне.
+    delivery_tariff_uah_per_mwh: Optional[float] = None
     # Підключення реальної батареї (2026-08-26) — "simulator"|"tcp"|"serial"|
     # "disabled". У "simulator" tcp_host/tcp_port ігноруються (завжди
     # внутрішній 127.0.0.1:5020) — поля лишаються заповненими лише як
@@ -676,6 +683,17 @@ DEFAULT_BESS_MODBUS_UNIT_ID = 1
 DEFAULT_EXCISE_DUTY_PCT = 0.0
 DEFAULT_TRANSFORMER_LOSS_PCT = 0.0
 
+# Тариф на доставку (2026-09-09) — те саме число, що й СУМА старого
+# захардкодженого TARIFF_KWARGS (528.57+1500.0+104.57+100.0=2233.14
+# ₴/МВт·год) у bidding_service.py, тепер редаговане в Settings. Реальний
+# спосіб розрахунку тарифу на доставку на практиці інший (роздрібний
+# постачальник рахує по-своєму) — це число лишається наближенням, доки
+# диспетчер не введе реальне з рахунку/договору. Читається окремо
+# `bidding_service.py::get_delivery_tariff_uah_per_mwh` (не звідси
+# напряму, щоб уникнути циклічного імпорту) — значення тут лише дефолт
+# для форми Settings.
+DEFAULT_DELIVERY_TARIFF_UAH_PER_MWH = 2233.14
+
 @router.get("/settings", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
 async def get_system_settings():
     """
@@ -703,6 +721,7 @@ async def get_system_settings():
         "auto_dispatch_enabled": DEFAULT_AUTO_DISPATCH_ENABLED,
         "excise_duty_pct": DEFAULT_EXCISE_DUTY_PCT,
         "transformer_loss_pct": DEFAULT_TRANSFORMER_LOSS_PCT,
+        "delivery_tariff_uah_per_mwh": DEFAULT_DELIVERY_TARIFF_UAH_PER_MWH,
         "bess_connection_type": DEFAULT_BESS_CONNECTION_TYPE,
         "bess_tcp_host": DEFAULT_BESS_TCP_HOST,
         "bess_tcp_port": DEFAULT_BESS_TCP_PORT,
@@ -718,7 +737,7 @@ async def get_system_settings():
         try:
             with open(path, "r") as f:
                 saved = json.load(f)
-                for key in ("launch_date", "osr", "voltage_class", "margin", "nuclear_reference_capacity_mw", "hydro_reference_capacity_mw", "baseload_passthrough_ratio", "bid_reminder_telegram_enabled", "auto_dispatch_enabled", "excise_duty_pct", "transformer_loss_pct", "bess_connection_type", "bess_tcp_host", "bess_tcp_port", "bess_serial_port", "bess_serial_baudrate", "bess_serial_parity", "bess_serial_stopbits", "bess_serial_bytesize", "bess_modbus_unit_id"):
+                for key in ("launch_date", "osr", "voltage_class", "margin", "nuclear_reference_capacity_mw", "hydro_reference_capacity_mw", "baseload_passthrough_ratio", "bid_reminder_telegram_enabled", "auto_dispatch_enabled", "excise_duty_pct", "transformer_loss_pct", "delivery_tariff_uah_per_mwh", "bess_connection_type", "bess_tcp_host", "bess_tcp_port", "bess_serial_port", "bess_serial_baudrate", "bess_serial_parity", "bess_serial_stopbits", "bess_serial_bytesize", "bess_modbus_unit_id"):
                     if key in saved:
                         data[key] = saved[key]
         except Exception:
@@ -762,6 +781,7 @@ async def save_system_settings(req: SystemSettingsModel):
             "auto_dispatch_enabled": req.auto_dispatch_enabled if req.auto_dispatch_enabled is not None else DEFAULT_AUTO_DISPATCH_ENABLED,
             "excise_duty_pct": req.excise_duty_pct if req.excise_duty_pct is not None else DEFAULT_EXCISE_DUTY_PCT,
             "transformer_loss_pct": req.transformer_loss_pct if req.transformer_loss_pct is not None else DEFAULT_TRANSFORMER_LOSS_PCT,
+            "delivery_tariff_uah_per_mwh": req.delivery_tariff_uah_per_mwh if req.delivery_tariff_uah_per_mwh is not None else DEFAULT_DELIVERY_TARIFF_UAH_PER_MWH,
             "bess_connection_type": req.bess_connection_type if req.bess_connection_type is not None else DEFAULT_BESS_CONNECTION_TYPE,
             "bess_tcp_host": req.bess_tcp_host if req.bess_tcp_host is not None else DEFAULT_BESS_TCP_HOST,
             "bess_tcp_port": req.bess_tcp_port if req.bess_tcp_port is not None else DEFAULT_BESS_TCP_PORT,

@@ -60,8 +60,7 @@ def sync_today_market_prices_from_oree(db):
     для навчання моделі) — лише один легкий POST-запит до oree.com.ua
     (`fetch_oree_prices_for_month`, завжди живий для поточного місяця) і
     точковий інсерт РЕАЛЬНО нових годин сьогодні, яких ще нема в БД.
-    Викликається періодично зі scheduler.py. Повертає кількість доданих
-    рядків.
+    Викликається періодично зі scheduler.py.
 
     ВАЖЛИВО: "сьогодні" тут — це РЕАЛЬНА київська календарна доба
     (`kyiv_day_bounds`), а не наївна UTC-доба контейнера — інакше перші
@@ -69,6 +68,19 @@ def sync_today_market_prices_from_oree(db):
     ПОПЕРЕДНЬОГО календарного дня) ніколи не потраплять у вікно фільтра
     і назавжди лишаться недосинканими (саме це сталось 2026-08-23, див.
     CLAUDE.md п.26).
+
+    Повертає `{'n_new': int, 'fetch_ok': bool}` (2026-09-09, розслідування
+    застарілої "оцінки" ВДР-фолбеку) — навмисно РОЗРІЗНЯЄ два різних
+    "нуля": `fetch_ok=False` означає, що сам живий запит до oree.com.ua
+    (`fetch_oree_prices_for_month`, з внутрішніми ретраями) не зміг
+    отримати ЖОДНИХ даних за весь місяць — реальний технічний збій
+    (мережа/WAF-виклик замість JSON), гідний лічильника послідовних
+    невдач/алерту (`run_intraday_price_sync`). `fetch_ok=True, n_new=0`
+    означає, що запит ПРАЦЮЄ нормально (реально отримав дані за місяць),
+    просто на сьогодні або немає нових годин (уже все синхронізовано),
+    або oree ще не опублікував рядок за сьогодні у своїй таблиці (для
+    ВДР це нормально — див. sync_today_idm_prices_from_oree) — це НЕ
+    помилка синку, лічильник невдач чіпати не треба.
     """
     import src.modules.market_data_service.data_manager as dm
     from src.core.time_utils import utc_to_kyiv, kyiv_day_bounds
@@ -81,11 +93,11 @@ def sync_today_market_prices_from_oree(db):
     if not df_month_next.empty:
         df = pd.concat([df, df_month_next]).drop_duplicates(subset=['Datetime'])
     if df.empty:
-        return 0
+        return {'n_new': 0, 'fetch_ok': False}
     df['Datetime'] = pd.to_datetime(df['Datetime'])
     df_day = df[(df['Datetime'] >= day_start) & (df['Datetime'] < day_end)].dropna(subset=['Price'])
     if df_day.empty:
-        return 0
+        return {'n_new': 0, 'fetch_ok': True}
 
     existing_hours = {
         r[0] for r in db.query(MarketPrice.timestamp).filter(
@@ -99,11 +111,11 @@ def sync_today_market_prices_from_oree(db):
         if row.Datetime.to_pydatetime() not in existing_hours
     ]
     if not objects:
-        return 0
+        return {'n_new': 0, 'fetch_ok': True}
 
     db.bulk_save_objects(objects)
     db.commit()
-    return len(objects)
+    return {'n_new': len(objects), 'fetch_ok': True}
 
 
 def sync_today_idm_prices_from_oree(db):
@@ -116,7 +128,19 @@ def sync_today_idm_prices_from_oree(db):
     src.modules.external_data_service.intraday_market.fetch_idm_prices_for_month
     (вже перевірений шлях, застосовується для навчання моделі через
     historical_data_merged.csv — тут лише перший раз пише в оперативну БД,
-    не CSV). Повертає кількість доданих рядків.
+    не CSV).
+
+    Повертає `{'n_new': int, 'fetch_ok': bool}` — та сама семантика, що й
+    sync_today_market_prices_from_oree (див. докстрінг там). **Важливий
+    нюанс, знайдений 2026-09-09**: на відміну від РДН (day-ahead,
+    публікується ЗАЗДАЛЕГІДЬ), місячна архівна таблиця ВДР на oree.com.ua
+    сама по собі отримує рядок за "сьогодні" лише ПІЗНО ввечері того ж дня
+    (спостережено: рядок за 08.09 з'явився в таблиці лише близько 22:50
+    Kyiv) — тобто `fetch_ok=True, n_new=0` (немає рядка за сьогодні) ВЕСЬ
+    ДЕНЬ до вечора Є ОЧІКУВАНИМ станом, а не ознакою збою синку. Окремо
+    від цього реально підтверджено (живий тест) інтермітентні (~50-75%)
+    HTML-замість-JSON відповіді від oree.com.ua (WAF/бот-захист) — це і є
+    те, що `fetch_ok=False` реально відстежує.
     """
     from src.database.models import IdmPrice
     import src.modules.external_data_service.intraday_market as idm
@@ -130,11 +154,11 @@ def sync_today_idm_prices_from_oree(db):
     if not df_month_next.empty:
         df = pd.concat([df, df_month_next]).drop_duplicates(subset=['Datetime'])
     if df.empty:
-        return 0
+        return {'n_new': 0, 'fetch_ok': False}
     df['Datetime'] = pd.to_datetime(df['Datetime'])
     df_day = df[(df['Datetime'] >= day_start) & (df['Datetime'] < day_end)].dropna(subset=['IDM_Price'])
     if df_day.empty:
-        return 0
+        return {'n_new': 0, 'fetch_ok': True}
 
     existing_hours = {
         r[0] for r in db.query(IdmPrice.timestamp).filter(
@@ -148,11 +172,11 @@ def sync_today_idm_prices_from_oree(db):
         if row.Datetime.to_pydatetime() not in existing_hours
     ]
     if not objects:
-        return 0
+        return {'n_new': 0, 'fetch_ok': True}
 
     db.bulk_save_objects(objects)
     db.commit()
-    return len(objects)
+    return {'n_new': len(objects), 'fetch_ok': True}
 
 
 def _calc_mape_wape(y_true, y_pred):

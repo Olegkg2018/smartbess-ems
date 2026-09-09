@@ -9,6 +9,31 @@ import ConfirmModal from '../../components/ConfirmModal';
 import * as api from '../../api/client';
 import type { DayBidReportHour } from '../../api/client';
 
+// Той самий Kyiv wall-clock підхід, що вже є в BidGateCountdown.tsx —
+// не діляться спільним файлом (обидва прості й самодостатні), щоб не
+// плодити передчасну абстракцію заради однієї функції.
+function kyivNow(): Date {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Kyiv', hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date());
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '00';
+  return new Date(`${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}`);
+}
+
+function kyivWallClock(dateStr: string, hour: number): Date {
+  return new Date(`${dateStr}T${String(hour).padStart(2, '0')}:00:00`);
+}
+
+// Поріг "давно не оновлювалось" для ВДР-оцінки (2026-09-08, розслідування
+// -8536 грн для заявки, що не зіграла на РДН) — 2 год з моменту початку
+// години. НЕ обов'язково означає збій синку: реальний архів ВДР на
+// oree.com.ua сам по собі отримує рядок за "сьогодні" лише пізно ввечері
+// (спостережено, ~22:50 Kyiv) — це чесний індикатор "оцінка ще не
+// підтверджена", а не звинувачення в поломці.
+const IDM_ESTIMATE_STALE_MS = 2 * 60 * 60 * 1000;
+
 export default function OptimizationSchedule() {
   const {
     optimizationResult, manualOverrides, setManualOverrides, dispatchProfile, targetDate, capacity, power, saveOverrides, resetOverridesToOptimal,
@@ -17,6 +42,13 @@ export default function OptimizationSchedule() {
     submitIdmFallbackBidNow,
     activeRole, activeAssetId, addLog,
   } = useApp();
+
+  // 2026-09-09: чи давно минула ця година, а ВДР-фолбек все ще "оцінка"
+  // (не звірено реальною ціною) — див. IDM_ESTIMATE_STALE_MS вище.
+  const isStaleIdmEstimate = (hour: number) => {
+    const hourStart = kyivWallClock(targetDate, hour);
+    return kyivNow().getTime() - hourStart.getTime() > IDM_ESTIMATE_STALE_MS;
+  };
 
   // Чернетка скоригованої ціни заявки на ВДР, за годиною (2026-08-28) —
   // порожньо = диспетчер ще не правив, "Подати на ВДР" піде за
@@ -310,7 +342,7 @@ export default function OptimizationSchedule() {
                   <th>Ціна заявки (ручна, з маржею)</th>
                   <th>Факт OREE</th>
                   <th>Статус</th>
-                  <th>P&L / ВДР-пропозиція</th>
+                  <th title="Чиста вартість енергії (ціна × обсяг) — без тарифу на доставку і без деградації. Повний фінрезультат (з урахуванням цих витрат) — у 'Ручне коригування заявок' і Executive Summary.">Вартість енергії / ВДР-пропозиція</th>
                 </tr>
               </thead>
               <tbody>
@@ -352,13 +384,21 @@ export default function OptimizationSchedule() {
                     <td>
                       {b.executed && b.soc_feasible === false ? (
                         <span style={{ color: 'var(--color-amber)' }} title="Фізично не доставлено через брак SoC — не зараховано у факт">
-                          {Math.round(b.realized_profit_uah ?? 0).toLocaleString()} грн (не зараховано)
+                          {Math.round(b.energy_profit_uah ?? 0).toLocaleString()} грн (не зараховано)
                         </span>
                       ) : b.executed ? (
-                        <span style={{ color: 'var(--color-emerald)' }}>{Math.round(b.realized_profit_uah ?? 0).toLocaleString()} грн</span>
+                        <span style={{ color: 'var(--color-emerald)' }}>{Math.round(b.energy_profit_uah ?? 0).toLocaleString()} грн</span>
                       ) : b.idm_fallback_suggested ? (
                         <span style={{ color: 'var(--color-amber)' }}>
-                          ВДР ({b.idm_fallback_price_is_actual ? 'факт' : 'оцінка'}) ~{Math.round(b.idm_fallback_price_uah ?? 0).toLocaleString()} грн/МВт·год → {Math.round(b.idm_fallback_profit_uah ?? 0).toLocaleString()} грн
+                          ВДР ({b.idm_fallback_price_is_actual ? 'факт' : 'оцінка'}) ~{Math.round(b.idm_fallback_price_uah ?? 0).toLocaleString()} грн/МВт·год → {Math.round(b.idm_fallback_energy_profit_uah ?? 0).toLocaleString()} грн
+                          {!b.idm_fallback_price_is_actual && isStaleIdmEstimate(b.hour) && (
+                            <span
+                              title="Реальна ціна ВДР на цю годину ще не опублікована на oree.com.ua (звичайна затримка публікації, не обов'язково збій) — оцінка може відрізнятись від факту."
+                              style={{ display: 'inline-flex', verticalAlign: 'middle', marginLeft: '4px' }}
+                            >
+                              <AlertTriangle size={13} style={{ color: 'var(--color-amber)' }} />
+                            </span>
+                          )}
                           {b.idm_external_order_id ? (
                             <span style={{ marginLeft: '6px', color: 'var(--color-emerald)' }} title={`Подано на ВДР: ${b.idm_external_order_id}`}>
                               <CheckCircle2 size={12} style={{ verticalAlign: 'middle' }} />
@@ -653,6 +693,11 @@ export default function OptimizationSchedule() {
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                               <span style={{ fontSize: '11px', color: 'var(--color-amber)' }}>
                                 {h.bid_type === 'buy' ? 'Купівля' : 'Продаж'} на ВДР ({h.idm_fallback_price_is_actual ? 'факт' : 'оцінка'}) ~{fmt(h.idm_fallback_price_uah)} ₴/МВт·год
+                                {!h.idm_fallback_price_is_actual && isStaleIdmEstimate(idx) && (
+                                  <span title="Реальна ціна ВДР на цю годину ще не опублікована на oree.com.ua (звичайна затримка публікації)" style={{ marginLeft: '4px' }}>
+                                    <AlertTriangle size={11} style={{ verticalAlign: 'middle', color: 'var(--color-amber)' }} />
+                                  </span>
+                                )}
                               </span>
                               {h.idm_external_order_id ? (
                                 <span style={{ fontSize: '11px', color: 'var(--color-emerald)' }} title={`Подано на ВДР: ${h.idm_external_order_id}`}>

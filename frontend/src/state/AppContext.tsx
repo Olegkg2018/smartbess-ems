@@ -129,6 +129,9 @@ interface AppState {
   bessModbusUnitId: number; setBessModbusUnitId: (v: number) => void;
   exciseDutyPct: number; setExciseDutyPct: (v: number) => void;
   transformerLossPct: number; setTransformerLossPct: (v: number) => void;
+  // 2026-09-09: тариф на доставку (₴/МВт·год) — раніше захардкоджений
+  // (bidding_service.py::TARIFF_KWARGS, сума 2233.14), тепер редагований.
+  deliveryTariffUahPerMwh: number; setDeliveryTariffUahPerMwh: (v: number) => void;
   launchDate: string; setLaunchDate: (v: string) => void;
   saveSettings: () => Promise<void>;
 
@@ -216,6 +219,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [bessModbusUnitId, setBessModbusUnitId] = useState(1);
   const [exciseDutyPct, setExciseDutyPct] = useState(0);
   const [transformerLossPct, setTransformerLossPct] = useState(0);
+  const [deliveryTariffUahPerMwh, setDeliveryTariffUahPerMwh] = useState(2233.14);
   const [launchDate, setLaunchDate] = useState('2026-01-01');
 
   const [capex, setCapex] = useState(15200000);
@@ -285,6 +289,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (data.bess_modbus_unit_id != null) setBessModbusUnitId(data.bess_modbus_unit_id);
       if (data.excise_duty_pct != null) setExciseDutyPct(data.excise_duty_pct);
       if (data.transformer_loss_pct != null) setTransformerLossPct(data.transformer_loss_pct);
+      if (data.delivery_tariff_uah_per_mwh != null) setDeliveryTariffUahPerMwh(data.delivery_tariff_uah_per_mwh);
     }).catch(() => {});
     api.fetchDispatcherSchedule(activeRole).then((r) => {
       setDispatcherSchedule(r.schedule);
@@ -367,6 +372,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         auto_dispatch_enabled: autoDispatchEnabled,
         excise_duty_pct: exciseDutyPct,
         transformer_loss_pct: transformerLossPct,
+        delivery_tariff_uah_per_mwh: deliveryTariffUahPerMwh,
         bess_connection_type: bessConnectionType,
         bess_tcp_host: bessTcpHost,
         bess_tcp_port: bessTcpPort,
@@ -381,7 +387,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } catch (e: any) {
       addLog('API', `Помилка збереження налаштувань: ${e.message}`, 'error');
     }
-  }, [activeRole, launchDate, osr, voltageClass, margin, capacity, power, efficiency, maxCyclesPerDay, bidReminderTelegramEnabled, autoDispatchEnabled, exciseDutyPct, transformerLossPct, bessConnectionType, bessTcpHost, bessTcpPort, bessSerialPort, bessSerialBaudrate, bessSerialParity, bessSerialStopbits, bessSerialBytesize, bessModbusUnitId, addLog]);
+  }, [activeRole, launchDate, osr, voltageClass, margin, capacity, power, efficiency, maxCyclesPerDay, bidReminderTelegramEnabled, autoDispatchEnabled, exciseDutyPct, transformerLossPct, deliveryTariffUahPerMwh, bessConnectionType, bessTcpHost, bessTcpPort, bessSerialPort, bessSerialBaudrate, bessSerialParity, bessSerialStopbits, bessSerialBytesize, bessModbusUnitId, addLog]);
 
   useEffect(() => {
     if (!activeAssetId) return;
@@ -822,6 +828,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     bessSerialParity, setBessSerialParity, bessSerialStopbits, setBessSerialStopbits,
     bessSerialBytesize, setBessSerialBytesize, bessModbusUnitId, setBessModbusUnitId,
     exciseDutyPct, setExciseDutyPct, transformerLossPct, setTransformerLossPct,
+    deliveryTariffUahPerMwh, setDeliveryTariffUahPerMwh,
     launchDate, setLaunchDate, saveSettings,
     capex, setCapex, discountRate, setDiscountRate, lifetime, setLifetime,
     systemLogs, addLog, auditLogs,

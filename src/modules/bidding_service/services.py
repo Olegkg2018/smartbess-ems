@@ -33,13 +33,47 @@ def clamp_bid_price_to_oree_bounds(raw_price_uah: float) -> tuple:
     clamped = min(max(raw_price_uah, OREE_BID_PRICE_MIN_UAH), OREE_BID_PRICE_MAX_UAH)
     return clamped, clamped != raw_price_uah
 
-# Ті самі тарифи, що scheduler.py реально використовує для боєвого плану
-# (Settings поки не підключені до battery_params там) — щоб P&L заявки
-# рахувався на однакових умовах з тим, що реально диспетчерувалось.
-TARIFF_KWARGS = dict(
-    transmission_tariff=528.57, distribution_tariff=1500.0,
-    dispatch_tariff=104.57, supplier_margin=100.0, mode='arbitrage',
-)
+# 2026-09-09: раніше СТАТИЧНА константа (сума 528.57+1500.0+104.57+100.0=
+# 2233.14 ₴/МВт·год) — за проханням користувача винесено в редаговане
+# Settings-поле (`delivery_tariff_uah_per_mwh`, `optimization.py`), бо
+# реальний спосіб розрахунку тарифу на доставку відрізняється від того,
+# що було зашито в коді. Дефолт зберігає стару суму — без явного
+# налаштування диспетчером поведінка НЕ змінюється.
+DEFAULT_DELIVERY_TARIFF_UAH_PER_MWH = 2233.14
+
+
+def get_delivery_tariff_uah_per_mwh() -> float:
+    """Читає тариф на доставку (₴/МВт·год) з system_settings.json — той
+    самий файловий read-патерн, що вже є для `auto_dispatch_enabled`
+    (scheduler.py) / `bid_reminder_telegram_enabled` (telegram_bot.py).
+    Дефолт — стара захардкоджена сума, якщо ще не налаштовано вручну."""
+    import json
+    import os
+    from src.core.config import settings
+    path = os.path.join(settings.DATA_DIR, "system_settings.json")
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                val = json.load(f).get("delivery_tariff_uah_per_mwh")
+            if val is not None:
+                return float(val)
+        except Exception:
+            pass
+    return DEFAULT_DELIVERY_TARIFF_UAH_PER_MWH
+
+
+def get_tariff_kwargs() -> dict:
+    """Динамічний замінник колишньої статичної `TARIFF_KWARGS` — той самий
+    склад параметрів для `evaluate_schedule_profit` (transmission/
+    distribution/dispatch/supplier_margin), але формула там завжди
+    використовує лише їхню СУМУ (`total_tariffs_kwh`), тому все редаговане
+    число кладеться в `transmission_tariff`, решта — 0 (сигнатура
+    evaluate_schedule_profit не змінюється)."""
+    return dict(
+        transmission_tariff=get_delivery_tariff_uah_per_mwh(),
+        distribution_tariff=0.0, dispatch_tariff=0.0, supplier_margin=0.0,
+        mode='arbitrage',
+    )
 
 
 def get_margin_pct(db, asset_id: str, target_date: datetime.datetime) -> float:
@@ -436,7 +470,7 @@ def settle_bids_for_date(db, asset, target_date: datetime.datetime, actual_price
             b.executed = b.bid_price_uah <= actual
             if b.executed:
                 b.realized_profit_uah = evaluate_schedule_profit(
-                    [0.0], [b.volume_kw], [actual], degradation_cost=deg_cost_kwh, **TARIFF_KWARGS,
+                    [0.0], [b.volume_kw], [actual], degradation_cost=deg_cost_kwh, **get_tariff_kwargs(),
                 )
                 b.idm_fallback_suggested = False
             else:
@@ -445,13 +479,13 @@ def settle_bids_for_date(db, asset, target_date: datetime.datetime, actual_price
                 b.idm_fallback_suggested = True
                 b.idm_fallback_price_uah = idm_price
                 b.idm_fallback_profit_uah = evaluate_schedule_profit(
-                    [0.0], [b.volume_kw], [idm_price], degradation_cost=deg_cost_kwh, **TARIFF_KWARGS,
+                    [0.0], [b.volume_kw], [idm_price], degradation_cost=deg_cost_kwh, **get_tariff_kwargs(),
                 )
         elif b.bid_type == 'buy':
             b.executed = b.bid_price_uah >= actual
             if b.executed:
                 b.realized_profit_uah = evaluate_schedule_profit(
-                    [b.volume_kw], [0.0], [actual], degradation_cost=deg_cost_kwh, **TARIFF_KWARGS,
+                    [b.volume_kw], [0.0], [actual], degradation_cost=deg_cost_kwh, **get_tariff_kwargs(),
                 )
                 b.idm_fallback_suggested = False
             else:
@@ -460,7 +494,7 @@ def settle_bids_for_date(db, asset, target_date: datetime.datetime, actual_price
                 b.idm_fallback_suggested = True
                 b.idm_fallback_price_uah = idm_price
                 b.idm_fallback_profit_uah = evaluate_schedule_profit(
-                    [b.volume_kw], [0.0], [idm_price], degradation_cost=deg_cost_kwh, **TARIFF_KWARGS,
+                    [b.volume_kw], [0.0], [idm_price], degradation_cost=deg_cost_kwh, **get_tariff_kwargs(),
                 )
 
         b.settled_at = datetime.datetime.utcnow()
@@ -542,11 +576,11 @@ def reconcile_idm_fallback_for_date(db, asset, target_date: datetime.datetime) -
         b.idm_fallback_price_uah = real_idm
         if b.bid_type == 'sell':
             b.idm_fallback_profit_uah = evaluate_schedule_profit(
-                [0.0], [b.volume_kw], [real_idm], degradation_cost=deg_cost_kwh, **TARIFF_KWARGS,
+                [0.0], [b.volume_kw], [real_idm], degradation_cost=deg_cost_kwh, **get_tariff_kwargs(),
             )
         elif b.bid_type == 'buy':
             b.idm_fallback_profit_uah = evaluate_schedule_profit(
-                [b.volume_kw], [0.0], [real_idm], degradation_cost=deg_cost_kwh, **TARIFF_KWARGS,
+                [b.volume_kw], [0.0], [real_idm], degradation_cost=deg_cost_kwh, **get_tariff_kwargs(),
             )
         b.idm_fallback_price_is_actual = True
         n_reconciled += 1
@@ -566,7 +600,37 @@ def _bid_to_dict(b: MarketBid, soc_feasible=None) -> dict:
         b.bid_price_uah <= OREE_BID_PRICE_MIN_UAH + 1e-6
         or b.bid_price_uah >= OREE_BID_PRICE_MAX_UAH - 1e-6
     )
+
+    # 2026-09-09: ЧИСТА вартість енергії (ціна × обсяг), БЕЗ тарифів на
+    # доставку і без деградації — за проханням користувача, диспетчер має
+    # бачити, по чому купує/продає енергію, а не нетто-число з уже
+    # вплетеним тарифом (`realized_profit_uah`/`idm_fallback_profit_uah`
+    # НЕ змінюються — лишаються реальним фінансовим підсумком для звітності/
+    # ROI/Executive Summary; тарифи/деградація й надалі там законно
+    # присутні, просто НЕ показуються в "Заявка РДН"). None — ще не
+    # звірено; 0.0 — standby або не виконано (енергія фізично не пройшла).
+    volume_mw = b.volume_kw / 1000.0
+    if b.executed is None:
+        energy_profit_uah = None
+    elif b.executed and b.bid_type == 'sell':
+        energy_profit_uah = b.actual_price_uah * volume_mw
+    elif b.executed and b.bid_type == 'buy':
+        energy_profit_uah = -b.actual_price_uah * volume_mw
+    else:
+        energy_profit_uah = 0.0
+
+    if not b.idm_fallback_suggested or b.idm_fallback_price_uah is None:
+        idm_fallback_energy_profit_uah = None
+    elif b.bid_type == 'sell':
+        idm_fallback_energy_profit_uah = b.idm_fallback_price_uah * volume_mw
+    elif b.bid_type == 'buy':
+        idm_fallback_energy_profit_uah = -b.idm_fallback_price_uah * volume_mw
+    else:
+        idm_fallback_energy_profit_uah = None
+
     return {
+        'energy_profit_uah': energy_profit_uah,
+        'idm_fallback_energy_profit_uah': idm_fallback_energy_profit_uah,
         # Реальна київська година (CLAUDE.md п.26/27) — саме та, яку
         # диспетчер має ввести в кабінет oree.com.ua, а не сира UTC .hour.
         'hour': utc_to_kyiv(b.timestamp).hour,

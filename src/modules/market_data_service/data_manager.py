@@ -71,15 +71,25 @@ def fetch_oree_market_month(month, year, market='DAM', value_col='Price', cache_
         'zone': 'IPS'
     }
 
-    retries = 3
-    for attempt in range(retries):
+    # 2026-09-09: oree.com.ua інтермітентно (живо перевірено — ~50-75%
+    # запитів у моменти деградації) віддає замість JSON повноцінну HTML-
+    # сторінку з ознаками бот-захисту (WAF/бот-менеджер) замість `200 OK`+
+    # валідного JSON — НЕ специфічно для market='IDM', той самий ефект
+    # спостерігається і для 'DAM' (знайдено при розслідуванні застарілої
+    # "оцінки" ВДР-фолбеку — реальні дані ВДР за цілу добу жодного разу не
+    # долетіли попри ~20 спроб джоби кожні 30 хв). 3 спроби замало для
+    # такого рівня флакі-ефекту — `RETRY_BACKOFF_SECONDS` дає ще ~6 спроб
+    # із розтягнутим бекофом, щоб хоч одна майже гарантовано пробилась.
+    RETRY_BACKOFF_SECONDS = [2, 4, 8, 16, 25, 30, 30]
+    for attempt in range(len(RETRY_BACKOFF_SECONDS)):
         try:
             r = requests.post(url, headers=headers, data=data, timeout=20)
             if r.status_code == 200:
                 res = r.json()
                 content = res.get('content', '')
                 if not content:
-                    time.sleep(1.5)
+                    if attempt < len(RETRY_BACKOFF_SECONDS) - 1:
+                        time.sleep(RETRY_BACKOFF_SECONDS[attempt])
                     continue
 
                 soup = BeautifulSoup(content, 'html.parser')
@@ -129,7 +139,8 @@ def fetch_oree_market_month(month, year, market='DAM', value_col='Price', cache_
                         return df
         except Exception as e:
             print(f"Error fetching oree {market} data: {e}")
-        time.sleep(2.0 * (attempt + 1))
+        if attempt < len(RETRY_BACKOFF_SECONDS) - 1:
+            time.sleep(RETRY_BACKOFF_SECONDS[attempt])
 
     if os.path.exists(cache_path):
         try:
