@@ -81,6 +81,10 @@ def poll_bess_and_control():
     client, target_desc = _build_client(cfg)
     print(f"SCADA: Starting EMS control loop (target {target_desc}, unit_id={unit_id})...")
 
+    # 2026-09-28: цикл іде кожні 10с — друкуємо рішення лише при ЗМІНІ
+    # (година/джерело/потужність), а не 8640 разів на добу (було ~5300
+    # однакових "No optimization plan" в лозі за добу).
+    last_decision = None
     while not stop_flag:
         db = SessionLocal()
         try:
@@ -158,12 +162,18 @@ def poll_bess_and_control():
             target_power_kw = 0
             if override:
                 target_power_kw = int(override.power_mw * 1000.0)
-                print(f"SCADA: Manual override for hour {current_hour.hour}:00. Action power command = {target_power_kw} kW.")
+                decision = ('override', current_hour, target_power_kw)
+                msg = f"SCADA: Manual override for hour {current_hour.hour}:00. Action power command = {target_power_kw} kW."
             elif plan:
                 target_power_kw = int(plan.target_power_mw * 1000.0)
-                print(f"SCADA: Found optimization plan for hour {current_hour.hour}:00. Action power command = {target_power_kw} kW.")
+                decision = ('plan', current_hour, target_power_kw)
+                msg = f"SCADA: Found optimization plan for hour {current_hour.hour}:00. Action power command = {target_power_kw} kW."
             else:
-                print(f"SCADA Warning: No optimization plan found for current hour {current_hour.hour}:00. Setting BESS to Standby.")
+                decision = ('none', current_hour, 0)
+                msg = f"SCADA Warning: No optimization plan found for current hour {current_hour.hour}:00. Setting BESS to Standby."
+            if decision != last_decision:
+                print(msg)
+                last_decision = decision
                 
             cmd_val = target_power_kw
             if cmd_val < 0:

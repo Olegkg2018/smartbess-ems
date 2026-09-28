@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Clock } from 'lucide-react';
 
+const KYIV_PARTS_FORMAT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Europe/Kyiv', hour12: false,
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit',
+});
+
 function kyivNow(): Date {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Europe/Kyiv', hour12: false,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-  }).formatToParts(new Date());
+  const parts = KYIV_PARTS_FORMAT.formatToParts(new Date());
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '00';
   return new Date(`${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}`);
 }
@@ -36,7 +38,8 @@ interface Props {
 export default function BidGateCountdown({ targetDate }: Props) {
   const [now, setNow] = useState(kyivNow());
   useEffect(() => {
-    const id = setInterval(() => setNow(kyivNow()), 1000);
+    // Показуємо лише хвилини — тік раз на 15с достатній (було щосекунди).
+    const id = setInterval(() => setNow(kyivNow()), 15000);
     return () => clearInterval(id);
   }, []);
 

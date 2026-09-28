@@ -16,7 +16,7 @@ class PriceShiftModel(BaseModel):
     note: Optional[str] = None
 
 @router.get("", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
-async def get_price_shift(date: str):
+def get_price_shift(date: str):
     """
     Повертає ручний відсотковий зсув прогнозу ціни на дату (0% — нейтрально,
     якщо диспетчер нічого не вказував).
@@ -32,7 +32,7 @@ async def get_price_shift(date: str):
         db.close()
 
 @router.post("", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
-async def save_price_shift(req: PriceShiftModel, background_tasks: BackgroundTasks):
+def save_price_shift(req: PriceShiftModel, background_tasks: BackgroundTasks):
     db = SessionLocal()
     try:
         target_dt = kyiv_to_utc(req.date, 0)

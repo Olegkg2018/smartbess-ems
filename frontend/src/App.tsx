@@ -1,23 +1,27 @@
+import { lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppProvider, useApp } from './state/AppContext';
 import AppShell from './layouts/AppShell';
 import ApprovalModal from './components/ApprovalModal';
 
-import AssetDetail from './pages/dispatcher/AssetDetail';
-import OptimizationSchedule from './pages/dispatcher/OptimizationSchedule';
-import PriceForecast from './pages/dispatcher/PriceForecast';
-import GridRiskPanel from './pages/dispatcher/GridRiskPanel';
+const AssetDetail = lazy(() => import('./pages/dispatcher/AssetDetail'));
+const OptimizationSchedule = lazy(() => import('./pages/dispatcher/OptimizationSchedule'));
+const PriceForecast = lazy(() => import('./pages/dispatcher/PriceForecast'));
+const GridRiskPanel = lazy(() => import('./pages/dispatcher/GridRiskPanel'));
 
-import ExecutiveOverview from './pages/director/ExecutiveOverview';
-import RoiPayback from './pages/director/RoiPayback';
-import ForecastAccuracy from './pages/director/ForecastAccuracy';
-import RiskScenarios from './pages/director/RiskScenarios';
+const ExecutiveOverview = lazy(() => import('./pages/director/ExecutiveOverview'));
+const RoiPayback = lazy(() => import('./pages/director/RoiPayback'));
+const ForecastAccuracy = lazy(() => import('./pages/director/ForecastAccuracy'));
+const RiskScenarios = lazy(() => import('./pages/director/RiskScenarios'));
 
-import Settings from './pages/shared/Settings';
-import Audit from './pages/shared/Audit';
-import DataAudit from './pages/shared/DataAudit';
-import About from './pages/shared/About';
+const Settings = lazy(() => import('./pages/shared/Settings'));
+const Audit = lazy(() => import('./pages/shared/Audit'));
+const DataAudit = lazy(() => import('./pages/shared/DataAudit'));
+const About = lazy(() => import('./pages/shared/About'));
 
+// 2026-09-28 (ревью продуктивності): сторінки вантажаться ліниво — раніше
+// всі 12 (разом із recharts) йшли одним ~800 КБ бандлом навіть на сторінку,
+// що графіків не має. Suspense — в AppShell навколо <Outlet/>.
 function DefaultRedirect() {
   const { activeRole } = useApp();
   const home = activeRole === 'Manager' || activeRole === 'Viewer' ? '/director/executive' : '/dispatcher/asset';

@@ -1,4 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import * as api from '../api/client';
 import type { UserRole, Asset, PriceBand, ActualPrices, GenerationAdjustment, PriceShift, InitialSoc, GridStress, BidMargin, MarketBid, ScadaStatus } from '../api/client';
@@ -250,19 +251,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Реальний стан SCADA-телеметрії — раніше бейдж і сторінка Asset Detail
   // показували статичні захардкоджені значення незалежно від того, чи живий
   // симулятор. Опитуємо раз на ~20с, поки додаток відкрито.
+  //
+  // 2026-09-28 (ревью продуктивності): кожна відповідь — новий об'єкт, тож
+  // setScadaStatus раз на 20с перемальовував УВЕСЬ застосунок (один спільний
+  // контекст), навіть коли телеметрія не змінилась. Тепер стан оновлюється
+  // лише при реальній зміні, а на прихованій вкладці опитування на паузі.
   useEffect(() => {
     if (!activeAssetId) return;
     let cancelled = false;
+    let lastJson = '';
+    const apply = (s: ScadaStatus | null) => {
+      const json = JSON.stringify(s);
+      if (cancelled || json === lastJson) return;
+      lastJson = json;
+      setScadaStatus(s);
+    };
     const poll = () => {
-      api.fetchScadaStatus(activeRole, activeAssetId).then((s) => {
-        if (!cancelled) setScadaStatus(s);
-      }).catch(() => {
-        if (!cancelled) setScadaStatus(null);
-      });
+      if (document.visibilityState === 'hidden') return;
+      api.fetchScadaStatus(activeRole, activeAssetId).then(apply).catch(() => apply(null));
     };
     poll();
     const interval = setInterval(poll, 20000);
-    return () => { cancelled = true; clearInterval(interval); };
+    document.addEventListener('visibilitychange', poll);
+    return () => { cancelled = true; clearInterval(interval); document.removeEventListener('visibilitychange', poll); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeAssetId]);
 
@@ -292,10 +303,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (data.excise_duty_pct != null) setExciseDutyPct(data.excise_duty_pct);
       if (data.transformer_loss_pct != null) setTransformerLossPct(data.transformer_loss_pct);
       if (data.delivery_tariff_uah_per_mwh != null) setDeliveryTariffUahPerMwh(data.delivery_tariff_uah_per_mwh);
-    }).catch(() => {});
-    api.fetchDispatcherSchedule(activeRole).then((r) => {
-      setDispatcherSchedule(r.schedule);
-      setDispatcherActions(r.available_actions);
     }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeAssetId]);
@@ -392,20 +399,50 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [activeRole, launchDate, osr, voltageClass, margin, capacity, power, efficiency, maxCyclesPerDay, bidReminderTelegramEnabled, autoDispatchEnabled, exciseDutyPct, transformerLossPct, deliveryTariffUahPerMwh, degradationCostUahPerMwh, bessConnectionType, bessTcpHost, bessTcpPort, bessSerialPort, bessSerialBaudrate, bessSerialParity, bessSerialStopbits, bessSerialBytesize, bessModbusUnitId, addLog]);
 
+  // 2026-09-28 (ревью продуктивності): звіти директора, умови ринку й
+  // сценарій віртуального диспетчера раніше вантажились при КОЖНОМУ старті
+  // (і при кожній зміні ролі) на будь-якій сторінці — executive-summary це
+  // ~2.5с серверної роботи, яку диспетчер ніколи не бачив. Тепер — ліниво,
+  // при першому відкритті сторінки, що їх показує (один раз на актив).
+  const { pathname } = useLocation();
+  const lazyLoadedRef = useRef<Set<string>>(new Set());
+  const loadOnce = useCallback((key: string, load: () => Promise<unknown>) => {
+    if (lazyLoadedRef.current.has(key)) return;
+    lazyLoadedRef.current.add(key);
+    load().catch(() => { lazyLoadedRef.current.delete(key); });
+  }, []);
+
   useEffect(() => {
     if (!activeAssetId) return;
-    api.fetchExecutiveSummary(activeRole, activeAssetId).then(setExecutiveReport).catch((e) => addLog('REPORT', `Помилка звіту C-Level: ${e.message}`, 'warn'));
+    if (pathname.startsWith('/director')) {
+      loadOnce(`exec:${activeAssetId}`, () => api.fetchExecutiveSummary(activeRole, activeAssetId)
+        .then(setExecutiveReport)
+        .catch((e) => { addLog('REPORT', `Помилка звіту C-Level: ${e.message}`, 'warn'); throw e; }));
+    }
+    if (pathname.startsWith('/director/accuracy')) {
+      loadOnce('accuracy', () => api.fetchForecastAccuracy(activeRole, 30).then(setForecastAccuracy));
+    }
+    if (pathname.startsWith('/dispatcher/grid-risk')) {
+      loadOnce('market', () => api.fetchMarketConditions(activeRole).then(setMarketConditions));
+    }
+    if (pathname.startsWith('/settings')) {
+      loadOnce('dispatcher-schedule', () => api.fetchDispatcherSchedule(activeRole).then((r) => {
+        setDispatcherSchedule(r.schedule);
+        setDispatcherActions(r.available_actions);
+      }));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeAssetId, activeRole]);
+  }, [pathname, activeAssetId]);
 
   useEffect(() => {
-    api.fetchMarketConditions(activeRole).then(setMarketConditions).catch(() => {});
-    api.fetchForecastAccuracy(activeRole, 30).then(setForecastAccuracy).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeRole]);
-
-  useEffect(() => {
-    refreshOverrides();
+    if (!activeAssetId) return;
+    const controller = new AbortController();
+    api.fetchManualOverrides(activeRole, activeAssetId, targetDate, controller.signal)
+      .then(setManualOverrides)
+      .catch((e: any) => {
+        if (e?.name !== 'AbortError') addLog('API', `Помилка завантаження ручного графіку: ${e.message}`, 'error');
+      });
+    return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeAssetId, targetDate]);
 
@@ -418,60 +455,65 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // 2) forecastPrices/priceBand/actualPrices підтягуються заново — якщо
   //    прогноз на цю дату вже колись рахували, він підвантажиться одразу
   //    (дешевий GET, без повторного MILP), інакше — теж очищаються.
+  // 2026-09-28 (ревью продуктивності): (1) чекаємо activeAssetId — раніше
+  // ефект стріляв двічі при старті (до і після завантаження активів);
+  // (2) AbortController — при швидкому перемиканні дат запити попередньої
+  // дати реально скасовуються, а не лише ігноруються їх відповіді;
+  // (3) без activeRole в залежностях — роль змінює лише токен, дані ті самі.
   useEffect(() => {
+    if (!activeAssetId) return;
     setOptimizationResult(null);
 
-    let cancelled = false;
-    api.fetchLatestForecastBand(activeRole, targetDate)
+    const controller = new AbortController();
+    const signal = controller.signal;
+    api.fetchLatestForecastBand(activeRole, targetDate, signal)
       .then((band) => {
-        if (cancelled) return;
+        if (signal.aborted) return;
         setPriceBand(band);
         setForecastPrices(band.predicted_prices_uah);
       })
       .catch(() => {
-        if (!cancelled) {
+        if (!signal.aborted) {
           setPriceBand(null);
           setForecastPrices(null);
         }
       });
 
-    api.fetchActualPrices(activeRole, targetDate)
-      .then((actual) => { if (!cancelled) setActualPrices(actual); })
-      .catch(() => { if (!cancelled) setActualPrices(null); });
+    api.fetchActualPrices(activeRole, targetDate, signal)
+      .then((actual) => { if (!signal.aborted) setActualPrices(actual); })
+      .catch(() => { if (!signal.aborted) setActualPrices(null); });
 
-    api.fetchGenerationAdjustment(activeRole, targetDate)
-      .then((adj) => { if (!cancelled) setGenerationAdjustment(adj); })
-      .catch(() => { if (!cancelled) setGenerationAdjustment(null); });
+    api.fetchGenerationAdjustment(activeRole, targetDate, signal)
+      .then((adj) => { if (!signal.aborted) setGenerationAdjustment(adj); })
+      .catch(() => { if (!signal.aborted) setGenerationAdjustment(null); });
 
-    api.fetchPriceShift(activeRole, targetDate)
-      .then((ps) => { if (!cancelled) setPriceShift(ps); })
-      .catch(() => { if (!cancelled) setPriceShift(null); });
+    api.fetchPriceShift(activeRole, targetDate, signal)
+      .then((ps) => { if (!signal.aborted) setPriceShift(ps); })
+      .catch(() => { if (!signal.aborted) setPriceShift(null); });
 
-    api.fetchGridStress(activeRole, targetDate)
-      .then((gs) => { if (!cancelled) setGridStress(gs); })
-      .catch(() => { if (!cancelled) setGridStress(null); });
+    api.fetchGridStress(activeRole, targetDate, signal)
+      .then((gs) => { if (!signal.aborted) setGridStress(gs); })
+      .catch(() => { if (!signal.aborted) setGridStress(null); });
 
-    if (activeAssetId) {
-      api.fetchInitialSoc(activeRole, activeAssetId, targetDate)
-        .then((soc) => { if (!cancelled) setInitialSoc(soc); })
-        .catch(() => { if (!cancelled) setInitialSoc(null); });
+    api.fetchInitialSoc(activeRole, activeAssetId, targetDate, signal)
+      .then((soc) => { if (!signal.aborted) setInitialSoc(soc); })
+      .catch(() => { if (!signal.aborted) setInitialSoc(null); });
 
-      api.fetchBidMargin(activeRole, activeAssetId, targetDate)
-        .then((m) => { if (!cancelled) setBidMargin(m); })
-        .catch(() => { if (!cancelled) setBidMargin(null); });
+    api.fetchBidMargin(activeRole, activeAssetId, targetDate, signal)
+      .then((m) => { if (!signal.aborted) setBidMargin(m); })
+      .catch(() => { if (!signal.aborted) setBidMargin(null); });
 
-      api.fetchBids(activeRole, activeAssetId, targetDate)
-        .then((r) => { if (!cancelled) setBids(r.bids); })
-        .catch(() => { if (!cancelled) setBids(null); });
+    api.fetchBids(activeRole, activeAssetId, targetDate, signal)
+      .then((r) => { if (!signal.aborted) setBids(r.bids); })
+      .catch(() => { if (!signal.aborted) setBids(null); });
 
-      api.fetchActionSummary(activeRole, activeAssetId, targetDate)
-        .then((s) => { if (!cancelled) setActionSummary(s); })
-        .catch(() => { if (!cancelled) setActionSummary(null); });
-    }
+    api.fetchActionSummary(activeRole, activeAssetId, targetDate, signal)
+      .then((s) => { if (!signal.aborted) setActionSummary(s); })
+      .catch(() => { if (!signal.aborted) setActionSummary(null); });
 
-    return () => { cancelled = true; };
+    return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeRole, targetDate, activeAssetId]);
+  }, [targetDate, activeAssetId]);
 
   const dispatchProfile = useMemo<DispatchHour[]>(() => {
     if (!manualOverrides || manualOverrides.length !== 24) return [];

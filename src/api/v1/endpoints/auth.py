@@ -15,7 +15,7 @@ class MockLoginRequest(BaseModel):
 
 
 @router.post("/mock-login")
-async def mock_login(req: MockLoginRequest):
+def mock_login(req: MockLoginRequest):
     """
     Видає підписаний mock-JWT для обраної ролі. Існує лише в OIDC_MOCK_MODE —
     це заміна старої схеми, де фронтенд сам збирав alg:none токен (будь-хто

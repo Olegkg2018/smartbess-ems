@@ -6,7 +6,9 @@
 фактом не було з чого.
 """
 import os
+import time
 import datetime
+import threading
 import pandas as pd
 from sqlalchemy import func
 
@@ -85,13 +87,20 @@ def sync_today_market_prices_from_oree(db):
     import src.modules.market_data_service.data_manager as dm
     from src.core.time_utils import utc_to_kyiv, kyiv_day_bounds
 
-    today_kyiv_str = utc_to_kyiv(datetime.datetime.utcnow()).strftime('%Y-%m-%d')
-    day_start, day_end = kyiv_day_bounds(today_kyiv_str)
+    # 2026-09-28 (ревью продуктивності): вікно — СЬОГОДНІ + ЗАВТРА. РДН —
+    # ринок на добу наперед: ціни на завтра публікуються ~13:00 сьогодні, а
+    # UI за замовчуванням відкритий саме на завтра. Раніше завтрашніх цін
+    # у БД не було ніколи, і кожен перегляд йшов живим запитом на oree
+    # (з ретраями, блокуючи API). Тепер вони потрапляють у БД тим самим
+    # 30-хвилинним синком, щойно oree їх опублікує.
+    now_kyiv_date = utc_to_kyiv(datetime.datetime.utcnow()).date()
+    day_start, _ = kyiv_day_bounds(now_kyiv_date.strftime('%Y-%m-%d'))
+    _, day_end = kyiv_day_bounds((now_kyiv_date + datetime.timedelta(days=1)).strftime('%Y-%m-%d'))
 
-    df = dm.fetch_oree_prices_for_month(day_start.month, day_start.year)
-    df_month_next = dm.fetch_oree_prices_for_month(day_end.month, day_end.year)
-    if not df_month_next.empty:
-        df = pd.concat([df, df_month_next]).drop_duplicates(subset=['Datetime'])
+    months = sorted({(day_start.year, day_start.month), ((day_end - datetime.timedelta(seconds=1)).year, (day_end - datetime.timedelta(seconds=1)).month)})
+    frames = [dm.fetch_oree_prices_for_month(m, y) for (y, m) in months]
+    frames = [f for f in frames if not f.empty]
+    df = pd.concat(frames).drop_duplicates(subset=['Datetime']) if frames else pd.DataFrame()
     if df.empty:
         return {'n_new': 0, 'fetch_ok': False}
     df['Datetime'] = pd.to_datetime(df['Datetime'])
@@ -150,9 +159,11 @@ def sync_today_idm_prices_from_oree(db):
     day_start, day_end = kyiv_day_bounds(today_kyiv_str)
 
     df = idm.fetch_idm_prices_for_month(day_start.month, day_start.year)
-    df_month_next = idm.fetch_idm_prices_for_month(day_end.month, day_end.year)
-    if not df_month_next.empty:
-        df = pd.concat([df, df_month_next]).drop_duplicates(subset=['Datetime'])
+    last_moment = day_end - datetime.timedelta(seconds=1)
+    if (last_moment.year, last_moment.month) != (day_start.year, day_start.month):
+        df_month_next = idm.fetch_idm_prices_for_month(last_moment.month, last_moment.year)
+        if not df_month_next.empty:
+            df = pd.concat([df, df_month_next]).drop_duplicates(subset=['Datetime'])
     if df.empty:
         return {'n_new': 0, 'fetch_ok': False}
     df['Datetime'] = pd.to_datetime(df['Datetime'])
@@ -524,7 +535,33 @@ def compute_real_profit_capture_ratio(db, days: int = 30) -> dict:
     }
 
 
+_CAPTURE_RATIO_CACHE = {'key': None, 'at': 0.0, 'value': None}
+_CAPTURE_RATIO_LOCK = threading.Lock()
+CAPTURE_RATIO_CACHE_SECONDS = 30 * 60
+
+
 def get_profit_capture_ratio(db) -> dict:
+    """
+    Кешована обгортка над `_compute_profit_capture_ratio` (2026-09-28, ревью
+    продуктивності): розрахунок робить perfect-foresight MILP для кожної з
+    останніх 30 діб — ~2с на КОЖЕН запит `/reports/executive-summary` і
+    `/reports/forecast-accuracy` (обидва ще й стартували паралельно при
+    відкритті UI). Вхідні дані (звірені доби) змінюються раз на добу, тож
+    результат кешується на 30 хв у межах тієї самої київської дати; лок —
+    щоб паралельні запити не рахували одне й те саме двічі.
+    """
+    from src.core.time_utils import utc_to_kyiv
+    key = utc_to_kyiv(datetime.datetime.utcnow()).date().isoformat()
+    with _CAPTURE_RATIO_LOCK:
+        c = _CAPTURE_RATIO_CACHE
+        if c['value'] is not None and c['key'] == key and (time.time() - c['at']) < CAPTURE_RATIO_CACHE_SECONDS:
+            return dict(c['value'])
+        value = _compute_profit_capture_ratio(db)
+        _CAPTURE_RATIO_CACHE.update(key=key, at=time.time(), value=value)
+        return dict(value)
+
+
+def _compute_profit_capture_ratio(db) -> dict:
     """
     Коефіцієнт, яким дораховується "реалістичний" прибуток для діб без
     реальної телеметрії/ручних заявок (заміна фейкового accuracy_rate=0.80).

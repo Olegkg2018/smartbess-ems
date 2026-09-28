@@ -850,9 +850,9 @@ def estimate_idm_price_for_hour(actual_dam_price_uah, as_of_date=None):
     додана до ВЖЕ ВІДОМОЇ реальної ціни РДН (а не до прогнозу — тут прогноз
     вже не потрібен, бо РДН факт відомий).
     """
-    df_hist = pd.read_csv(dm.MERGED_DATA_PATH)
-    df_hist['Datetime'] = pd.to_datetime(df_hist['Datetime'])
-    df_hist = df_hist.sort_values('Datetime')
+    # 2026-09-28: кешований CSV (mtime) замість повного читання на кожну
+    # неисполнену заявку — до 24 разів за одну звірку.
+    df_hist = dm.load_merged_csv_cached(['Datetime', 'Price', 'IDM_Price'])
     if as_of_date is not None:
         df_hist = df_hist[df_hist['Datetime'] < pd.to_datetime(as_of_date)]
 

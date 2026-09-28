@@ -76,7 +76,7 @@ class SaveActualSettlementRequest(BaseModel):
 
 
 @router.get("/margin", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
-async def get_margin(asset_id: str, date: str):
+def get_margin(asset_id: str, date: str):
     """Ручна маржа диспетчера на добу (bid_margin_overrides), або дефолт, якщо не збережено."""
     db = SessionLocal()
     try:
@@ -94,7 +94,7 @@ async def get_margin(asset_id: str, date: str):
 
 
 @router.post("/margin", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
-async def save_margin(req: MarginOverrideModel):
+def save_margin(req: MarginOverrideModel):
     """
     margin_uah заповнено — АБСОЛЮТНИЙ буфер (₴/МВт·год), пріоритетний над
     margin_pct (2026-09-08). Ендпоінт завжди зберігає ОБИДВА поля саме так,
@@ -121,7 +121,7 @@ async def save_margin(req: MarginOverrideModel):
 
 
 @router.delete("/margin", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
-async def clear_margin(asset_id: str, date: str):
+def clear_margin(asset_id: str, date: str):
     db = SessionLocal()
     try:
         target_dt = kyiv_to_utc(date, 0)
@@ -135,7 +135,7 @@ async def clear_margin(asset_id: str, date: str):
 
 
 @router.get("", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
-async def list_bids(asset_id: str, date: str):
+def list_bids(asset_id: str, date: str):
     """Список заявок (поданих і, якщо вже звірені, з фактом виконання) на добу."""
     db = SessionLocal()
     try:
@@ -159,7 +159,7 @@ async def list_bids(asset_id: str, date: str):
 
 
 @router.get("/action-summary", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
-async def get_action_summary(asset_id: str, date: str):
+def get_action_summary(asset_id: str, date: str):
     """Синтезований список дій диспетчеру на конкретну дату — тільки читання існуючих MarketBid."""
     db = SessionLocal()
     try:
@@ -173,7 +173,7 @@ async def get_action_summary(asset_id: str, date: str):
 
 
 @router.post("/generate", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
-async def generate_bids(req: GenerateBidsRequest):
+def generate_bids(req: GenerateBidsRequest):
     """
     Формує заявки РДН на req.date з уже порахованого MILP-графіка + прогнозу,
     зсунутих на маржу (ручну, якщо збережена, інакше дефолт). Диспетчер сам
@@ -195,7 +195,7 @@ async def generate_bids(req: GenerateBidsRequest):
 
 
 @router.post("/settle", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
-async def settle_bids(req: SettleBidsRequest):
+def settle_bids(req: SettleBidsRequest):
     """
     Звіряє подані заявки з РЕАЛЬНОЮ ціною РДН (спочатку локальна БД
     MarketPrice, як і /forecast/actual, інакше живий запит до oree.com.ua) —
@@ -221,11 +221,15 @@ async def settle_bids(req: SettleBidsRequest):
         actual_by_hour = {utc_to_kyiv(r.timestamp).hour: r.price_uah for r in rows}
 
         if len(actual_by_hour) != 24:
-            df_month = dm.fetch_oree_prices_for_month(day_start.month, day_start.year)
-            df_month_next = dm.fetch_oree_prices_for_month(day_end.month, day_end.year)
+            # Явна дія диспетчера одразу після публікації — завжди живий
+            # запит (без дискового кешу), але з короткими ретраями замість 7 з
+            # бекофом до ~2 хв; той самий місяць не фетчимо двічі (2026-09-28).
+            df_month = dm.fetch_oree_prices_for_month(day_start.month, day_start.year, max_attempts=3)
             import pandas as pd
-            if not df_month_next.empty:
-                df_month = pd.concat([df_month, df_month_next]).drop_duplicates(subset=['Datetime']) if not df_month.empty else df_month_next
+            if (day_end.year, day_end.month) != (day_start.year, day_start.month):
+                df_month_next = dm.fetch_oree_prices_for_month(day_end.month, day_end.year, max_attempts=3)
+                if not df_month_next.empty:
+                    df_month = pd.concat([df_month, df_month_next]).drop_duplicates(subset=['Datetime']) if not df_month.empty else df_month_next
             if not df_month.empty:
                 df_month['Datetime'] = pd.to_datetime(df_month['Datetime'])
                 df_day = df_month[
@@ -245,7 +249,7 @@ async def settle_bids(req: SettleBidsRequest):
 
 
 @router.post("/idm-fallback/acknowledge", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
-async def acknowledge_idm_fallback(req: AcknowledgeIdmFallbackRequest):
+def acknowledge_idm_fallback(req: AcknowledgeIdmFallbackRequest):
     """
     Диспетчер вручну підтверджує, що сам розібрався з ВДР-фолбеком для цієї
     години (подав сам через кабінет OREE, або свідомо вирішив нічого не
@@ -269,7 +273,7 @@ async def acknowledge_idm_fallback(req: AcknowledgeIdmFallbackRequest):
 
 
 @router.post("/idm-fallback/submit", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
-async def submit_idm_fallback(req: SubmitIdmFallbackRequest):
+def submit_idm_fallback(req: SubmitIdmFallbackRequest):
     """
     Диспетчер вручну подає ОДНУ ВДР-заявку (емуляція, MockOreeClient) —
     на відміну від автоматичної подачі за розкладом віртуального
@@ -292,7 +296,7 @@ async def submit_idm_fallback(req: SubmitIdmFallbackRequest):
 
 
 @router.post("/actual-settlement", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
-async def save_actual_settlement(req: SaveActualSettlementRequest):
+def save_actual_settlement(req: SaveActualSettlementRequest):
     """
     Зберігає реальні "Факт"-показники лічильника (заряд/розряд/власні
     потреби) і ціни небалансу БР, які диспетчер вводить вручну, коли

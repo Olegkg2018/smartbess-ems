@@ -8,6 +8,7 @@ from src.core.config import settings
 from src.database.session import SessionLocal
 from src.database.models import Asset, ChargeDischargePlan, PriceForecast, ForecastRun, ManualOverride, InitialSocOverride, BessTelemetry
 import src.modules.optimization_service.milp_model as opt
+import src.modules.market_data_service.data_manager as dm
 from src.modules.scada_service.soc_state import get_current_soc_fraction, previous_day_calculated_fraction
 from src.core.redis import set_job_status, get_job_status
 from src.core.security import RoleChecker
@@ -252,7 +253,7 @@ def run_optimization_background_job(
         db.close()
 
 @router.post("/run", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
-async def run_optimization(req: RunOptimizationRequest, background_tasks: BackgroundTasks):
+def run_optimization(req: RunOptimizationRequest, background_tasks: BackgroundTasks):
     job_id = f"job_opt_{uuid.uuid4().hex[:8]}"
     created_at = datetime.datetime.utcnow().isoformat() + "Z"
     job = {
@@ -290,7 +291,7 @@ class InitialSocOverrideModel(BaseModel):
     capacity_kwh: float
 
 @router.get("/initial-soc", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
-async def get_initial_soc(asset_id: str, date: str):
+def get_initial_soc(asset_id: str, date: str):
     """
     Показує, що РЕАЛЬНО буде використано як SoC на 00:00 target_date — ручне
     значення (якщо збережене), інакше останнє з SCADA-телеметрії, інакше
@@ -363,7 +364,7 @@ async def get_initial_soc(asset_id: str, date: str):
         db.close()
 
 @router.post("/initial-soc", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
-async def save_initial_soc(req: InitialSocOverrideModel):
+def save_initial_soc(req: InitialSocOverrideModel):
     db = SessionLocal()
     try:
         target_dt = kyiv_to_utc(req.date, 0)
@@ -381,7 +382,7 @@ async def save_initial_soc(req: InitialSocOverrideModel):
         db.close()
 
 @router.delete("/initial-soc", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
-async def clear_initial_soc(asset_id: str, date: str):
+def clear_initial_soc(asset_id: str, date: str):
     """Прибирає ручне значення — повертає розрахунок до автоматичного (SCADA-телеметрія / кінець попередньої доби / фолбек)."""
     db = SessionLocal()
     try:
@@ -396,7 +397,7 @@ async def clear_initial_soc(asset_id: str, date: str):
         db.close()
 
 @router.get("/plans", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
-async def get_plans(asset_id: str, date: str):
+def get_plans(asset_id: str, date: str):
     db = SessionLocal()
     try:
         target_dt = kyiv_to_utc(date, 0)
@@ -436,7 +437,7 @@ class SaveOverridesRequest(BaseModel):
     overrides: List[HourlyOverrideItem]
 
 @router.get("/manual-overrides", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
-async def get_manual_overrides(asset_id: str, date: str):
+def get_manual_overrides(asset_id: str, date: str):
     db = SessionLocal()
     try:
         # Реальна київська доба (CLAUDE.md п.26/27) — dt_start збігається з
@@ -479,8 +480,13 @@ async def get_manual_overrides(asset_id: str, date: str):
         day_prices = None
         try:
             if os.path.exists(csv_path):
-                df = pd.read_csv(csv_path)
-                df['Datetime'] = pd.to_datetime(df['Datetime'])
+                # 2026-09-28: кешований CSV (mtime) замість повного читання
+                # 36 колонок на кожне перемикання дати.
+                if csv_path == dm.MERGED_DATA_PATH:
+                    df = dm.load_merged_csv_cached(['Datetime', 'Price'])
+                else:
+                    df = pd.read_csv(csv_path, usecols=['Datetime', 'Price'])
+                    df['Datetime'] = pd.to_datetime(df['Datetime'])
                 df_day = df[(df['Datetime'] >= day_start) & (df['Datetime'] < day_end)].sort_values('Datetime')
                 if len(df_day) >= 24:
                     day_prices = df_day['Price'].tolist()
@@ -531,7 +537,7 @@ async def get_manual_overrides(asset_id: str, date: str):
         db.close()
 
 @router.post("/manual-overrides", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
-async def save_manual_overrides(req: SaveOverridesRequest):
+def save_manual_overrides(req: SaveOverridesRequest):
     db = SessionLocal()
     try:
         day_start, day_end = kyiv_day_bounds(req.date)
@@ -707,7 +713,7 @@ DEFAULT_TRANSFORMER_LOSS_PCT = 0.0
 DEFAULT_DELIVERY_TARIFF_UAH_PER_MWH = 0.0
 
 @router.get("/settings", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
-async def get_system_settings():
+def get_system_settings():
     """
     launch_date/osr/voltage_class/margin — з JSON (не мають окремого поля в
     Asset). capacity_kw/power_kw/efficiency_pct — З ТАБЛИЦІ Asset, тієї самої,
@@ -776,7 +782,7 @@ async def get_system_settings():
     return data
 
 @router.post("/settings", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
-async def save_system_settings(req: SystemSettingsModel):
+def save_system_settings(req: SystemSettingsModel):
     import json
     import os
     path = os.path.join(settings.DATA_DIR, "system_settings.json")
@@ -875,7 +881,7 @@ class DispatcherScheduleItem(BaseModel):
 
 
 @router.get("/dispatcher-schedule", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
-async def get_dispatcher_schedule():
+def get_dispatcher_schedule():
     """
     "Настроюваний сценарій віртуального диспетчера" (2026-08-26) — розклад
     (`virtual_dispatcher_schedule` у system_settings.json) + перелік
@@ -908,7 +914,7 @@ async def get_dispatcher_schedule():
 
 
 @router.post("/dispatcher-schedule", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
-async def save_dispatcher_schedule(req: List[DispatcherScheduleItem]):
+def save_dispatcher_schedule(req: List[DispatcherScheduleItem]):
     """Зберігає розклад і одразу перепланує APScheduler-джоби (живе
     застосування, без рестарту сервера — це лише зміна cron-часу)."""
     import json

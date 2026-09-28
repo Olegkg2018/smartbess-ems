@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Area, Bar, Line, ReferenceLine, ResponsiveContainer } from 'recharts';
 import { AlertTriangle, Radio, Pencil, CalendarClock, History, FileDown, Clock, CheckCircle2, XCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { useApp } from '../../state/AppContext';
@@ -12,12 +12,16 @@ import type { DayBidReportHour } from '../../api/client';
 // Той самий Kyiv wall-clock підхід, що вже є в BidGateCountdown.tsx —
 // не діляться спільним файлом (обидва прості й самодостатні), щоб не
 // плодити передчасну абстракцію заради однієї функції.
+// Форматер створюється ОДИН раз (2026-09-28): конструктор Intl.DateTimeFormat
+// дорогий, а kyivNow() раніше викликався на кожен рядок двох таблиць.
+const KYIV_PARTS_FORMAT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Europe/Kyiv', hour12: false,
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit',
+});
+
 function kyivNow(): Date {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Europe/Kyiv', hour12: false,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-  }).formatToParts(new Date());
+  const parts = KYIV_PARTS_FORMAT.formatToParts(new Date());
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '00';
   return new Date(`${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}`);
 }
@@ -45,9 +49,10 @@ export default function OptimizationSchedule() {
 
   // 2026-09-09: чи давно минула ця година, а ВДР-фолбек все ще "оцінка"
   // (не звірено реальною ціною) — див. IDM_ESTIMATE_STALE_MS вище.
+  const kyivNowMs = kyivNow().getTime();
   const isStaleIdmEstimate = (hour: number) => {
     const hourStart = kyivWallClock(targetDate, hour);
-    return kyivNow().getTime() - hourStart.getTime() > IDM_ESTIMATE_STALE_MS;
+    return kyivNowMs - hourStart.getTime() > IDM_ESTIMATE_STALE_MS;
   };
 
   // Чернетка скоригованої ціни заявки на ВДР, за годиною (2026-08-28) —
@@ -62,17 +67,25 @@ export default function OptimizationSchedule() {
   // таблиці "Ручне коригування заявок" нижче. null = ще не завантажено/
   // немає що показати (напр. заявки ще не сформовано).
   const [dayBidReport, setDayBidReport] = useState<DayBidReportHour[] | null>(null);
+  // Лічильник запитів (2026-09-28): при швидкому перемиканні дат повільна
+  // відповідь для СТАРОЇ дати могла прийти пізніше й перезаписати нову.
+  const dayBidReportRequestRef = useRef(0);
   const refreshDayBidReport = useCallback(async () => {
+    const requestId = ++dayBidReportRequestRef.current;
     if (!activeAssetId || !targetDate) { setDayBidReport(null); return; }
     try {
       const res = await api.fetchDayBidReport(activeRole, activeAssetId, targetDate);
-      setDayBidReport(res.hours);
+      if (requestId === dayBidReportRequestRef.current) setDayBidReport(res.hours);
     } catch {
-      setDayBidReport(null);
+      if (requestId === dayBidReportRequestRef.current) setDayBidReport(null);
     }
-  }, [activeRole, activeAssetId, targetDate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeAssetId, targetDate]);
   useEffect(() => { refreshDayBidReport(); }, [refreshDayBidReport]);
-  const dayBidReportByHour = new Map<number, DayBidReportHour>((dayBidReport || []).map((h) => [h.hour, h]));
+  const dayBidReportByHour = useMemo(
+    () => new Map<number, DayBidReportHour>((dayBidReport || []).map((h) => [h.hour, h])),
+    [dayBidReport],
+  );
 
   // Звірка з балансуючим ринком (БР) — "Факт"-показники лічильника і ціни
   // небалансу (2026-09-09), диспетчер вводить вручну, коли отримує

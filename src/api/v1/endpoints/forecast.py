@@ -118,7 +118,7 @@ def trigger_forecast_recompute_if_exists(db, background_tasks, date_str, target_
     return job_id
 
 @router.post("/run", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
-async def run_forecast(req: RunForecastRequest, background_tasks: BackgroundTasks):
+def run_forecast(req: RunForecastRequest, background_tasks: BackgroundTasks):
     job_id = f"job_fc_{uuid.uuid4().hex[:8]}"
     created_at = datetime.datetime.utcnow().isoformat() + "Z"
     job = {
@@ -147,7 +147,7 @@ async def run_forecast(req: RunForecastRequest, background_tasks: BackgroundTask
     }
 
 @router.get("/latest", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
-async def get_latest_forecast(target_date: Optional[str] = None):
+def get_latest_forecast(target_date: Optional[str] = None):
     """
     Без target_date — глобально останній прогноз (будь-яка дата). З
     target_date — прогноз саме для цієї доби (forecast_run_at == та північ).
@@ -179,7 +179,7 @@ async def get_latest_forecast(target_date: Optional[str] = None):
         db.close()
 
 @router.get("/actual", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
-async def get_actual_prices(target_date: str):
+def get_actual_prices(target_date: str):
     """
     Реальна опублікована ціна РДН з oree.com.ua для конкретної доби — щоб
     диспетчер бачив прогноз ПОРЯД із фактом на тому самому графіку, як тільки
@@ -234,10 +234,18 @@ async def get_actual_prices(target_date: str):
 
         # 2. "Якщо є" на oree.com.ua, але ще не потрапило в локальну БД —
         # живий запит до того самого джерела, яким тренується модель.
-        df_month = dm.fetch_oree_prices_for_month(day_start.month, day_start.year)
-        df_month_next = dm.fetch_oree_prices_for_month(day_end.month, day_end.year)
-        if not df_month_next.empty:
-            df_month = pd.concat([df_month, df_month_next]).drop_duplicates(subset=['Datetime'])
+        # 2026-09-28: доба далі ніж "завтра" (Kyiv) на oree ще фізично не
+        # торгувалась — не ходимо в мережу взагалі; той самий місяць не
+        # фетчимо двічі; request-path — короткі ретраї + 35-хв дисковий кеш
+        # (див. dm.REQUEST_PATH_OREE_KWARGS), бо раніше це блокувало API.
+        tomorrow_kyiv = (utc_to_kyiv(datetime.datetime.utcnow()).date() + datetime.timedelta(days=1))
+        if datetime.datetime.strptime(target_date, '%Y-%m-%d').date() > tomorrow_kyiv:
+            return {"date": target_date, "available": False, "partial": False, "hours": [], "actual_prices_uah": []}
+        df_month = dm.fetch_oree_prices_for_month(day_start.month, day_start.year, **dm.REQUEST_PATH_OREE_KWARGS)
+        if (day_end.year, day_end.month) != (day_start.year, day_start.month):
+            df_month_next = dm.fetch_oree_prices_for_month(day_end.month, day_end.year, **dm.REQUEST_PATH_OREE_KWARGS)
+            if not df_month_next.empty:
+                df_month = pd.concat([df_month, df_month_next]).drop_duplicates(subset=['Datetime'])
         if not df_month.empty:
             df_month['Datetime'] = pd.to_datetime(df_month['Datetime'])
             df_day = df_month[

@@ -3,6 +3,7 @@ import re
 import json
 import datetime
 import time
+import threading
 import requests
 import pandas as pd
 import numpy as np
@@ -40,11 +41,55 @@ def parse_prices_file(filepath):
     
     return melted[['Datetime', 'Price']].sort_values('Datetime').reset_index(drop=True)
 
-def fetch_oree_market_month(month, year, market='DAM', value_col='Price', cache_subdir='prices_cache'):
+_MERGED_CSV_CACHE = {'mtime': None, 'df': None}
+_MERGED_CSV_LOCK = threading.Lock()
+
+
+def load_merged_csv_cached(columns=None):
+    """
+    `historical_data_merged.csv` (~9 МБ, ~50k рядків) з кешем у пам'яті,
+    ключованим mtime файлу (2026-09-28, ревью продуктивності) — раніше
+    кілька HTTP-обробників читали й парсили його повністю на кожен запит
+    (`/manual-overrides`, оцінка ціни ВДР — до 24 разів за одну звірку).
+    Файл змінюється лише нічним/ранковим `sync_realtime_data`, тоді кеш
+    перечитується автоматично. `Datetime` вже розпарсений, рядки відсортовані.
+    Повертає КОПІЮ потрібних колонок — викликач може її мутувати.
+    """
+    mtime = os.path.getmtime(MERGED_DATA_PATH)
+    with _MERGED_CSV_LOCK:
+        if _MERGED_CSV_CACHE['df'] is None or _MERGED_CSV_CACHE['mtime'] != mtime:
+            df = pd.read_csv(MERGED_DATA_PATH)
+            df['Datetime'] = pd.to_datetime(df['Datetime'])
+            _MERGED_CSV_CACHE.update(mtime=mtime, df=df.sort_values('Datetime').reset_index(drop=True))
+        df = _MERGED_CSV_CACHE['df']
+    if columns is not None:
+        return df[[c for c in columns if c in df.columns]].copy()
+    return df.copy()
+
+
+_OREE_FETCH_LOCKS = {}
+_OREE_FETCH_LOCKS_GUARD = threading.Lock()
+
+
+def _oree_fetch_lock(cache_path):
+    with _OREE_FETCH_LOCKS_GUARD:
+        return _OREE_FETCH_LOCKS.setdefault(cache_path, threading.Lock())
+
+
+def fetch_oree_market_month(month, year, market='DAM', value_col='Price', cache_subdir='prices_cache',
+                            max_attempts=None, fresh_within_seconds=0):
     """
     Общий загрузчик почасовых цен с oree.com.ua (ДП «Оператор ринку»).
     Используется и для РДН (market='DAM'), и для ВДР/внутрішньодобового ринку
     (market='IDM') — обе таблицы имеют идентичную структуру (дата + 24 колонки годин).
+
+    2026-09-28 (ревью продуктивності): для HTTP-обробників (request-path)
+    передавати `max_attempts=2` і `fresh_within_seconds>0` — раніше кожен
+    перегляд "завтра" йшов живим запитом на oree з 7 ретраями й `time.sleep`
+    до ~115с, блокуючи весь API. `fresh_within_seconds` — поточний місяць
+    береться з дискового кешу, якщо файл оновлювався не раніше N секунд тому
+    (його й так переписує `run_intraday_price_sync` кожні 30 хв). Планувальник
+    викликає без цих параметрів — поведінка там не змінилась.
     """
     cache_path = os.path.join(DATA_DIR, cache_subdir, f"{market.lower()}_{year}_{month:02d}.csv")
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
@@ -52,13 +97,36 @@ def fetch_oree_market_month(month, year, market='DAM', value_col='Price', cache_
     now = datetime.datetime.now()
     is_current_month = (year == now.year) and (month == now.month)
 
-    if os.path.exists(cache_path) and not is_current_month:
+    def _read_cache():
+        df = pd.read_csv(cache_path)
+        df['Datetime'] = pd.to_datetime(df['Datetime'])
+        return df
+
+    def _cache_usable():
+        if not os.path.exists(cache_path):
+            return False
+        if not is_current_month:
+            return True
+        return fresh_within_seconds > 0 and (time.time() - os.path.getmtime(cache_path)) < fresh_within_seconds
+
+    if _cache_usable():
         try:
-            df = pd.read_csv(cache_path)
-            df['Datetime'] = pd.to_datetime(df['Datetime'])
-            return df
+            return _read_cache()
         except Exception as e:
             print(f"Error reading {market} cache: {e}")
+
+    # Паралельні запити того самого місяця не мають фетчити oree кожен сам —
+    # другий дочекається першого й прочитає щойно записаний кеш.
+    with _oree_fetch_lock(cache_path):
+        if _cache_usable():
+            try:
+                return _read_cache()
+            except Exception as e:
+                print(f"Error reading {market} cache: {e}")
+        return _fetch_oree_market_month_live(month, year, market, value_col, cache_path, max_attempts)
+
+
+def _fetch_oree_market_month_live(month, year, market, value_col, cache_path, max_attempts):
 
     url = "https://www.oree.com.ua/index.php/pricectr/data_view"
     headers = {
@@ -81,6 +149,8 @@ def fetch_oree_market_month(month, year, market='DAM', value_col='Price', cache_
     # такого рівня флакі-ефекту — `RETRY_BACKOFF_SECONDS` дає ще ~6 спроб
     # із розтягнутим бекофом, щоб хоч одна майже гарантовано пробилась.
     RETRY_BACKOFF_SECONDS = [2, 4, 8, 16, 25, 30, 30]
+    if max_attempts is not None:
+        RETRY_BACKOFF_SECONDS = RETRY_BACKOFF_SECONDS[:max(1, max_attempts)]
     for attempt in range(len(RETRY_BACKOFF_SECONDS)):
         try:
             r = requests.post(url, headers=headers, data=data, timeout=20)
@@ -151,8 +221,14 @@ def fetch_oree_market_month(month, year, market='DAM', value_col='Price', cache_
             pass
     return pd.DataFrame()
 
-def fetch_oree_prices_for_month(month, year):
-    return fetch_oree_market_month(month, year, market='DAM', value_col='Price', cache_subdir='prices_cache')
+def fetch_oree_prices_for_month(month, year, **kwargs):
+    return fetch_oree_market_month(month, year, market='DAM', value_col='Price', cache_subdir='prices_cache', **kwargs)
+
+
+# Параметри для виклику з HTTP-обробників (див. докстрінг fetch_oree_market_month).
+# 35 хв — трохи довше за інтервал run_intraday_price_sync (30 хв), який і
+# оновлює цей файл кешу; інакше половину часу запит все одно йшов би в мережу.
+REQUEST_PATH_OREE_KWARGS = {'max_attempts': 2, 'fresh_within_seconds': 35 * 60}
 
 def fetch_oree_prices_full_history():
     now = datetime.datetime.now()

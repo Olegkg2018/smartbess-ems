@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
 from src.core.security import RoleChecker
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.gzip import GZipMiddleware
 from contextlib import asynccontextmanager
 
 import src.modules.market_data_service.data_manager as dm
@@ -93,13 +94,31 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="SmartBESS Energy Arbitrage Platform", lifespan=lifespan)
 
+# 2026-09-28 (ревью продуктивності): JS-бандл (~800 КБ) віддавався без
+# стиснення й без Cache-Control — кожне відкриття/F5 качало його заново.
+# gzip стискає його ~в 3.5 рази, а великі JSON-відповіді API — ще сильніше.
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
 from src.api.v1.api import api_router
 app.include_router(api_router, prefix="/api/v1")
+
+
+class ImmutableStaticFiles(StaticFiles):
+    """Vite кладе хеш вмісту в ім'я файлу (`index-<hash>.js`) — файл за
+    конкретним URL ніколи не змінюється, тож браузер може кешувати його
+    назавжди. Нова збірка = нове ім'я, яке підхопить свіжий index.html."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code == 200:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
 
 # Serve React static assets if built
 react_dist_dir = os.path.join(os.path.dirname(__file__), "frontend", "dist")
 if os.path.exists(react_dist_dir):
-    app.mount("/assets", StaticFiles(directory=os.path.join(react_dist_dir, "assets")), name="assets")
+    app.mount("/assets", ImmutableStaticFiles(directory=os.path.join(react_dist_dir, "assets")), name="assets")
 
 # Ensure data directory exists
 os.makedirs(dm.DATA_DIR, exist_ok=True)
@@ -108,7 +127,9 @@ def _serve_index() -> HTMLResponse:
     react_index = os.path.join(os.path.dirname(__file__), "frontend", "dist", "index.html")
     if os.path.exists(react_index):
         with open(react_index, "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read(), status_code=200)
+            # index.html посилається на хешовані бандли — його треба
+            # перевіряти щоразу, інакше після деплою браузер тримав би старий.
+            return HTMLResponse(content=f.read(), status_code=200, headers={"Cache-Control": "no-cache"})
 
     index_path = os.path.join(os.path.dirname(__file__), "templates", "index.html")
     if not os.path.exists(index_path):
@@ -129,16 +150,16 @@ async def get_metrics():
     return JSONResponse(status_code=404, content={"error": "Metrics not available yet. Model must be trained."})
 
 @app.post("/api/retrain", dependencies=[Depends(RoleChecker(["Manager", "Admin"]))])
-async def retrain():
+def retrain():
     """
     НЕ ВИКЛИКАТИ вручну на VPS без потреби. Живий тест 2026-08-04 показав,
     що пам'яті контейнеру тепер вистачає з запасом (пік train_models() у
     контейнері ≈598MB з ліміту 900m, ≈300MB вільно) — проблема, через яку
     цей ендпоінт раніше вважався небезпечним, знята. Але цей handler
-    синхронний (train_models() виконується прямо в async-функції, без
-    run_in_executor) — виклик все одно блокує весь event loop FastAPI
-    (а значить і живий диспетчерський API) на час навчання (≈132с за тим
-    самим живим заміром). Тому для регулярного перенавчання тепер є
+    синхронний. До 2026-09-28 він був `async def` і блокував весь event
+    loop FastAPI на час навчання (≈132с); тепер звичайний `def` —
+    FastAPI виконує його в threadpool, API лишається живим, але навчання
+    все одно ділить CPU з іншими запитами. Тому для регулярного перенавчання тепер є
     `run_nightly_model_retrain` в `src/tasks/scheduler.py` (щоночі о 02:00,
     через окремий потік `BackgroundScheduler` — не блокує API). Цей
     ендпоінт лишається для ручного одноразового перенавчання поза піковим
@@ -159,7 +180,7 @@ async def retrain():
         })
 
 @app.get("/api/db_status", dependencies=[Depends(RoleChecker(["Admin", "Manager"]))])
-async def db_status():
+def db_status():
     try:
         report = dm.verify_data_completeness()
         

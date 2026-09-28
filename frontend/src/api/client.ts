@@ -8,22 +8,33 @@ export type UserRole = 'Viewer' | 'Operator' | 'Manager' | 'Admin';
 const MOCK_TOKEN_TTL_MS = 10 * 60 * 1000;
 const mockTokenCache = new Map<UserRole, { token: string; obtainedAt: number }>();
 
+// 2026-09-28 (ревью продуктивності): при порожньому кеші (старт, кожні
+// 10 хв) ~10 паралельних API-викликів раніше КОЖЕН окремо робив
+// POST /auth/mock-login — тепер вони чекають один спільний запит.
+const inflightTokenRequests = new Map<UserRole, Promise<string>>();
+
 async function getAuthToken(role: UserRole): Promise<string> {
   const cached = mockTokenCache.get(role);
   if (cached && Date.now() - cached.obtainedAt < MOCK_TOKEN_TTL_MS) {
     return cached.token;
   }
-  const res = await fetch('/api/v1/auth/mock-login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ role }),
-  });
-  if (!res.ok) {
-    throw new Error(`Не вдалося отримати токен для ролі ${role}: ${res.status} ${res.statusText}`);
-  }
-  const { token } = await res.json();
-  mockTokenCache.set(role, { token, obtainedAt: Date.now() });
-  return token;
+  const inflight = inflightTokenRequests.get(role);
+  if (inflight) return inflight;
+  const request = (async () => {
+    const res = await fetch('/api/v1/auth/mock-login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role }),
+    });
+    if (!res.ok) {
+      throw new Error(`Не вдалося отримати токен для ролі ${role}: ${res.status} ${res.statusText}`);
+    }
+    const { token } = await res.json();
+    mockTokenCache.set(role, { token, obtainedAt: Date.now() });
+    return token as string;
+  })().finally(() => inflightTokenRequests.delete(role));
+  inflightTokenRequests.set(role, request);
+  return request;
 }
 
 async function authFetch(role: UserRole, url: string, options: RequestInit = {}): Promise<Response> {
@@ -100,8 +111,8 @@ export interface PriceBand {
 }
 
 /** P10/P90 conformal-калібрований інтервал невизначеності для конкретної дати прогнозу. */
-export async function fetchLatestForecastBand(role: UserRole, targetDate: string): Promise<PriceBand> {
-  return authJson<PriceBand>(role, `/api/v1/forecast/latest?target_date=${targetDate}`);
+export async function fetchLatestForecastBand(role: UserRole, targetDate: string, signal?: AbortSignal): Promise<PriceBand> {
+  return authJson<PriceBand>(role, `/api/v1/forecast/latest?target_date=${targetDate}`, { signal });
 }
 
 export interface ActualPrices {
@@ -114,8 +125,8 @@ export interface ActualPrices {
 }
 
 /** Реальна опублікована ціна РДН з oree.com.ua на цю дату, якщо вже є. */
-export async function fetchActualPrices(role: UserRole, targetDate: string): Promise<ActualPrices> {
-  return authJson<ActualPrices>(role, `/api/v1/forecast/actual?target_date=${targetDate}`);
+export async function fetchActualPrices(role: UserRole, targetDate: string, signal?: AbortSignal): Promise<ActualPrices> {
+  return authJson<ActualPrices>(role, `/api/v1/forecast/actual?target_date=${targetDate}`, { signal });
 }
 
 export async function runOptimizationJob(
@@ -143,10 +154,11 @@ export async function runOptimizationJob(
   return pollJob(role, created.job_id, { timeoutMs: 90000 });
 }
 
-export async function fetchManualOverrides(role: UserRole, assetId: string, date: string) {
+export async function fetchManualOverrides(role: UserRole, assetId: string, date: string, signal?: AbortSignal) {
   const data = await authJson<{ overrides: any[] }>(
     role,
-    `/api/v1/optimization/manual-overrides?asset_id=${assetId}&date=${date}`
+    `/api/v1/optimization/manual-overrides?asset_id=${assetId}&date=${date}`,
+    { signal }
   );
   return data.overrides;
 }
@@ -198,8 +210,8 @@ export interface GenerationAdjustment {
 }
 
 /** Ручна корекція доступності генерації (АЕС/ГЕС/СЕС/ВЕС) на дату — 100% скрізь = без відхилень. */
-export async function fetchGenerationAdjustment(role: UserRole, date: string): Promise<GenerationAdjustment> {
-  return authJson<GenerationAdjustment>(role, `/api/v1/generation-adjustments?date=${date}`);
+export async function fetchGenerationAdjustment(role: UserRole, date: string, signal?: AbortSignal): Promise<GenerationAdjustment> {
+  return authJson<GenerationAdjustment>(role, `/api/v1/generation-adjustments?date=${date}`, { signal });
 }
 
 export async function saveGenerationAdjustment(role: UserRole, payload: GenerationAdjustment) {
@@ -218,8 +230,8 @@ export interface PriceShift {
 }
 
 /** Ручний відсотковий зсув прогнозу ціни на дату (post-inference, застосовується одноразово до всіх 24 годин) — 0% = без відхилень. */
-export async function fetchPriceShift(role: UserRole, date: string): Promise<PriceShift> {
-  return authJson<PriceShift>(role, `/api/v1/price-shift?date=${date}`);
+export async function fetchPriceShift(role: UserRole, date: string, signal?: AbortSignal): Promise<PriceShift> {
+  return authJson<PriceShift>(role, `/api/v1/price-shift?date=${date}`, { signal });
 }
 
 export async function savePriceShift(role: UserRole, payload: PriceShift) {
@@ -242,8 +254,8 @@ export interface InitialSoc {
 }
 
 /** SoC на 00:00 target_date: ручне значення > SCADA-телеметрія > розрахунок з кінця попередньої доби > фолбек 20%. */
-export async function fetchInitialSoc(role: UserRole, assetId: string, date: string): Promise<InitialSoc> {
-  return authJson<InitialSoc>(role, `/api/v1/optimization/initial-soc?asset_id=${assetId}&date=${date}`);
+export async function fetchInitialSoc(role: UserRole, assetId: string, date: string, signal?: AbortSignal): Promise<InitialSoc> {
+  return authJson<InitialSoc>(role, `/api/v1/optimization/initial-soc?asset_id=${assetId}&date=${date}`, { signal });
 }
 
 export async function saveInitialSoc(role: UserRole, assetId: string, date: string, capacityKwh: number) {
@@ -271,8 +283,8 @@ export interface BidMargin {
 
 /** Маржа заявки РДН на добу: sell = прогноз*(1-маржа), buy = прогноз*(1+маржа) — керує ймовірністю виконання.
  *  Або, якщо marginUah задано, sell = прогноз-буфер, buy = прогноз+буфер (АБСОЛЮТНИЙ режим, пріоритетний). */
-export async function fetchBidMargin(role: UserRole, assetId: string, date: string): Promise<BidMargin> {
-  return authJson<BidMargin>(role, `/api/v1/bids/margin?asset_id=${assetId}&date=${date}`);
+export async function fetchBidMargin(role: UserRole, assetId: string, date: string, signal?: AbortSignal): Promise<BidMargin> {
+  return authJson<BidMargin>(role, `/api/v1/bids/margin?asset_id=${assetId}&date=${date}`, { signal });
 }
 
 // marginUah=null — звичайний відсотковий режим (стара поведінка); задано —
@@ -350,8 +362,8 @@ export interface MarketBid {
   imbalance_sell_revenue_uah: number | null;
 }
 
-export async function fetchBids(role: UserRole, assetId: string, date: string): Promise<{ date: string; asset_id: string; bids: MarketBid[] }> {
-  return authJson(role, `/api/v1/bids?asset_id=${assetId}&date=${date}`);
+export async function fetchBids(role: UserRole, assetId: string, date: string, signal?: AbortSignal): Promise<{ date: string; asset_id: string; bids: MarketBid[] }> {
+  return authJson(role, `/api/v1/bids?asset_id=${assetId}&date=${date}`, { signal });
 }
 
 export interface GenerateBidsResult {
@@ -452,8 +464,8 @@ export interface ActionSummary {
   actions: ActionItem[];
 }
 
-export async function fetchActionSummary(role: UserRole, assetId: string, date: string): Promise<ActionSummary> {
-  return authJson(role, `/api/v1/bids/action-summary?asset_id=${assetId}&date=${date}`);
+export async function fetchActionSummary(role: UserRole, assetId: string, date: string, signal?: AbortSignal): Promise<ActionSummary> {
+  return authJson(role, `/api/v1/bids/action-summary?asset_id=${assetId}&date=${date}`, { signal });
 }
 
 export interface GridStress {
@@ -474,8 +486,8 @@ export interface GridStress {
  * Telegram, якщо опублікований, інакше ручна оцінка диспетчера, інакше
  * відсутній. Єдиного структурованого національного API по ГПВ немає.
  */
-export async function fetchGridStress(role: UserRole, date: string): Promise<GridStress> {
-  return authJson<GridStress>(role, `/api/v1/grid-stress?date=${date}`);
+export async function fetchGridStress(role: UserRole, date: string, signal?: AbortSignal): Promise<GridStress> {
+  return authJson<GridStress>(role, `/api/v1/grid-stress?date=${date}`, { signal });
 }
 
 export async function saveGridStress(role: UserRole, date: string, forcedRestrictionQueues: number | null, note: string | null) {
@@ -604,8 +616,8 @@ export interface DayBidReportHour {
   full_profit_uah: number | null;
 }
 
-export async function fetchDayBidReport(role: UserRole, assetId: string, date: string): Promise<{ date: string; asset_id: string; hours: DayBidReportHour[] }> {
-  return authJson(role, `/api/v1/reports/day-bid-report?asset_id=${assetId}&date=${date}`);
+export async function fetchDayBidReport(role: UserRole, assetId: string, date: string, signal?: AbortSignal): Promise<{ date: string; asset_id: string; hours: DayBidReportHour[] }> {
+  return authJson(role, `/api/v1/reports/day-bid-report?asset_id=${assetId}&date=${date}`, { signal });
 }
 
 /** Одна година для saveActualSettlement — усі поля, крім hour, опціональні;

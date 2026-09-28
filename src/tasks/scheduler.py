@@ -307,7 +307,7 @@ def run_intraday_price_sync():
                 print(f"[{datetime.datetime.now()}] Intraday price sync (DAM): recovered after {state['dam_consecutive_failures']} consecutive fetch failures.")
             state['dam_consecutive_failures'] = 0
             if result.get('n_new'):
-                print(f"[{datetime.datetime.now()}] Intraday price sync: {result['n_new']} new MarketPrice rows for today.")
+                print(f"[{datetime.datetime.now()}] Intraday price sync: {result['n_new']} new MarketPrice rows for today+tomorrow.")
         else:
             state['dam_consecutive_failures'] = state.get('dam_consecutive_failures', 0) + 1
             print(f"Warning: intraday price sync (DAM) fetch failed ({state['dam_consecutive_failures']} consecutive cycles) — oree.com.ua did not return valid data.")

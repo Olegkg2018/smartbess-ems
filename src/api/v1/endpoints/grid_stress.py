@@ -18,7 +18,7 @@ class GridStressOverrideModel(BaseModel):
     note: Optional[str] = None
 
 @router.get("", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
-async def get_grid_stress(date: str):
+def get_grid_stress(date: str):
     """
     Показує, що РЕАЛЬНО відомо про обсяг ГПВ на дату — автоматичний сигнал з
     Telegram-постів Укренерго (якщо за цей день був опублікований пост із
@@ -62,7 +62,7 @@ async def get_grid_stress(date: str):
         db.close()
 
 @router.post("", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
-async def save_grid_stress(req: GridStressOverrideModel):
+def save_grid_stress(req: GridStressOverrideModel):
     db = SessionLocal()
     try:
         target_dt = kyiv_to_utc(req.date, 0)
@@ -78,7 +78,7 @@ async def save_grid_stress(req: GridStressOverrideModel):
         db.close()
 
 @router.delete("", dependencies=[Depends(RoleChecker(["Operator", "Manager", "Admin"]))])
-async def clear_grid_stress(date: str):
+def clear_grid_stress(date: str):
     db = SessionLocal()
     try:
         target_dt = kyiv_to_utc(date, 0)

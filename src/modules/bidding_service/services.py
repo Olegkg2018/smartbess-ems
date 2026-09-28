@@ -43,6 +43,7 @@ def clamp_bid_price_to_oree_bounds(raw_price_uah: float) -> tuple:
 # до всього обсягу купівлі. Диспетчер може ввести реальне число з
 # рахунку/договору в будь-який момент через Settings.
 DEFAULT_DELIVERY_TARIFF_UAH_PER_MWH = 0.0
+_TARIFF_SETTINGS_CACHE = {}
 
 
 def get_delivery_tariff_uah_per_mwh() -> float:
@@ -57,8 +58,15 @@ def get_delivery_tariff_uah_per_mwh() -> float:
     path = os.path.join(settings.DATA_DIR, "system_settings.json")
     if os.path.exists(path):
         try:
-            with open(path, "r") as f:
-                val = json.load(f).get("delivery_tariff_uah_per_mwh")
+            # Кеш за mtime (2026-09-28): функцію кличуть на кожну заявку/
+            # годину звіту — до тисяч разів за експорт періоду. Зміна тарифу
+            # в Settings змінює mtime, тож підхоплюється одразу, як і раніше.
+            mtime = os.path.getmtime(path)
+            if _TARIFF_SETTINGS_CACHE.get('mtime') != mtime:
+                with open(path, "r") as f:
+                    val = json.load(f).get("delivery_tariff_uah_per_mwh")
+                _TARIFF_SETTINGS_CACHE.update(mtime=mtime, val=val)
+            val = _TARIFF_SETTINGS_CACHE['val']
             if val is not None:
                 return float(val)
         except Exception:

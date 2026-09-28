@@ -229,21 +229,7 @@ class ReportingService:
             except Exception:
                 cached_days = {}
                 
-        # 4. Load historical prices from CSV
-        csv_path = os.path.join(settings.DATA_DIR, "historical_data_merged.csv")
-        if not os.path.exists(csv_path):
-            csv_path = "/home/oleg/agy_energo/data/historical_data_merged.csv"
-            
-        try:
-            from src.core.time_utils import utc_to_kyiv, kyiv_day_bounds
-            df = pd.read_csv(csv_path)
-            df['Datetime'] = pd.to_datetime(df['Datetime'])
-            # Реальна київська дата (не наївна UTC — CLAUDE.md п.26/27),
-            # інакше "доба" тут — суміш хвоста доби D і голови доби D+1.
-            df['Date'] = df['Datetime'].apply(lambda dt: utc_to_kyiv(dt).date())
-        except Exception as e:
-            print(f"Error loading historical CSV for reporting: {e}")
-            df = pd.DataFrame(columns=['Date', 'Datetime', 'Price'])
+        from src.core.time_utils import utc_to_kyiv, kyiv_day_bounds
 
         # Find which dates in range [start_date, today] need calculation
         dates_to_calculate = []
@@ -256,7 +242,29 @@ class ReportingService:
             if date_str not in cached_days or 'traded_volume_mwh' not in cached_days[date_str]:
                 dates_to_calculate.append(curr)
             curr += datetime.timedelta(days=1)
-            
+
+        # 4. Load historical prices from CSV — ЛИШЕ якщо є нові доби для
+        # розрахунку (2026-09-28): раніше повний CSV (~50k рядків) читався й
+        # конвертувався построково `.apply(utc_to_kyiv)` (~1.4с) на КОЖЕН
+        # запит, навіть коли всі доби вже в кеші. Київська дата/година тепер
+        # рахуються векторно (той самий результат, що й utc_to_kyiv).
+        df = pd.DataFrame(columns=['Date', 'Datetime', 'Price', 'KyivHour'])
+        if dates_to_calculate:
+            csv_path = os.path.join(settings.DATA_DIR, "historical_data_merged.csv")
+            if not os.path.exists(csv_path):
+                csv_path = "/home/oleg/agy_energo/data/historical_data_merged.csv"
+            try:
+                df = pd.read_csv(csv_path, usecols=['Datetime', 'Price'])
+                df['Datetime'] = pd.to_datetime(df['Datetime'])
+                # Реальна київська дата (не наївна UTC — CLAUDE.md п.26/27),
+                # інакше "доба" тут — суміш хвоста доби D і голови доби D+1.
+                kyiv = df['Datetime'].dt.tz_localize('UTC').dt.tz_convert('Europe/Kyiv')
+                df['Date'] = kyiv.dt.date
+                df['KyivHour'] = kyiv.dt.hour
+            except Exception as e:
+                print(f"Error loading historical CSV for reporting: {e}")
+                df = pd.DataFrame(columns=['Date', 'Datetime', 'Price', 'KyivHour'])
+
         # Calculate new days
         if dates_to_calculate and not df.empty:
             for d in dates_to_calculate:
@@ -363,7 +371,7 @@ class ReportingService:
                         # UTC, тож звичайна `.dt.hour` не збігається з
                         # київською годиною ціни РДН.
                         hour = utc_to_kyiv(tel.timestamp).hour
-                        price_rows = df_day[df_day['Datetime'].apply(lambda dt: utc_to_kyiv(dt).hour == hour)]
+                        price_rows = df_day[df_day['KyivHour'] == hour]
                         price_uah = price_rows['Price'].values[0] if not price_rows.empty else 3000.0
                         price_kwh = price_uah / 1000.0
 

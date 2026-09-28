@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   TrendingUp, Cpu, BatteryCharging, DollarSign, ShieldAlert,
@@ -124,7 +125,9 @@ export default function AppShell({ workspace }: { workspace: 'dispatcher' | 'dir
         </header>
 
         <section className="page-content">
-          <Outlet />
+          <Suspense fallback={<div className="glass-card" style={{ padding: '20px' }}>Завантаження…</div>}>
+            <Outlet />
+          </Suspense>
         </section>
       </main>
     </div>

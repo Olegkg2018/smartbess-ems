@@ -9,6 +9,7 @@ from src.database.models import Asset, ChargeDischargePlan, BessTelemetry, Price
 from src.modules.reporting_service.services import ReportingService
 from src.modules.reporting_service.forecast_accuracy import compute_rolling_accuracy, get_profit_capture_ratio
 from src.core.security import RoleChecker
+import src.modules.market_data_service.data_manager as dm
 from src.api.v1.endpoints.optimization import get_manual_overrides
 from src.api.v1.endpoints.forecast import get_actual_prices
 from src.core.time_utils import kyiv_to_utc, kyiv_day_bounds, utc_to_kyiv
@@ -109,7 +110,7 @@ def _bid_hour_financials(bid: MarketBid, ac, asset: Asset) -> dict:
     }
 
 @router.get("/executive-summary", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
-async def get_executive_summary(
+def get_executive_summary(
     asset_id: str = Query(..., description="UUID of the BESS asset"),
     period: str = Query("month", description="One of day, week, month, year")
 ):
@@ -123,7 +124,7 @@ async def get_executive_summary(
         db.close()
 
 @router.get("/forecast-accuracy", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
-async def get_forecast_accuracy(
+def get_forecast_accuracy(
     days: int = Query(30, description="Скільки останніх днів порівняти прогноз/факт")
 ):
     db = SessionLocal()
@@ -137,7 +138,7 @@ async def get_forecast_accuracy(
         db.close()
 
 @router.get("/market-conditions", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
-async def get_market_conditions():
+def get_market_conditions():
     """
     Реальний операційний знімок "на зараз" для панелі диспетчера: остання
     зібрана ціна газу, транскордонний нетто-експорт (ENTSO-E) та keyword-сигнал
@@ -161,8 +162,8 @@ async def get_market_conditions():
     csv_path = os.path.join(settings.DATA_DIR, "historical_data_merged.csv")
     if os.path.exists(csv_path):
         try:
-            df = pd.read_csv(csv_path, usecols=["Datetime", "Gas_Price_EUR_MWh", "Grid_Net_Export_MW"])
-            df["Datetime"] = pd.to_datetime(df["Datetime"])
+            # 2026-09-28: кешований CSV (mtime) замість читання на кожен запит.
+            df = dm.load_merged_csv_cached(["Datetime", "Gas_Price_EUR_MWh", "Grid_Net_Export_MW"])
 
             gas_series = df.dropna(subset=["Gas_Price_EUR_MWh"])
             if not gas_series.empty:
@@ -188,7 +189,7 @@ async def get_market_conditions():
     return result
 
 @router.get("/export-day", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
-async def export_day_excel(asset_id: str, date: str):
+def export_day_excel(asset_id: str, date: str):
     """
     Погодинний Excel-звіт за добу: прогноз ціни, факт ціни (якщо є),
     заряд/розряд і ціна виконання (реальний заявочний профіль — та сама
@@ -233,13 +234,13 @@ async def export_day_excel(asset_id: str, date: str):
         ).order_by(PriceForecast.timestamp).all()
         forecast_by_hour = {utc_to_kyiv(f.timestamp).hour: f.predicted_price_uah for f in forecasts}
 
-        dispatch = await get_manual_overrides(asset_id=asset_id, date=date)
+        dispatch = get_manual_overrides(asset_id=asset_id, date=date)
         dispatch_by_hour = {o["hour"]: o for o in dispatch["overrides"]}
         power_limit_mw = asset.power_mw
     finally:
         db.close()
 
-    actual = await get_actual_prices(target_date=date)
+    actual = get_actual_prices(target_date=date)
     actual_by_hour = (
         dict(zip(actual["hours"], actual["actual_prices_uah"])) if actual.get("available") else {}
     )
@@ -336,7 +337,7 @@ MAX_EXPORT_FORECAST_PERIOD_DAYS = 92  # ~квартал — запобігає �
 
 
 @router.get("/export-forecast-period", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
-async def export_forecast_period_excel(asset_id: str, start_date: str, end_date: str):
+def export_forecast_period_excel(asset_id: str, start_date: str, end_date: str):
     """
     Погодинний Excel-звіт по прогнозу ціни ТА заявках РДН (сторінка
     "Neural Price Predictor") за ДОВІЛЬНИЙ період — той самий стиль/
@@ -493,7 +494,7 @@ async def export_forecast_period_excel(asset_id: str, start_date: str, end_date:
     for date_str in dates:
         forecast_by_hour = rows_by_date[date_str]
         bid_by_hour = bids_by_date[date_str]
-        actual = await get_actual_prices(target_date=date_str)
+        actual = get_actual_prices(target_date=date_str)
         actual_by_hour = (
             dict(zip(actual["hours"], actual["actual_prices_uah"])) if actual.get("available") else {}
         )
@@ -607,7 +608,7 @@ async def export_forecast_period_excel(asset_id: str, start_date: str, end_date:
 
 
 @router.get("/day-bid-report", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
-async def get_day_bid_report(asset_id: str, date: str):
+def get_day_bid_report(asset_id: str, date: str):
     """
     Погодинний звіт прогноз+заявки за ОДНУ добу як JSON (не .xlsx) — та сама
     точка правди (_bid_hour_financials), що й export_forecast_period_excel
@@ -647,7 +648,7 @@ async def get_day_bid_report(asset_id: str, date: str):
     finally:
         db.close()
 
-    actual = await get_actual_prices(target_date=date)
+    actual = get_actual_prices(target_date=date)
     actual_by_hour = (
         dict(zip(actual["hours"], actual["actual_prices_uah"])) if actual.get("available") else {}
     )

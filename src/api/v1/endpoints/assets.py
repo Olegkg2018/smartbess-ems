@@ -16,7 +16,7 @@ SCADA_TELEMETRY_FRESHNESS_SECONDS = 120
 
 
 @router.get("", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
-async def list_assets():
+def list_assets():
     """Реальний список активів з БД — фронтенд більше не хардкодить asset_id."""
     db = SessionLocal()
     try:
@@ -37,7 +37,7 @@ async def list_assets():
 
 
 @router.get("/{asset_id}/scada-status", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
-async def get_scada_status(asset_id: str):
+def get_scada_status(asset_id: str):
     """
     Реальний стан SCADA-телеметрії — раніше фронтенд показував захардкоджені
     числа (20.0%, -150.0 кВт, 24.8°C, 99.85%) і статичний бейдж "ONLINE"

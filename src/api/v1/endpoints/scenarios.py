@@ -18,7 +18,7 @@ class PaybackRequest(BaseModel):
     pessimistic_risk_factor: Optional[float] = 0.20 # 20% drop in revenue
 
 @router.post("/payback", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
-async def calculate_payback(req: PaybackRequest):
+def calculate_payback(req: PaybackRequest):
     if req.capex_uah <= 0 or req.yearly_revenue_base_uah <= 0:
         raise HTTPException(status_code=400, detail="CAPEX and revenue must be positive numbers")
 

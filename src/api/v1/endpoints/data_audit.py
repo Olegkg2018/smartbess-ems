@@ -40,7 +40,7 @@ COLUMN_GROUPS = {
 
 
 @router.get("", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
-async def get_data_audit(date: str):
+def get_data_audit(date: str):
     """
     Довідка "що реально було використано в розрахунку за цю дату" — для
     тестування/діагностики, коли є підозра, що якісь дані не приходять або

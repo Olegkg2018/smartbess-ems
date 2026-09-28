@@ -5,7 +5,7 @@ from src.core.security import RoleChecker
 router = APIRouter()
 
 @router.get("/{job_id}", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
-async def get_job_status_endpoint(job_id: str):
+def get_job_status_endpoint(job_id: str):
     job = get_job_status(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
