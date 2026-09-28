@@ -1,23 +1,27 @@
-fastapi
-uvicorn
-pandas
-numpy
-xgboost
-lightgbm
-scikit-learn
-requests
-beautifulsoup4
-pulp
-sqlalchemy
-psycopg2-binary
-apscheduler
-pymodbus
-pyserial
-pydantic-settings
-python-dotenv
-numpy-financial
-httpx
-redis
-pyjwt
-cryptography
-openpyxl
+# Версії закріплені 2026-09-28: без пінів очистка build-кешу Docker
+# підтягнула SQLAlchemy 2.1 (дефолтний драйвер postgresql:// став psycopg3)
+# і контейнер впав на старті. Набір = локальне середовище, на якому код
+# перевірено (pytest + побайтове порівняння відповідей API). Оновлювати свідомо.
+fastapi==0.139.0
+uvicorn==0.51.0
+pandas==3.0.3
+numpy==2.4.6
+xgboost==3.2.0
+lightgbm==4.6.0
+scikit-learn==1.9.0
+requests==2.34.2
+beautifulsoup4==4.15.0
+pulp==3.3.2
+sqlalchemy==2.0.51
+psycopg2-binary==2.9.12
+apscheduler==3.11.3
+pymodbus==3.13.1
+pyserial==3.5
+pydantic-settings==2.14.2
+python-dotenv==1.2.2
+numpy-financial==1.0.0
+httpx==0.28.1
+redis==8.0.1
+pyjwt==2.13.0
+cryptography==49.0.0
+openpyxl==3.1.5
