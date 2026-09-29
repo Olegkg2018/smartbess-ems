@@ -179,6 +179,18 @@ export async function fetchSystemSettings(role: UserRole) {
   return authJson<any>(role, '/api/v1/optimization/settings');
 }
 
+export interface DeviceProfile {
+  key: string;
+  label: string;
+  source: string;
+  notes: string;
+}
+
+/** Профілі обладнання BESS (scada_service/device_profiles.py) — для Settings. */
+export async function fetchDeviceProfiles(role: UserRole): Promise<{ profiles: DeviceProfile[]; default: string }> {
+  return authJson(role, '/api/v1/optimization/device-profiles');
+}
+
 export async function saveSystemSettings(role: UserRole, payload: any) {
   return authJson(role, '/api/v1/optimization/settings', {
     method: 'POST',

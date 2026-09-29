@@ -640,6 +640,7 @@ class SystemSettingsModel(BaseModel):
     bess_serial_stopbits: Optional[int] = None
     bess_serial_bytesize: Optional[int] = None
     bess_modbus_unit_id: Optional[int] = None
+    bess_device_profile: Optional[str] = None
 
 # Довідкові потужності для перетворення "% робочих АЕС/ГЕС" у МВт-дельту
 # (generation_adjustments.py). Це НЕ вигадка — реальні опубліковані дані:
@@ -686,6 +687,10 @@ DEFAULT_BESS_SERIAL_PARITY = "N"
 DEFAULT_BESS_SERIAL_STOPBITS = 1
 DEFAULT_BESS_SERIAL_BYTESIZE = 8
 DEFAULT_BESS_MODBUS_UNIT_ID = 1
+# Профіль обладнання (scada_service/device_profiles.py, 2026-09-29) — як
+# читати телеметрію/віддавати команду конкретному BESS. У режимі simulator
+# ігнорується (симулятор завжди говорить власною картою).
+DEFAULT_BESS_DEVICE_PROFILE = 'generic_smartbess'
 
 # Акциз (3.2%) і втрати трансформаторного обладнання (1.5-2.5%) — з
 # зовнішнього ревью 2026-08-24 (CLAUDE.md п.32). Застосовність до цієї
@@ -749,13 +754,14 @@ def get_system_settings():
         "bess_serial_stopbits": DEFAULT_BESS_SERIAL_STOPBITS,
         "bess_serial_bytesize": DEFAULT_BESS_SERIAL_BYTESIZE,
         "bess_modbus_unit_id": DEFAULT_BESS_MODBUS_UNIT_ID,
+        "bess_device_profile": DEFAULT_BESS_DEVICE_PROFILE,
     }
 
     if os.path.exists(path):
         try:
             with open(path, "r") as f:
                 saved = json.load(f)
-                for key in ("launch_date", "osr", "voltage_class", "margin", "nuclear_reference_capacity_mw", "hydro_reference_capacity_mw", "baseload_passthrough_ratio", "bid_reminder_telegram_enabled", "auto_dispatch_enabled", "excise_duty_pct", "transformer_loss_pct", "delivery_tariff_uah_per_mwh", "bess_connection_type", "bess_tcp_host", "bess_tcp_port", "bess_serial_port", "bess_serial_baudrate", "bess_serial_parity", "bess_serial_stopbits", "bess_serial_bytesize", "bess_modbus_unit_id"):
+                for key in ("launch_date", "osr", "voltage_class", "margin", "nuclear_reference_capacity_mw", "hydro_reference_capacity_mw", "baseload_passthrough_ratio", "bid_reminder_telegram_enabled", "auto_dispatch_enabled", "excise_duty_pct", "transformer_loss_pct", "delivery_tariff_uah_per_mwh", "bess_connection_type", "bess_tcp_host", "bess_tcp_port", "bess_serial_port", "bess_serial_baudrate", "bess_serial_parity", "bess_serial_stopbits", "bess_serial_bytesize", "bess_modbus_unit_id", "bess_device_profile"):
                     if key in saved:
                         data[key] = saved[key]
         except Exception:
@@ -811,6 +817,7 @@ def save_system_settings(req: SystemSettingsModel):
             "bess_serial_stopbits": req.bess_serial_stopbits if req.bess_serial_stopbits is not None else DEFAULT_BESS_SERIAL_STOPBITS,
             "bess_serial_bytesize": req.bess_serial_bytesize if req.bess_serial_bytesize is not None else DEFAULT_BESS_SERIAL_BYTESIZE,
             "bess_modbus_unit_id": req.bess_modbus_unit_id if req.bess_modbus_unit_id is not None else DEFAULT_BESS_MODBUS_UNIT_ID,
+            "bess_device_profile": req.bess_device_profile if req.bess_device_profile is not None else DEFAULT_BESS_DEVICE_PROFILE,
         }
 
         # 2026-08-26: раніше цей запис ПОВНІСТЮ перезаписував файл лише
@@ -878,6 +885,14 @@ class DispatcherScheduleItem(BaseModel):
     hour: int
     minute: int
     enabled: bool = True
+
+
+@router.get("/device-profiles", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
+def get_device_profiles():
+    """Профілі обладнання BESS для Settings (device_profiles.py): ключ, назва,
+    джерело (документ виробника) і застереження."""
+    from src.modules.scada_service.device_profiles import list_profiles
+    return {"profiles": list_profiles(), "default": DEFAULT_BESS_DEVICE_PROFILE}
 
 
 @router.get("/dispatcher-schedule", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])

@@ -128,6 +128,7 @@ interface AppState {
   bessSerialStopbits: number; setBessSerialStopbits: (v: number) => void;
   bessSerialBytesize: number; setBessSerialBytesize: (v: number) => void;
   bessModbusUnitId: number; setBessModbusUnitId: (v: number) => void;
+  bessDeviceProfile: string; setBessDeviceProfile: (v: string) => void;
   exciseDutyPct: number; setExciseDutyPct: (v: number) => void;
   transformerLossPct: number; setTransformerLossPct: (v: number) => void;
   // 2026-09-09: тариф на доставку (₴/МВт·год) — раніше захардкоджений
@@ -219,6 +220,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [bessSerialStopbits, setBessSerialStopbits] = useState(1);
   const [bessSerialBytesize, setBessSerialBytesize] = useState(8);
   const [bessModbusUnitId, setBessModbusUnitId] = useState(1);
+  const [bessDeviceProfile, setBessDeviceProfile] = useState('generic_smartbess');
   const [exciseDutyPct, setExciseDutyPct] = useState(0);
   const [transformerLossPct, setTransformerLossPct] = useState(0);
   const [deliveryTariffUahPerMwh, setDeliveryTariffUahPerMwh] = useState(0.0);
@@ -300,6 +302,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (data.bess_serial_stopbits != null) setBessSerialStopbits(data.bess_serial_stopbits);
       if (data.bess_serial_bytesize != null) setBessSerialBytesize(data.bess_serial_bytesize);
       if (data.bess_modbus_unit_id != null) setBessModbusUnitId(data.bess_modbus_unit_id);
+      if (data.bess_device_profile != null) setBessDeviceProfile(data.bess_device_profile);
       if (data.excise_duty_pct != null) setExciseDutyPct(data.excise_duty_pct);
       if (data.transformer_loss_pct != null) setTransformerLossPct(data.transformer_loss_pct);
       if (data.delivery_tariff_uah_per_mwh != null) setDeliveryTariffUahPerMwh(data.delivery_tariff_uah_per_mwh);
@@ -392,12 +395,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         bess_serial_stopbits: bessSerialStopbits,
         bess_serial_bytesize: bessSerialBytesize,
         bess_modbus_unit_id: bessModbusUnitId,
+        bess_device_profile: bessDeviceProfile,
       });
       addLog('SETTINGS', `Параметри системи збережено. Дата запуску: ${launchDate}.`, 'success');
     } catch (e: any) {
       addLog('API', `Помилка збереження налаштувань: ${e.message}`, 'error');
     }
-  }, [activeRole, launchDate, osr, voltageClass, margin, capacity, power, efficiency, maxCyclesPerDay, bidReminderTelegramEnabled, autoDispatchEnabled, exciseDutyPct, transformerLossPct, deliveryTariffUahPerMwh, degradationCostUahPerMwh, bessConnectionType, bessTcpHost, bessTcpPort, bessSerialPort, bessSerialBaudrate, bessSerialParity, bessSerialStopbits, bessSerialBytesize, bessModbusUnitId, addLog]);
+  }, [activeRole, launchDate, osr, voltageClass, margin, capacity, power, efficiency, maxCyclesPerDay, bidReminderTelegramEnabled, autoDispatchEnabled, exciseDutyPct, transformerLossPct, deliveryTariffUahPerMwh, degradationCostUahPerMwh, bessConnectionType, bessTcpHost, bessTcpPort, bessSerialPort, bessSerialBaudrate, bessSerialParity, bessSerialStopbits, bessSerialBytesize, bessModbusUnitId, bessDeviceProfile, addLog]);
 
   // 2026-09-28 (ревью продуктивності): звіти директора, умови ринку й
   // сценарій віртуального диспетчера раніше вантажились при КОЖНОМУ старті
@@ -882,6 +886,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     bessSerialPort, setBessSerialPort, bessSerialBaudrate, setBessSerialBaudrate,
     bessSerialParity, setBessSerialParity, bessSerialStopbits, setBessSerialStopbits,
     bessSerialBytesize, setBessSerialBytesize, bessModbusUnitId, setBessModbusUnitId,
+    bessDeviceProfile, setBessDeviceProfile,
     exciseDutyPct, setExciseDutyPct, transformerLossPct, setTransformerLossPct,
     deliveryTariffUahPerMwh, setDeliveryTariffUahPerMwh,
     launchDate, setLaunchDate, saveSettings,
@@ -902,7 +907,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     bids, refreshBids, actionSummary, refreshActionSummary, generateBidsNow, settleBidsNow, acknowledgeIdmFallbackNow, submitIdmFallbackBidNow,
     dispatcherSchedule, dispatcherActions, refreshDispatcherSchedule, saveDispatcherScheduleNow,
     osr, voltageClass, margin, capacity, power, efficiency, maxCyclesPerDay, bidReminderTelegramEnabled, autoDispatchEnabled, launchDate, saveSettings,
-    bessConnectionType, bessTcpHost, bessTcpPort, bessSerialPort, bessSerialBaudrate, bessSerialParity, bessSerialStopbits, bessSerialBytesize, bessModbusUnitId,
+    bessConnectionType, bessTcpHost, bessTcpPort, bessSerialPort, bessSerialBaudrate, bessSerialParity, bessSerialStopbits, bessSerialBytesize, bessModbusUnitId, bessDeviceProfile,
     capex, discountRate, lifetime, systemLogs, addLog, auditLogs,
     showApprovalModal, pendingAction, approvalToken, triggerFourEyesApproval, executeApprovedAction, cancelApproval,
   ]);

@@ -58,6 +58,14 @@ for d in (0.25, 1.0):
     SCENARIOS.append((f'fcr_sym_r0.5_D{d}', 0.5, d, 'sym', PRICE_SYMMETRIC))
 for r in (0.5, 1.0):
     SCENARIOS.append((f'afrr_up_r{r}_D1', r, 1.0, 'up', PRICE_UPWARD))
+# 2026-09-29, умови участі (CLAUDE.md п.60): аРВЧ за правилами тримається до
+# 60 хв, але огляд Міненерго (серп. 2025) фіксує реальні односторонні
+# активації 2+ год зі штрафами за невиконання — сценарій з запасом на 2 год.
+SCENARIOS.append(('afrr_up_r0.5_D2', 0.5, 2.0, 'up', PRICE_UPWARD))
+# Граничні ціни річного аукціону 2026 (аРВЧ завантаження 973.39, симетричний
+# 1339.82 грн/МВт·год) — верхня межа, pay-as-bid, реальна ціна нижча.
+SCENARIOS.append(('afrr_up_r0.5_D1_capprice', 0.5, 1.0, 'up', 973.39))
+SCENARIOS.append(('fcr_sym_r0.5_D0.25_capprice', 0.5, 0.25, 'sym', 1339.82))
 
 df = dm.load_merged_csv_cached(['Datetime', 'Price'])
 kyiv = df['Datetime'].dt.tz_localize('UTC').dt.tz_convert('Europe/Kyiv')

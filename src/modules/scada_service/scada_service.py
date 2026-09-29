@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from src.core.config import settings
 from src.database.session import SessionLocal
 from src.database.models import Asset, BessTelemetry, ChargeDischargePlan, ManualOverride
+from src.modules.scada_service.device_profiles import DEFAULT_PROFILE, PROFILES, ProfileError, get_profile
 
 scada_thread = None
 stop_flag = False
@@ -26,6 +27,7 @@ _BESS_CONNECTION_DEFAULTS = {
     'serial_stopbits': 1,
     'serial_bytesize': 8,
     'unit_id': 1,
+    'device_profile': DEFAULT_PROFILE,
 }
 _BESS_SETTINGS_KEY_MAP = {
     'connection_type': 'bess_connection_type',
@@ -37,6 +39,7 @@ _BESS_SETTINGS_KEY_MAP = {
     'serial_stopbits': 'bess_serial_stopbits',
     'serial_bytesize': 'bess_serial_bytesize',
     'unit_id': 'bess_modbus_unit_id',
+    'device_profile': 'bess_device_profile',
 }
 
 
@@ -58,6 +61,8 @@ def load_bess_connection_settings() -> dict:
             pass
     if cfg['connection_type'] not in ('simulator', 'tcp', 'serial', 'disabled'):
         cfg['connection_type'] = 'simulator'
+    if cfg['device_profile'] not in PROFILES:
+        cfg['device_profile'] = DEFAULT_PROFILE
     return cfg
 
 
@@ -79,7 +84,11 @@ def poll_bess_and_control():
     cfg = load_bess_connection_settings()
     unit_id = cfg['unit_id']
     client, target_desc = _build_client(cfg)
-    print(f"SCADA: Starting EMS control loop (target {target_desc}, unit_id={unit_id})...")
+    # Симулятор завжди говорить власною 6-регістровою картою — профіль
+    # обладнання застосовується лише до реального підключення (tcp/serial).
+    profile_key = DEFAULT_PROFILE if cfg['connection_type'] == 'simulator' else cfg['device_profile']
+    profile = get_profile(profile_key)
+    print(f"SCADA: Starting EMS control loop (target {target_desc}, unit_id={unit_id}, profile={profile.key})...")
 
     # 2026-09-28: цикл іде кожні 10с — друкуємо рішення лише при ЗМІНІ
     # (година/джерело/потужність), а не 8640 разів на добу (було ~5300
@@ -94,29 +103,21 @@ def poll_bess_and_control():
                 time.sleep(10.0)
                 continue
 
-            res = client.read_holding_registers(0, count=6, device_id=unit_id)
-            if res.isError():
-                print(f"SCADA Error: Failed to read BESS registers: {res}")
+            # Профіль пристрою (2026-09-29, device_profiles.py) — як читати
+            # телеметрію й віддавати команду конкретному обладнанню.
+            try:
+                tel_in = profile.read(client, unit_id)
+            except ProfileError as e:
+                print(f"SCADA Error: Failed to read BESS registers ({profile.key}): {e}")
                 client.close()
                 time.sleep(10.0)
                 continue
-                
-            state = res.registers[0]
-            soc_raw = res.registers[1]
-            power_raw = res.registers[2]
-            temp_raw = res.registers[3]
-            soh_raw = res.registers[4]
-            
-            soc_pct = soc_raw / 10.0
-            if power_raw > 32767:
-                power_kw = power_raw - 65536
-            else:
-                power_kw = power_raw
-            temp_c = temp_raw / 10.0
-            soh_pct = soh_raw / 10.0
-            
-            states_map = {0: "STANDBY", 1: "CHARGING", 2: "DISCHARGING", 3: "FAULT"}
-            system_status = states_map.get(state, "UNKNOWN")
+
+            soc_pct = tel_in.soc_pct
+            power_kw = tel_in.power_kw
+            temp_c = tel_in.temp_c
+            soh_pct = tel_in.soh_pct
+            system_status = tel_in.status
             
             asset = db.query(Asset).first()
             if not asset:
@@ -175,10 +176,7 @@ def poll_bess_and_control():
                 print(msg)
                 last_decision = decision
                 
-            cmd_val = target_power_kw
-            if cmd_val < 0:
-                cmd_val += 65536
-            client.write_register(5, cmd_val, device_id=unit_id)
+            profile.write_power(client, unit_id, target_power_kw)
         except Exception as e:
             if db:
                 db.rollback()

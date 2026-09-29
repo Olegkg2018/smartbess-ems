@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useApp } from '../../state/AppContext';
-import type { DispatcherScheduleItem } from '../../api/client';
+import type { DispatcherScheduleItem, DeviceProfile } from '../../api/client';
+import * as api from '../../api/client';
 
 export default function Settings() {
   const {
@@ -16,6 +17,7 @@ export default function Settings() {
     bessSerialPort, setBessSerialPort, bessSerialBaudrate, setBessSerialBaudrate,
     bessSerialParity, setBessSerialParity, bessSerialStopbits, setBessSerialStopbits,
     bessSerialBytesize, setBessSerialBytesize, bessModbusUnitId, setBessModbusUnitId,
+    bessDeviceProfile, setBessDeviceProfile, activeRole,
     dispatcherSchedule, dispatcherActions, saveDispatcherScheduleNow,
   } = useApp();
 
@@ -23,6 +25,16 @@ export default function Settings() {
   // бекенд лише по кнопці "Зберегти сценарій" (окремий ендпоінт від
   // saveSettings, застосовується одразу без рестарту сервера).
   const [scheduleDraft, setScheduleDraft] = useState<DispatcherScheduleItem[]>([]);
+
+  // Профілі обладнання BESS (2026-09-29) — список з бекенду з назвою,
+  // документом-джерелом і застереженнями, щоб диспетчер бачив, що профіль
+  // перевірено лише на рівні специфікації, не на реальному пристрої.
+  const [deviceProfiles, setDeviceProfiles] = useState<DeviceProfile[]>([]);
+  useEffect(() => {
+    api.fetchDeviceProfiles(activeRole).then((r) => setDeviceProfiles(r.profiles)).catch(() => setDeviceProfiles([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const selectedProfile = deviceProfiles.find((p) => p.key === bessDeviceProfile);
   useEffect(() => {
     if (dispatcherSchedule) setScheduleDraft(dispatcherSchedule);
   }, [dispatcherSchedule]);
@@ -322,6 +334,21 @@ export default function Settings() {
           <div className="form-group">
             <label className="form-label">Modbus Unit ID (адреса пристрою)</label>
             <input type="number" min={0} max={247} className="form-input" value={bessModbusUnitId} onChange={(e) => setBessModbusUnitId(Number(e.target.value))} />
+          </div>
+        )}
+
+        {(bessConnectionType === 'tcp' || bessConnectionType === 'serial') && (
+          <div className="form-group">
+            <label className="form-label">Профіль обладнання (карта регістрів)</label>
+            <select className="form-select" value={bessDeviceProfile} onChange={(e) => setBessDeviceProfile(e.target.value)}>
+              {deviceProfiles.length === 0 && <option value={bessDeviceProfile}>{bessDeviceProfile}</option>}
+              {deviceProfiles.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
+            </select>
+            {selectedProfile && (
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '6px 0 0', lineHeight: 1.5 }}>
+                Джерело: {selectedProfile.source}. {selectedProfile.notes}
+              </p>
+            )}
           </div>
         )}
 
