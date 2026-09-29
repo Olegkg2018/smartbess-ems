@@ -1,0 +1,91 @@
+{
+  "eur_uah": 50.9743,
+  "eur_source": "НБУ 29.09.2026",
+  "horizon_years": 10,
+  "scenarios": {
+    "T25_cycles1.0": {
+      "efc_per_year": 323.5,
+      "discharged_mwh_per_year": 1293.9,
+      "capacity_after_10y": 0.8798,
+      "calendar_only_capacity": 0.963,
+      "fade_from_cycling": 0.0832,
+      "years_to_80pct": ">10",
+      "marginal_cycling_cost_uah_per_mwh_discharged": {
+        "capex180k_share40": 471.8,
+        "capex180k_share100": 1179.5,
+        "capex200k_share40": 524.2,
+        "capex200k_share100": 1310.6
+      }
+    },
+    "T25_cycles1.5": {
+      "efc_per_year": 372.2,
+      "discharged_mwh_per_year": 1489.0,
+      "capacity_after_10y": 0.8663,
+      "calendar_only_capacity": 0.963,
+      "fade_from_cycling": 0.0967,
+      "years_to_80pct": ">10",
+      "marginal_cycling_cost_uah_per_mwh_discharged": {
+        "capex180k_share40": 476.8,
+        "capex180k_share100": 1192.0,
+        "capex200k_share40": 529.8,
+        "capex200k_share100": 1324.4
+      }
+    },
+    "T25_cycles2.0": {
+      "efc_per_year": 381.5,
+      "discharged_mwh_per_year": 1526.0,
+      "capacity_after_10y": 0.8635,
+      "calendar_only_capacity": 0.963,
+      "fade_from_cycling": 0.0995,
+      "years_to_80pct": ">10",
+      "marginal_cycling_cost_uah_per_mwh_discharged": {
+        "capex180k_share40": 478.7,
+        "capex180k_share100": 1196.7,
+        "capex200k_share40": 531.9,
+        "capex200k_share100": 1329.7
+      }
+    },
+    "T35_cycles1.0": {
+      "efc_per_year": 323.5,
+      "discharged_mwh_per_year": 1293.9,
+      "capacity_after_10y": 0.8734,
+      "calendar_only_capacity": 0.9316,
+      "fade_from_cycling": 0.0581,
+      "years_to_80pct": ">10",
+      "marginal_cycling_cost_uah_per_mwh_discharged": {
+        "capex180k_share40": 329.8,
+        "capex180k_share100": 824.6,
+        "capex200k_share40": 366.5,
+        "capex200k_share100": 916.2
+      }
+    },
+    "T35_cycles1.5": {
+      "efc_per_year": 372.2,
+      "discharged_mwh_per_year": 1489.0,
+      "capacity_after_10y": 0.8624,
+      "calendar_only_capacity": 0.9316,
+      "fade_from_cycling": 0.0691,
+      "years_to_80pct": ">10",
+      "marginal_cycling_cost_uah_per_mwh_discharged": {
+        "capex180k_share40": 340.8,
+        "capex180k_share100": 852.0,
+        "capex200k_share40": 378.7,
+        "capex200k_share100": 946.6
+      }
+    },
+    "T35_cycles2.0": {
+      "efc_per_year": 381.5,
+      "discharged_mwh_per_year": 1526.0,
+      "capacity_after_10y": 0.8601,
+      "calendar_only_capacity": 0.9316,
+      "fade_from_cycling": 0.0714,
+      "years_to_80pct": ">10",
+      "marginal_cycling_cost_uah_per_mwh_discharged": {
+        "capex180k_share40": 343.6,
+        "capex180k_share100": 859.1,
+        "capex200k_share40": 381.8,
+        "capex200k_share100": 954.6
+      }
+    }
+  }
+}

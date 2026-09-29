@@ -1,0 +1,18 @@
+{
+  "before_fix": {
+    "test_days": 58,
+    "mean_wape": 32.736558383541656,
+    "median_mape": 118.12282651567965,
+    "last_7d_mean_mape": 524.162879251674,
+    "last_30d_mean_mape": 1462.5228894369502,
+    "methodology_version": "phase_b_asof_unified_2026"
+  },
+  "after_fix": {
+    "test_days": 59,
+    "mean_wape": 27.252982084094846,
+    "median_mape": 70.50761267187292,
+    "last_7d_mean_mape": 468.38282902509127,
+    "last_30d_mean_mape": 512.6818417523767,
+    "methodology_version": "phase_b_asof_unified_2026"
+  }
+}

@@ -91,6 +91,11 @@ FEATURE_SOURCE_COLUMNS = [
     # значно відстає від "сьогодні") — придатні для бектесту, не для
     # прод-інференсу без окремого рішення про регулярне довантаження.
     'Imbalance_Price_UAH', 'Grid_Outage_Official_Active',
+    # 2026-09-28: погодинні обсяги РДН і діапазон цін ВДР з добового файлу
+    # OREE (oree_xlsx.py) — кандидати, ще НЕ в FEATURES (бектест з контролем,
+    # MEMORY.md §4 правило п.51). Історія з 2019-07 (старт ринку).
+    'DAM_Sell_Declared_MWh', 'DAM_Buy_Declared_MWh', 'DAM_Buy_Volume_MWh',
+    'IDM_Min_Price', 'IDM_Max_Price',
 ]
 
 # Тільки реальні джерела (oree.com.ua, Open-Meteo) + фізично обґрунтовані
@@ -266,6 +271,21 @@ def build_training_table(df_raw, idm_lag_hours=24):
     df['Imbalance_Price_Mean_24h'] = df['Imbalance_Price_UAH'].shift(24).rolling(window=24).mean()
     df['Grid_Outage_Official_Mean_24h'] = df['Grid_Outage_Official_Active'].shift(24).rolling(window=24).mean()
 
+    # 2026-09-28: кандидати з добового файлу OREE (oree_xlsx.py). Лаг 24г —
+    # файл РДН на добу D публікується ~13:00 D-1, тож для прогнозу, що
+    # рахується о 06:00 напередодні цільової доби, дані попередньої доби вже
+    # відомі (та сама логіка, що Price_Lag_24). Заявлений продаж/купівля —
+    # пряма міра профіциту/дефіциту пропозиції; ratio > 1 = пропозиція
+    # перевищує попит. ВДР-діапазон — лаг 48г (ВДР публікується з ~добовою
+    # затримкою, IDM_PUBLICATION_DELAY_HOURS).
+    ratio = df['DAM_Sell_Declared_MWh'] / df['DAM_Buy_Declared_MWh'].where(df['DAM_Buy_Declared_MWh'] > 0)
+    df['DAM_Declared_Ratio_Lag_24'] = ratio.shift(24)
+    df['DAM_Declared_Ratio_Mean_24h'] = ratio.shift(24).rolling(window=24).mean()
+    df['DAM_Buy_Declared_Lag_24'] = df['DAM_Buy_Declared_MWh'].shift(24)
+    df['DAM_Sell_Declared_Lag_24'] = df['DAM_Sell_Declared_MWh'].shift(24)
+    df['DAM_Buy_Volume_Lag_24'] = df['DAM_Buy_Volume_MWh'].shift(24)
+    df['IDM_Range_Lag_48'] = (df['IDM_Max_Price'] - df['IDM_Min_Price']).shift(48)
+
     df = df.dropna(subset=FEATURES + ['Price']).reset_index(drop=True)
     return df
 
@@ -347,7 +367,13 @@ def _get_price_shift_pct(forecast_date):
         db.close()
 
 
-def build_asof_feature_matrix(target_date, forecast_weather, last_prices, as_of=None, apply_manual_overrides=True, idm_lag_hours=24):
+# Кандидати, які build_asof_feature_matrix вміє рахувати тим самим способом,
+# що й build_training_table — лише вони можуть йти в as-of (продовий) шлях
+# walk_forward_backtest через extra_features (2026-09-28, CLAUDE.md п.59).
+ASOF_SUPPORTED_EXTRA_FEATURES = ('DAM_Declared_Ratio_Lag_24', 'DAM_Declared_Ratio_Mean_24h')
+
+
+def build_asof_feature_matrix(target_date, forecast_weather, last_prices, as_of=None, apply_manual_overrides=True, idm_lag_hours=24, extra_features=None):
     """
     Наступник build_forecast_feature_matrix() (до Фази B). Будує матрицю
     ознак (FEATURES) для прогнозу на 24 години наперед — спільна для
@@ -474,6 +500,14 @@ def build_asof_feature_matrix(target_date, forecast_weather, last_prices, as_of=
     # той самий інтерполяційний підхід, що і для IDM вище.
     last_flows = pd.Series(_last_n('Grid_Net_Export_MW', 168, np.nan)).interpolate(limit_direction='both').fillna(0.0).tolist()
 
+    # Заявлений продаж/купівля РДН (oree_xlsx.py). Файл на добу D-1
+    # публікується ~13:00 D-2 — на момент продового прогнозу (06:00 D-1) уже
+    # відомий, тож маскувати хвіст, як для IDM/ENTSO-E, не треба. Та сама
+    # формула й та сама обробка дірок (ffill), що в build_training_table.
+    sell_decl = pd.Series(_last_n('DAM_Sell_Declared_MWh', 168, np.nan)).ffill(limit=MAX_CAUSAL_FFILL_GAP_HOURS)
+    buy_decl = pd.Series(_last_n('DAM_Buy_Declared_MWh', 168, np.nan)).ffill(limit=MAX_CAUSAL_FFILL_GAP_HOURS)
+    last_ratio = (sell_decl / buy_decl.where(buy_decl > 0)).tolist()
+
     records = []
     for h in range(24):
         dt = pd.to_datetime(target_date) + pd.to_timedelta(h, unit='h')
@@ -550,7 +584,9 @@ def build_asof_feature_matrix(target_date, forecast_weather, last_prices, as_of=
             'IDM_Price_Lag_24': float(idm_lag_24), 'DAM_IDM_Spread_Lag_24': float(spread_lag_24),
             'Spread_Mean_24h': float(spread_mean_24h),
             'Grid_Net_Export_Lag_24': float(flow_lag_24), 'Grid_Net_Export_Mean_24h': float(flow_mean_24h),
+            'DAM_Declared_Ratio_Lag_24': float(last_ratio[-24 + h]),
+            'DAM_Declared_Ratio_Mean_24h': float(np.nanmean(last_ratio[121 + h: 145 + h])) if np.isfinite(last_ratio[121 + h: 145 + h]).any() else np.nan,
         })
 
-    X_forecast = pd.DataFrame(records)[FEATURES]
+    X_forecast = pd.DataFrame(records)[FEATURES + list(extra_features or [])]
     return X_forecast, records, adjustment

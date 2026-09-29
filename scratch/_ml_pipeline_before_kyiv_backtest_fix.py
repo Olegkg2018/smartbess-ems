@@ -14,7 +14,6 @@ from src.core.config import settings
 import src.modules.market_data_service.data_manager as dm
 from src.database.session import SessionLocal
 from src.database.models import WeatherForecastArchive
-from src.core.time_utils import kyiv_to_utc
 # Фаза B (2026-08-21): FEATURES/побудова ознак/пост-обробка винесені в
 # feature_pipeline.py — єдине джерело і для навчання/бектеста, і для живого
 # прогнозу (раніше prepare_features/build_forecast_feature_matrix були
@@ -571,15 +570,9 @@ def walk_forward_backtest(test_days=90, retrain_every_days=7, model_type='lightg
     # окремим шляхом (сирий df_test[features], без симуляції затримки
     # публікації IDM/ENTSO-E і без clip_and_shift) — нечесне порівняння з
     # тим, як реально рахується прод. Див. план "ensemble-модель прогнозу".
-    # extra_features, які build_asof_feature_matrix рахує тим самим способом,
-    # що й навчання (ASOF_SUPPORTED_EXTRA_FEATURES), лишаються в продовому
-    # as-of шляху — порівняння "прод" vs "прод + кандидат" тоді пряме, без
-    # контрольної колонки (2026-09-28, CLAUDE.md п.59).
-    extra_asof_ok = not extra_features or all(
-        f in feature_pipeline.ASOF_SUPPORTED_EXTRA_FEATURES for f in extra_features)
     asof_eligible = (
         (model_type == 'lightgbm' or is_ensemble)
-        and not use_surplus_classifier and extra_asof_ok
+        and not use_surplus_classifier and not extra_features
     )
 
     if len(df) < 24 * (test_days + 30):
@@ -613,31 +606,6 @@ def walk_forward_backtest(test_days=90, retrain_every_days=7, model_type='lightg
             continue
 
         if asof_eligible:
-            # 2026-09-28 (CLAUDE.md п.59): доба тесту — РЕАЛЬНА київська доба.
-            # До цього фіксу as-of гілка різала день наївною UTC-північчю
-            # (`day`..`day_end`): лаги, погода й факт були вирівняні по UTC-
-            # годинах, а календарні ознаки (Hour/піки/вихідні) —
-            # build_forecast_feature_matrix ставить як київські години 0..23,
-            # і модель навчена саме на київських (build_training_table). Тобто
-            # на оцінці "година доби" кожного рядка була зсунута на 2-3г —
-            # штучно гірші числа саме продового шляху (ймовірне пояснення
-            # "методологічної аномалії" п.51: extra_features-шлях, самоузгоджений
-            # по рядках, систематично "кращий" незалежно від сигналу). Прод
-            # (predict_next_day) не зачеплений — він бере історію до київської
-            # півночі й пише прогноз за київськими годинами.
-            # as_of — реальний момент продового прогнозу: 06:00 Kyiv напередодні
-            # (scheduler.py), а не північ самої цільової доби.
-            day_str = day.strftime('%Y-%m-%d')
-            kyiv_start = kyiv_to_utc(day_str, 0)
-            kyiv_end = kyiv_to_utc((day + pd.Timedelta(days=1)).strftime('%Y-%m-%d'), 0)
-            if (kyiv_end - kyiv_start) != pd.Timedelta(hours=24):
-                # Доба переходу годинника (23/25 годин) — матриця ознак завжди
-                # 24 рядки, чесно пропускаємо (~2 доби на рік).
-                day += pd.Timedelta(days=1)
-                continue
-            as_of_prod = kyiv_to_utc((day - pd.Timedelta(days=1)).strftime('%Y-%m-%d'), 6)
-            df_train = df[df['Datetime'] < kyiv_start]
-
             # Ансамбль і соло-lightgbm тепер діляться ОДНИМ шляхом побудови
             # фіч (build_forecast_feature_matrix(..., as_of=day, ...) —
             # той самий, яким реально рахує прод predict_next_day) і
@@ -661,22 +629,22 @@ def walk_forward_backtest(test_days=90, retrain_every_days=7, model_type='lightg
                     days_since_retrain = 0
 
             if weather_mode == 'archived_forecast':
-                weather_for_day = _weather_slice_archived_forecast(kyiv_start, kyiv_end)
+                weather_for_day = _weather_slice_archived_forecast(day, day_end)
             else:
-                weather_for_day = _weather_slice_archived_actual(df_raw, kyiv_start, kyiv_end)
+                weather_for_day = _weather_slice_archived_actual(df_raw, day, day_end)
             if weather_for_day is None or len(weather_for_day) < 24:
                 skipped_days_no_weather += 1
                 day += pd.Timedelta(days=1)
                 continue
 
-            last_prices_for_day = df_raw[df_raw['Datetime'] < kyiv_start]['Price'].iloc[-168:].tolist()
+            last_prices_for_day = df_raw[df_raw['Datetime'] < day]['Price'].iloc[-168:].tolist()
             if len(last_prices_for_day) < 168:
                 day += pd.Timedelta(days=1)
                 continue
 
             X_test, _, _ = build_forecast_feature_matrix(
-                day_str, weather_for_day, last_prices_for_day, as_of=as_of_prod,
-                idm_lag_hours=idm_lag_hours, extra_features=extra_features,
+                day.strftime('%Y-%m-%d'), weather_for_day, last_prices_for_day, as_of=day,
+                idm_lag_hours=idm_lag_hours,
             )
             if is_ensemble:
                 member_preds = _predict_ensemble_members_from_matrix(ensemble_members, X_test)
@@ -685,8 +653,8 @@ def walk_forward_backtest(test_days=90, retrain_every_days=7, model_type='lightg
                 y_pred_raw = model.predict(X_test)
             y_pred_all = clip_and_shift(y_pred_raw, shift_pct=0.0)
 
-            day_actual = df_raw[(df_raw['Datetime'] >= kyiv_start) & (df_raw['Datetime'] < kyiv_end)].copy()
-            day_actual['hour'] = day_actual['Datetime'].dt.tz_localize('UTC').dt.tz_convert('Europe/Kyiv').dt.hour
+            day_actual = df_raw[(df_raw['Datetime'] >= day) & (df_raw['Datetime'] < day_end)].copy()
+            day_actual['hour'] = day_actual['Datetime'].dt.hour
             actual_by_hour = day_actual.set_index('hour')['Price']
             common_hours = [h for h in range(24) if h in actual_by_hour.index and pd.notna(actual_by_hour.loc[h])]
             if not common_hours:
@@ -766,7 +734,7 @@ def walk_forward_backtest(test_days=90, retrain_every_days=7, model_type='lightg
 # (Фаза B, 2026-08-21; _get_price_shift_pct лишається імпортованим вище для
 # predict_next_day/predict_price_band, які застосовують зсув ПІСЛЯ моделі).
 
-def build_forecast_feature_matrix(forecast_date, forecast_weather, last_prices, as_of=None, idm_lag_hours=24, extra_features=None):
+def build_forecast_feature_matrix(forecast_date, forecast_weather, last_prices, as_of=None, idm_lag_hours=24):
     """Сумісна тонка обгортка над feature_pipeline.build_asof_feature_matrix()
     (Фаза B) — та сама функція тепер обслуговує і живий прогноз
     (predict_next_day/predict_price_band, as_of=None → зараз, idm_lag_hours=24
@@ -776,7 +744,7 @@ def build_forecast_feature_matrix(forecast_date, forecast_weather, last_prices, 
     існуючих продових викликів нижче."""
     return feature_pipeline.build_asof_feature_matrix(
         forecast_date, forecast_weather, last_prices, as_of=as_of, apply_manual_overrides=True,
-        idm_lag_hours=idm_lag_hours, extra_features=extra_features,
+        idm_lag_hours=idm_lag_hours,
     )
 
 def predict_next_day(forecast_date, forecast_weather, last_prices, factors=None):

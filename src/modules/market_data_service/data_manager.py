@@ -567,6 +567,19 @@ def sync_realtime_data(force=False):
         return False
 
     new_month_data = add_real_market_factors(new_month_data)
+
+    # Обсяги РДН / діапазон цін ВДР з добового файлу OREE + виправлення цін
+    # діб переходу годинника (CLAUDE.md п.59). Минулі доби — з дискового
+    # кешу, тож щоденна вартість — 2 живі запити (сьогодні). Збій файлу не
+    # блокує синк — колонки просто лишаються NaN.
+    try:
+        import src.modules.external_data_service.oree_xlsx as ext_oree_xlsx
+        today_kyiv = utc_to_kyiv(datetime.datetime.utcnow()).strftime('%Y-%m-%d')
+        new_month_data = ext_oree_xlsx.merge_into(
+            new_month_data, f"{current_year}-{current_month:02d}-01", today_kyiv)
+    except Exception as e:
+        print(f"Warning: sync_realtime_data — oree_xlsx merge failed: {e}")
+
     ext_gas.append_daily_snapshot()
     ext_tg.sync_all(max_pages=2)
     

@@ -1,0 +1,42 @@
+{
+  "90": {
+    "days": 59,
+    "period": [
+      "2026-07-01",
+      "2026-09-28"
+    ],
+    "methodology": [
+      "phase_b_asof_unified_2026",
+      "phase_b_asof_unified_2026"
+    ],
+    "base_mean_wape": 27.252982084094846,
+    "cand_mean_wape": 27.02062171265478,
+    "base_median_mape": 70.50761267187292,
+    "cand_median_mape": 64.5133730178486,
+    "base_mean_mae": 1249.1391092385543,
+    "cand_mean_mae": 1241.678522540437,
+    "cand_better_days": 31,
+    "dm_stat_mae_cand_minus_base": -0.7256814495468799,
+    "dm_p_value": 0.4680340764705311
+  },
+  "365": {
+    "days": 332,
+    "period": [
+      "2025-09-29",
+      "2026-09-28"
+    ],
+    "methodology": [
+      "phase_b_asof_unified_2026",
+      "phase_b_asof_unified_2026"
+    ],
+    "base_mean_wape": 23.87399752915374,
+    "cand_mean_wape": 23.799470337175098,
+    "base_median_mape": 33.46182880971918,
+    "cand_median_mape": 32.79523370285369,
+    "base_mean_mae": 1443.47424977291,
+    "cand_mean_mae": 1436.5391415202148,
+    "cand_better_days": 171,
+    "dm_stat_mae_cand_minus_base": -0.9609174787848451,
+    "dm_p_value": 0.33659366160310067
+  }
+}

@@ -1,0 +1,153 @@
+{
+  "days": [
+    "2025-09-25",
+    "2026-09-27"
+  ],
+  "capture": 0.9,
+  "results": {
+    "arbitrage_only": {
+      "feasible": true,
+      "r_mw": 0.0,
+      "duration_h": 0.0,
+      "direction": null,
+      "soc_window": [
+        0.1,
+        0.9
+      ],
+      "arbitrage_uah_per_day": 26967.35388116123,
+      "reserve_uah_per_day": 0.0,
+      "total_uah_per_day": 26967.35388116123,
+      "total_uah_per_year": 9843084.16662385,
+      "days_reserve_better_than_arbitrage_only": null,
+      "n_days": 365
+    },
+    "fcr_sym_r0.25_D0.5": {
+      "feasible": true,
+      "r_mw": 0.25,
+      "duration_h": 0.5,
+      "direction": "sym",
+      "soc_window": [
+        0.131,
+        0.869
+      ],
+      "arbitrage_uah_per_day": 23876.268090523336,
+      "reserve_uah_per_day": 4721.700000000001,
+      "total_uah_per_day": 28597.968090523336,
+      "total_uah_per_year": 10438258.353041017,
+      "days_reserve_better_than_arbitrage_only": 322,
+      "n_days": 365
+    },
+    "fcr_sym_r0.5_D0.5": {
+      "feasible": true,
+      "r_mw": 0.5,
+      "duration_h": 0.5,
+      "direction": "sym",
+      "soc_window": [
+        0.163,
+        0.838
+      ],
+      "arbitrage_uah_per_day": 19810.576491980075,
+      "reserve_uah_per_day": 9443.400000000001,
+      "total_uah_per_day": 29253.976491980076,
+      "total_uah_per_year": 10677701.419572728,
+      "days_reserve_better_than_arbitrage_only": 294,
+      "n_days": 365
+    },
+    "fcr_sym_r0.75_D0.5": {
+      "feasible": true,
+      "r_mw": 0.75,
+      "duration_h": 0.5,
+      "direction": "sym",
+      "soc_window": [
+        0.194,
+        0.806
+      ],
+      "arbitrage_uah_per_day": 10820.512233190731,
+      "reserve_uah_per_day": 14165.100000000002,
+      "total_uah_per_day": 24985.61223319074,
+      "total_uah_per_year": 9119748.46511462,
+      "days_reserve_better_than_arbitrage_only": 145,
+      "n_days": 365
+    },
+    "fcr_sym_r1.0_D0.5": {
+      "feasible": true,
+      "r_mw": 1.0,
+      "duration_h": 0.5,
+      "direction": "sym",
+      "soc_window": [
+        0.225,
+        0.775
+      ],
+      "arbitrage_uah_per_day": 0.0,
+      "reserve_uah_per_day": 18886.800000000003,
+      "total_uah_per_day": 18886.8,
+      "total_uah_per_year": 6893682.0,
+      "days_reserve_better_than_arbitrage_only": 67,
+      "n_days": 365
+    },
+    "fcr_sym_r0.5_D0.25": {
+      "feasible": true,
+      "r_mw": 0.5,
+      "duration_h": 0.25,
+      "direction": "sym",
+      "soc_window": [
+        0.131,
+        0.869
+      ],
+      "arbitrage_uah_per_day": 20573.940369900116,
+      "reserve_uah_per_day": 9443.400000000001,
+      "total_uah_per_day": 30017.340369900117,
+      "total_uah_per_year": 10956329.235013543,
+      "days_reserve_better_than_arbitrage_only": 309,
+      "n_days": 365
+    },
+    "fcr_sym_r0.5_D1.0": {
+      "feasible": true,
+      "r_mw": 0.5,
+      "duration_h": 1.0,
+      "direction": "sym",
+      "soc_window": [
+        0.225,
+        0.775
+      ],
+      "arbitrage_uah_per_day": 17432.403066588617,
+      "reserve_uah_per_day": 9443.400000000001,
+      "total_uah_per_day": 26875.803066588618,
+      "total_uah_per_year": 9809668.119304845,
+      "days_reserve_better_than_arbitrage_only": 189,
+      "n_days": 365
+    },
+    "afrr_up_r0.5_D1": {
+      "feasible": true,
+      "r_mw": 0.5,
+      "duration_h": 1.0,
+      "direction": "up",
+      "soc_window": [
+        0.225,
+        0.9
+      ],
+      "arbitrage_uah_per_day": 21010.611110684662,
+      "reserve_uah_per_day": 11412.72,
+      "total_uah_per_day": 32423.33111068466,
+      "total_uah_per_year": 11834515.855399901,
+      "days_reserve_better_than_arbitrage_only": 354,
+      "n_days": 365
+    },
+    "afrr_up_r1.0_D1": {
+      "feasible": true,
+      "r_mw": 1.0,
+      "duration_h": 1.0,
+      "direction": "up",
+      "soc_window": [
+        0.35,
+        0.9
+      ],
+      "arbitrage_uah_per_day": 0.0,
+      "reserve_uah_per_day": 22825.44,
+      "total_uah_per_day": 22825.44,
+      "total_uah_per_year": 8331285.6,
+      "days_reserve_better_than_arbitrage_only": 128,
+      "n_days": 365
+    }
+  }
+}
