@@ -6,7 +6,14 @@ from src.modules.tariff_service.services import TariffService
 
 PRICE_FLOOR = TariffService.PRICE_FLOOR_UAH_MWH
 
-DEGRADATION_TIER2_MULTIPLIER = 2.0
+# 2026-09-29 (CLAUDE.md п.61): 2.0 → 1.0 (пласка вартість). Фізична модель
+# старіння NREL BLAST-Lite (LFP 250Ah, п.59) показала майже ЛІНІЙНИЙ граничний
+# знос за throughput (1.0→2.0 циклу/добу: 1180→1197 грн/МВт·год), тож опукла
+# форма з п.29 (наближення по Preger et al. 2020) не підтверджується. На 365
+# реальних добах (scratch/compare_degradation_tiers.py) пласка схема за
+# "істинною" лінійною вартістю кращa у 149 днях і не гірша в жодному
+# (+~22 грн/добу). Механізм tier-ів лишається — можна повернути множник.
+DEGRADATION_TIER2_MULTIPLIER = 1.0
 
 def tiered_degradation_rates(
     degradation_cost: float,
@@ -236,7 +243,12 @@ def optimize_with_scenarios_and_risks(
     prices = np.array(prices)
     band_source = 'assumed_volatility'
     hourly_volatility = np.full(len(prices), volatility)
-    PRICE_CAP = 16000.0
+    # Ринкові межі з Settings (src/core/market_bounds.py, 2026-09-29). Сценарії
+    # нижче мультиплікативні (ціна × exp(±σ)) — для ВІД'ЄМНИХ цін (після
+    # 1.05.2027) "песимістичний" і "агресивний" міняються місцями; до появи
+    # реальних від'ємних цін у даних це не проявляється — переглянути тоді.
+    from src.core.market_bounds import get_market_price_bounds
+    PRICE_FLOOR, PRICE_CAP = get_market_price_bounds()
 
     if price_lower is not None and price_upper is not None and len(price_lower) == len(prices) and len(price_upper) == len(prices):
         prices_pess = np.clip(np.array(price_lower, dtype=float), PRICE_FLOOR, PRICE_CAP).tolist()

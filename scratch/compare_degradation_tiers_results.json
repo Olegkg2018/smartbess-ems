@@ -1,0 +1,20 @@
+{
+  "tiered_x2": {
+    "energy_uah_per_day": 34614.90431968945,
+    "discharged_mwh_per_day": 4.530979452054794,
+    "cycles_per_day": 1.1327448630136985,
+    "days_over_1_cycle": 184,
+    "net_true_uah_per_day": 31443.218703251092
+  },
+  "flat": {
+    "energy_uah_per_day": 34651.71765305233,
+    "discharged_mwh_per_day": 4.552554794520548,
+    "cycles_per_day": 1.138138698630137,
+    "days_over_1_cycle": 218,
+    "net_true_uah_per_day": 31464.92929688794
+  },
+  "flat_minus_tiered_net_uah_per_day": 21.71059363684915,
+  "flat_minus_tiered_net_uah_per_year": 7924.36667744994,
+  "days_flat_better": 149,
+  "days_tiered_better": 0
+}

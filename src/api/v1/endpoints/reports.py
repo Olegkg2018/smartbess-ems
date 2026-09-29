@@ -13,7 +13,7 @@ import src.modules.market_data_service.data_manager as dm
 from src.api.v1.endpoints.optimization import get_manual_overrides
 from src.api.v1.endpoints.forecast import get_actual_prices
 from src.core.time_utils import kyiv_to_utc, kyiv_day_bounds, utc_to_kyiv
-from src.modules.bidding_service.services import get_delivery_tariff_uah_per_mwh, compute_imbalance_financials
+from src.modules.bidding_service.services import get_delivery_tariff_uah_per_mwh, compute_imbalance_financials, idm_reference_range
 
 router = APIRouter()
 
@@ -645,6 +645,7 @@ def get_day_bid_report(asset_id: str, date: str):
             MarketBid.timestamp < day_end,
         ).order_by(MarketBid.timestamp).all()
         bid_by_hour = {utc_to_kyiv(b.timestamp).hour: b for b in bids}
+        idm_ranges = idm_reference_range(date)
     finally:
         db.close()
 
@@ -669,6 +670,8 @@ def get_day_bid_report(asset_id: str, date: str):
                 if (ac is not None and fc is not None and ac != 0) else None
             ),
         }
+        # Реальний діапазон угод ВДР за годину (CLAUDE.md п.61) — незалежно від заявки.
+        row["idm_range"] = idm_ranges.get(hour)
         bid = bid_by_hour.get(hour)
         if bid is not None:
             row["bid_type"] = bid.bid_type

@@ -78,6 +78,15 @@ export async function fetchAssets(role: UserRole): Promise<Asset[]> {
   return data.assets;
 }
 
+/** Реальний діапазон угод ВДР за годину (добовий файл OREE, 2026-09-29). */
+export interface IdmRange {
+  min: number;
+  max: number;
+  last: number | null;
+  ref_date: string;   // YYYY-MM-DD — доба, з якої взято діапазон
+  same_day: boolean;  // true — факт цієї ж доби; false — найсвіжіша доба до неї
+}
+
 export interface ScadaStatus {
   connected: boolean;
   connection_type: string;
@@ -356,6 +365,7 @@ export interface MarketBid {
   // False/None — усе ще лише оцінка, ВДР для цієї години ще не відбувся
   // або ще не досинканий (2026-08-28).
   idm_fallback_price_is_actual: boolean | null;
+  idm_range?: IdmRange | null;
   // Ціна, яку диспетчер свідомо обрав подати на ВДР (submit_single_idm_fallback_bid,
   // "подача заявки на ВДР з можливістю скоригувати ціну", 2026-08-28) —
   // None, доки не подано цим шляхом. Окремо від idm_fallback_price_uah
@@ -592,6 +602,7 @@ export interface DayBidReportHour {
   idm_fallback_suggested: boolean;
   idm_fallback_price_uah: number | null;
   idm_fallback_price_is_actual: boolean | null;
+  idm_range?: IdmRange | null;
   idm_external_order_id: string | null;
   idm_fallback_acknowledged: boolean | null;
   idm_bid_price_uah: number | null;

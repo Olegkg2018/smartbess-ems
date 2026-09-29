@@ -7,7 +7,7 @@ import BidGateCountdown from '../../components/BidGateCountdown';
 import BidActionCenter from '../../components/BidActionCenter';
 import ConfirmModal from '../../components/ConfirmModal';
 import * as api from '../../api/client';
-import type { DayBidReportHour } from '../../api/client';
+import type { DayBidReportHour, IdmRange } from '../../api/client';
 
 // Той самий Kyiv wall-clock підхід, що вже є в BidGateCountdown.tsx —
 // не діляться спільним файлом (обидва прості й самодостатні), щоб не
@@ -37,6 +37,20 @@ function kyivWallClock(dateStr: string, hour: number): Date {
 // (спостережено, ~22:50 Kyiv) — це чесний індикатор "оцінка ще не
 // підтверджена", а не звинувачення в поломці.
 const IDM_ESTIMATE_STALE_MS = 2 * 60 * 60 * 1000;
+
+// Реальний діапазон угод ВДР за цю годину (2026-09-29, CLAUDE.md п.61) —
+// орієнтир для ціни заявки на ВДР поряд з оцінкою середньозваженої ціни.
+function IdmRangeHint({ range }: { range?: IdmRange | null }) {
+  if (!range) return null;
+  const f = (v: number) => Math.round(v).toLocaleString();
+  const when = range.same_day ? 'цієї доби' : range.ref_date.slice(8, 10) + '.' + range.ref_date.slice(5, 7);
+  return (
+    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}
+      title="Мінімальна / максимальна / остання ціна реальних угод на ВДР за цю годину (добовий файл oree.com.ua)">
+      угоди ВДР {when}: {f(range.min)}–{f(range.max)}{range.last != null ? `, ост. ${f(range.last)}` : ''} ₴/МВт·год
+    </div>
+  );
+}
 
 export default function OptimizationSchedule() {
   const {
@@ -473,6 +487,7 @@ export default function OptimizationSchedule() {
                               <AlertTriangle size={13} style={{ color: 'var(--color-amber)' }} />
                             </span>
                           )}
+                          <IdmRangeHint range={b.idm_range} />
                           {b.idm_external_order_id ? (
                             <span style={{ marginLeft: '6px', color: 'var(--color-emerald)' }} title={`Подано на ВДР: ${b.idm_external_order_id}`}>
                               <CheckCircle2 size={12} style={{ verticalAlign: 'middle' }} />
@@ -765,6 +780,7 @@ export default function OptimizationSchedule() {
                                   </span>
                                 )}
                               </span>
+                              <IdmRangeHint range={h.idm_range} />
                               {h.idm_external_order_id ? (
                                 <span style={{ fontSize: '11px', color: 'var(--color-emerald)' }} title={`Подано на ВДР: ${h.idm_external_order_id}`}>
                                   <CheckCircle2 size={12} style={{ verticalAlign: 'middle' }} />

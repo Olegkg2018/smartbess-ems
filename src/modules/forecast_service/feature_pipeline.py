@@ -290,10 +290,17 @@ def build_training_table(df_raw, idm_lag_hours=24):
     return df
 
 
-def clip_and_shift(preds, shift_pct, floor=PRICE_FLOOR, cap=PRICE_CAP):
+def clip_and_shift(preds, shift_pct, floor=None, cap=None):
     """Спільна постобробка прогнозу — раніше окреме замикання _clip_and_shift
     всередині predict_next_day (проду) і взагалі відсутня в backtest
-    (walk_forward_backtest оцінював сирі предикти без clip/shift)."""
+    (walk_forward_backtest оцінював сирі предикти без clip/shift).
+    Межі за замовчуванням — ринкові з Settings (src/core/market_bounds.py,
+    2026-09-29; раніше жорстко 10..16000, хоча реальний кеп з 08.2025 — 15000)."""
+    if floor is None or cap is None:
+        from src.core.market_bounds import get_market_price_bounds
+        b_floor, b_cap = get_market_price_bounds()
+        floor = b_floor if floor is None else floor
+        cap = b_cap if cap is None else cap
     shift_mult = 1.0 + shift_pct / 100.0
     return [float(np.clip(np.clip(p, floor, cap) * shift_mult, floor, cap)) for p in preds]
 

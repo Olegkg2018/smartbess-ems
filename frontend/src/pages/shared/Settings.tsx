@@ -18,6 +18,7 @@ export default function Settings() {
     bessSerialParity, setBessSerialParity, bessSerialStopbits, setBessSerialStopbits,
     bessSerialBytesize, setBessSerialBytesize, bessModbusUnitId, setBessModbusUnitId,
     bessDeviceProfile, setBessDeviceProfile, activeRole,
+    marketPriceFloorUah, setMarketPriceFloorUah, marketPriceCapUah, setMarketPriceCapUah,
     dispatcherSchedule, dispatcherActions, saveDispatcherScheduleNow,
   } = useApp();
 
@@ -99,6 +100,21 @@ export default function Settings() {
             Не впливає на ціну/виконання заявки в "Заявка РДН" (диспетчер бачить чисту вартість енергії) —
             додається лише в підсумковому фінансовому результаті (Реалізований прибуток/Загальний дохід,
             "Ручне коригування заявок", Executive Summary).
+          </p>
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Ринкові межі ціни РДН/ВДР (₴/МВт·год): мінімум / максимум</label>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <input type="number" step={10} className="form-input" value={marketPriceFloorUah}
+              onChange={(e) => setMarketPriceFloorUah(Number(e.target.value))} title="Мінімальна ціна (може бути від'ємною після скасування прайс-кепів)" />
+            <input type="number" step={100} className="form-input" value={marketPriceCapUah}
+              onChange={(e) => setMarketPriceCapUah(Number(e.target.value))} title="Максимальна ціна (прайс-кеп)" />
+          </div>
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '6px', lineHeight: 1.5 }}>
+            Одні межі для ціни заявок, прогнозу моделі й ризик-сценаріїв плану. Чинні: 10 / 15 000 (реальний максимум
+            РДН і ВДР з серпня 2025). З 1 травня 2027 (закон 12087-д) прайс-кепи скасовуються і можливі від'ємні
+            ціни — тоді достатньо змінити межі тут; мінімум може бути від'ємним.
           </p>
         </div>
       </div>

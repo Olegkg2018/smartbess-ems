@@ -641,6 +641,8 @@ class SystemSettingsModel(BaseModel):
     bess_serial_bytesize: Optional[int] = None
     bess_modbus_unit_id: Optional[int] = None
     bess_device_profile: Optional[str] = None
+    market_price_floor_uah: Optional[float] = None
+    market_price_cap_uah: Optional[float] = None
 
 # Довідкові потужності для перетворення "% робочих АЕС/ГЕС" у МВт-дельту
 # (generation_adjustments.py). Це НЕ вигадка — реальні опубліковані дані:
@@ -691,6 +693,8 @@ DEFAULT_BESS_MODBUS_UNIT_ID = 1
 # читати телеметрію/віддавати команду конкретному BESS. У режимі simulator
 # ігнорується (симулятор завжди говорить власною картою).
 DEFAULT_BESS_DEVICE_PROFILE = 'generic_smartbess'
+# Ринкові межі ціни (src/core/market_bounds.py, CLAUDE.md п.61).
+from src.core.market_bounds import DEFAULT_PRICE_FLOOR_UAH, DEFAULT_PRICE_CAP_UAH
 
 # Акциз (3.2%) і втрати трансформаторного обладнання (1.5-2.5%) — з
 # зовнішнього ревью 2026-08-24 (CLAUDE.md п.32). Застосовність до цієї
@@ -755,13 +759,15 @@ def get_system_settings():
         "bess_serial_bytesize": DEFAULT_BESS_SERIAL_BYTESIZE,
         "bess_modbus_unit_id": DEFAULT_BESS_MODBUS_UNIT_ID,
         "bess_device_profile": DEFAULT_BESS_DEVICE_PROFILE,
+        "market_price_floor_uah": DEFAULT_PRICE_FLOOR_UAH,
+        "market_price_cap_uah": DEFAULT_PRICE_CAP_UAH,
     }
 
     if os.path.exists(path):
         try:
             with open(path, "r") as f:
                 saved = json.load(f)
-                for key in ("launch_date", "osr", "voltage_class", "margin", "nuclear_reference_capacity_mw", "hydro_reference_capacity_mw", "baseload_passthrough_ratio", "bid_reminder_telegram_enabled", "auto_dispatch_enabled", "excise_duty_pct", "transformer_loss_pct", "delivery_tariff_uah_per_mwh", "bess_connection_type", "bess_tcp_host", "bess_tcp_port", "bess_serial_port", "bess_serial_baudrate", "bess_serial_parity", "bess_serial_stopbits", "bess_serial_bytesize", "bess_modbus_unit_id", "bess_device_profile"):
+                for key in ("launch_date", "osr", "voltage_class", "margin", "nuclear_reference_capacity_mw", "hydro_reference_capacity_mw", "baseload_passthrough_ratio", "bid_reminder_telegram_enabled", "auto_dispatch_enabled", "excise_duty_pct", "transformer_loss_pct", "delivery_tariff_uah_per_mwh", "bess_connection_type", "bess_tcp_host", "bess_tcp_port", "bess_serial_port", "bess_serial_baudrate", "bess_serial_parity", "bess_serial_stopbits", "bess_serial_bytesize", "bess_modbus_unit_id", "bess_device_profile", "market_price_floor_uah", "market_price_cap_uah"):
                     if key in saved:
                         data[key] = saved[key]
         except Exception:
@@ -793,6 +799,11 @@ def save_system_settings(req: SystemSettingsModel):
     import os
     path = os.path.join(settings.DATA_DIR, "system_settings.json")
 
+    floor = req.market_price_floor_uah if req.market_price_floor_uah is not None else DEFAULT_PRICE_FLOOR_UAH
+    cap = req.market_price_cap_uah if req.market_price_cap_uah is not None else DEFAULT_PRICE_CAP_UAH
+    if floor >= cap:
+        raise HTTPException(status_code=400, detail=f"Мінімальна ціна ({floor}) має бути меншою за максимальну ({cap})")
+
     db = SessionLocal()
     try:
         data = {
@@ -818,6 +829,8 @@ def save_system_settings(req: SystemSettingsModel):
             "bess_serial_bytesize": req.bess_serial_bytesize if req.bess_serial_bytesize is not None else DEFAULT_BESS_SERIAL_BYTESIZE,
             "bess_modbus_unit_id": req.bess_modbus_unit_id if req.bess_modbus_unit_id is not None else DEFAULT_BESS_MODBUS_UNIT_ID,
             "bess_device_profile": req.bess_device_profile if req.bess_device_profile is not None else DEFAULT_BESS_DEVICE_PROFILE,
+            "market_price_floor_uah": req.market_price_floor_uah if req.market_price_floor_uah is not None else DEFAULT_PRICE_FLOOR_UAH,
+            "market_price_cap_uah": req.market_price_cap_uah if req.market_price_cap_uah is not None else DEFAULT_PRICE_CAP_UAH,
         }
 
         # 2026-08-26: раніше цей запис ПОВНІСТЮ перезаписував файл лише

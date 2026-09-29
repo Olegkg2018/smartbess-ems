@@ -15,6 +15,7 @@ import src.modules.market_data_service.data_manager as dm
 from src.database.session import SessionLocal
 from src.database.models import WeatherForecastArchive
 from src.core.time_utils import kyiv_to_utc
+from src.core.market_bounds import clip_price
 # Фаза B (2026-08-21): FEATURES/побудова ознак/пост-обробка винесені в
 # feature_pipeline.py — єдине джерело і для навчання/бектеста, і для живого
 # прогнозу (раніше prepare_features/build_forecast_feature_matrix були
@@ -890,8 +891,8 @@ def estimate_idm_price_for_hour(actual_dam_price_uah, as_of_date=None):
 
     recent = df_hist.dropna(subset=['Price', 'IDM_Price']).tail(168)
     if len(recent) < 24:
-        return float(np.clip(actual_dam_price_uah, PRICE_FLOOR, PRICE_CAP))
+        return clip_price(actual_dam_price_uah)
 
     median_diff = float((recent['IDM_Price'] - recent['Price']).median())
     estimate = actual_dam_price_uah + median_diff
-    return float(np.clip(estimate, PRICE_FLOOR, PRICE_CAP))
+    return clip_price(estimate)

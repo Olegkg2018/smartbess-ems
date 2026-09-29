@@ -7,6 +7,7 @@
 крок через `oree_client.MockOreeClient`, щоб решта автоматизованого циклу
 (звірка, аудит) могла будуватись і тестуватись вже зараз.
 """
+import os
 import datetime
 import pandas as pd
 
@@ -24,13 +25,46 @@ DEFAULT_MARGIN_PCT = 2.0
 # Це ІНША межа, ніж PRICE_FLOOR/PRICE_CAP=16000.0 у ml_pipeline.py/milp_model.py —
 # ті клипають ПРОГНОЗ ціни, а не саму ціну заявки, що піде в кабінет oree.com.ua.
 # Джерело: MEMORY.md §8.
-OREE_BID_PRICE_MIN_UAH = 10.0
-OREE_BID_PRICE_MAX_UAH = 50000.0
+# 2026-09-29 (CLAUDE.md п.61): межі 10..50000 з правил 2019 не відповідали
+# реальному ринку — з серпня 2025 фактичний максимум РДН/ВДР 15000. Тепер
+# межі — одне редаговане налаштування (src/core/market_bounds.py), спільне
+# для заявок, прогнозу й сценаріїв MILP. Константи лишились як дефолти.
+from src.core.market_bounds import (
+    get_market_price_bounds, DEFAULT_PRICE_FLOOR_UAH as OREE_BID_PRICE_MIN_UAH,
+    DEFAULT_PRICE_CAP_UAH as OREE_BID_PRICE_MAX_UAH,
+)
+
+
+def _is_at_bound(price):
+    floor, cap = get_market_price_bounds()
+    return price <= floor + 1e-6 or price >= cap - 1e-6
+
+
+def compute_bid_price(forecast_price, bid_type, margin_pct, margin_uah=None):
+    """Ціна заявки до клампу меж: прогноз ± буфер безпеки. Повертає
+    (bid_price_raw, applied_margin_pct). Абсолютний буфер (margin_uah, ₴) має
+    пріоритет над відсотковим. Відсотковий рахується від МОДУЛЯ прогнозу
+    (2026-09-29): при від'ємній ціні (після 1.05.2027) `forecast × (1 + m)`
+    для купівлі дало б ціну НИЖЧЕ прогнозу — протилежне суті буфера; для
+    додатних цін результат ідентичний попередній формулі."""
+    if margin_uah is not None:
+        buffer = margin_uah
+        # Еквівалентний % — лише для читабельності старих звітів/UI.
+        applied_margin_pct = (margin_uah / abs(forecast_price) * 100.0) if forecast_price else 0.0
+    else:
+        buffer = abs(forecast_price) * margin_pct / 100.0
+        applied_margin_pct = margin_pct
+    if bid_type == 'sell':
+        return forecast_price - buffer, applied_margin_pct
+    if bid_type == 'buy':
+        return forecast_price + buffer, applied_margin_pct
+    return forecast_price, applied_margin_pct
 
 
 def clamp_bid_price_to_oree_bounds(raw_price_uah: float) -> tuple:
-    """Обмежує ціну заявки легальними межами OREE. Повертає (clamped_price, was_clamped)."""
-    clamped = min(max(raw_price_uah, OREE_BID_PRICE_MIN_UAH), OREE_BID_PRICE_MAX_UAH)
+    """Обмежує ціну заявки ринковими межами (Settings). Повертає (clamped_price, was_clamped)."""
+    floor, cap = get_market_price_bounds()
+    clamped = min(max(raw_price_uah, floor), cap)
     return clamped, clamped != raw_price_uah
 
 # 2026-09-09: раніше СТАТИЧНА константа (стара сума 528.57+1500.0+
@@ -180,26 +214,7 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
         # величезний % від низької ціни й малий % від високої. В абсолютних
         # гривнях buy/sell вимагають майже однакової суми — тому єдиний
         # margin_uah ефективніший для обох напрямків одночасно.
-        if margin_uah is not None:
-            if bid_type == 'sell':
-                bid_price_raw = forecast_price - margin_uah
-            elif bid_type == 'buy':
-                bid_price_raw = forecast_price + margin_uah
-            else:
-                bid_price_raw = forecast_price
-            # Еквівалентний % — лише для читабельності старих звітів/UI, що
-            # й досі показують margin_pct; сам розрахунок вище вже
-            # відбувся в абсолютних гривнях, це не подвійне застосування.
-            applied_margin_pct = (margin_uah / forecast_price * 100.0) if forecast_price else 0.0
-        else:
-            if bid_type == 'sell':
-                bid_price_raw = forecast_price * (1.0 - margin_pct / 100.0)
-            elif bid_type == 'buy':
-                bid_price_raw = forecast_price * (1.0 + margin_pct / 100.0)
-            else:
-                bid_price_raw = forecast_price
-            applied_margin_pct = margin_pct
-
+        bid_price_raw, applied_margin_pct = compute_bid_price(forecast_price, bid_type, margin_pct, margin_uah)
         bid_price, _ = clamp_bid_price_to_oree_bounds(bid_price_raw)
 
         row = db.query(MarketBid).filter(
@@ -726,14 +741,61 @@ def save_actual_settlement_for_date(db, asset, target_date: datetime.datetime, h
     }
 
 
+IDM_RANGE_LOOKBACK_DAYS = 7
+_IDM_RANGE_CACHE = {}
+
+
+def idm_reference_range(kyiv_date_str: str) -> dict:
+    """
+    Реальний діапазон угод ВДР за кожну київську годину (2026-09-29, CLAUDE.md
+    п.61) — з добового файлу OREE (oree_xlsx.py → historical_data_merged.csv:
+    IDM_Min_Price / IDM_Max_Price / IDM_Last_Price). Якщо ВДР на цю добу вже
+    опублікований — його факт (`same_day=True`); інакше — найсвіжіша доба за
+    останні IDM_RANGE_LOOKBACK_DAYS днів із даними для цієї години (ВДР-
+    таблиця на oree поповнюється пізно ввечері, тож "сьогодні/завтра" майже
+    завжди береться з учора). Для диспетчера — орієнтир, за якими цінами
+    РЕАЛЬНО торгували, поряд з оцінкою/фактом середньозваженої ціни.
+    Повертає {година: {min, max, last, ref_date, same_day}} (години без даних
+    відсутні — не вигадуємо).
+    """
+    import src.modules.market_data_service.data_manager as dm
+    try:
+        mtime = os.path.getmtime(dm.MERGED_DATA_PATH)
+    except OSError:
+        return {}
+    key = (kyiv_date_str, mtime)
+    if key in _IDM_RANGE_CACHE:
+        return _IDM_RANGE_CACHE[key]
+
+    df = dm.load_merged_csv_cached(['Datetime', 'IDM_Min_Price', 'IDM_Max_Price', 'IDM_Last_Price'])
+    if 'IDM_Min_Price' not in df.columns:
+        return {}
+    target = datetime.date.fromisoformat(kyiv_date_str)
+    lo = kyiv_to_utc((target - datetime.timedelta(days=IDM_RANGE_LOOKBACK_DAYS)).isoformat(), 0)
+    hi = kyiv_to_utc((target + datetime.timedelta(days=1)).isoformat(), 0)
+    df = df[(df['Datetime'] >= lo) & (df['Datetime'] < hi)].dropna(subset=['IDM_Min_Price', 'IDM_Max_Price'])
+    kyiv = df['Datetime'].dt.tz_localize('UTC').dt.tz_convert('Europe/Kyiv')
+    df = df.assign(kdate=kyiv.dt.date, khour=kyiv.dt.hour).sort_values('Datetime')
+
+    out = {}
+    for hour, g in df.groupby('khour'):
+        row = g.iloc[-1]  # найсвіжіша доба з даними для цієї години
+        out[int(hour)] = {
+            'min': float(row['IDM_Min_Price']), 'max': float(row['IDM_Max_Price']),
+            'last': float(row['IDM_Last_Price']) if row['IDM_Last_Price'] == row['IDM_Last_Price'] else None,
+            'ref_date': row['kdate'].isoformat(), 'same_day': row['kdate'] == target,
+        }
+    if len(_IDM_RANGE_CACHE) > 64:
+        _IDM_RANGE_CACHE.clear()
+    _IDM_RANGE_CACHE[key] = out
+    return out
+
+
 def _bid_to_dict(b: MarketBid, soc_feasible=None) -> dict:
     """soc_feasible=None означає "не порахований" (заявка ще не проходила
     settle, або викликач не запросив MarketBidSocFeasibility) — не плутати
     з False ("порахований і фізично неможливий"). Див. _replay_soc_feasibility."""
-    price_clamped = (
-        b.bid_price_uah <= OREE_BID_PRICE_MIN_UAH + 1e-6
-        or b.bid_price_uah >= OREE_BID_PRICE_MAX_UAH - 1e-6
-    )
+    price_clamped = _is_at_bound(b.bid_price_uah)
 
     # 2026-09-09: ЧИСТА вартість енергії (ціна × обсяг), БЕЗ тарифів на
     # доставку і без деградації — за проханням користувача, диспетчер має
@@ -762,9 +824,15 @@ def _bid_to_dict(b: MarketBid, soc_feasible=None) -> dict:
     else:
         idm_fallback_energy_profit_uah = None
 
+    kyiv_ts = utc_to_kyiv(b.timestamp)
+    idm_range = idm_reference_range(kyiv_ts.date().isoformat()).get(kyiv_ts.hour)
+
     return {
         'energy_profit_uah': energy_profit_uah,
         'idm_fallback_energy_profit_uah': idm_fallback_energy_profit_uah,
+        # Реальний діапазон угод ВДР за цю годину (idm_reference_range) —
+        # None, якщо даних за останній тиждень немає.
+        'idm_range': idm_range,
         # Реальна київська година (CLAUDE.md п.26/27) — саме та, яку
         # диспетчер має ввести в кабінет oree.com.ua, а не сира UTC .hour.
         'hour': utc_to_kyiv(b.timestamp).hour,
@@ -790,7 +858,7 @@ def _bid_to_dict(b: MarketBid, soc_feasible=None) -> dict:
         # години ще не відбувся або ще не досинканий.
         'idm_fallback_price_is_actual': b.idm_fallback_price_is_actual,
         'bid_price_legally_clamped': price_clamped,
-        'oree_bid_price_bounds_uah': {'min': OREE_BID_PRICE_MIN_UAH, 'max': OREE_BID_PRICE_MAX_UAH},
+        'oree_bid_price_bounds_uah': dict(zip(('min', 'max'), get_market_price_bounds())),
         'forecast_run_id': b.forecast_run_id,
         # Емуляція подачі (oree_client.py) — НЕ реальна подача на біржу.
         'external_order_id': b.external_order_id,
@@ -805,10 +873,7 @@ def _bid_to_dict(b: MarketBid, soc_feasible=None) -> dict:
         # шляхом. Окремо від idm_fallback_price_uah (ринковий сигнал).
         'idm_bid_price_uah': b.idm_bid_price_uah,
         'idm_bid_price_legally_clamped': (
-            b.idm_bid_price_uah is not None and (
-                b.idm_bid_price_uah <= OREE_BID_PRICE_MIN_UAH + 1e-6
-                or b.idm_bid_price_uah >= OREE_BID_PRICE_MAX_UAH - 1e-6
-            )
+            b.idm_bid_price_uah is not None and _is_at_bound(b.idm_bid_price_uah)
         ),
         # Звірка з БР (2026-09-09) — реальні "Факт"-показники лічильника і
         # ціни небалансу, введені диспетчером вручну (див. докстрінг
