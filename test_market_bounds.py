@@ -83,3 +83,26 @@ def test_milp_charges_during_negative_prices_and_earns():
     # Дохід від розряду ввечері ≤ 3.2 МВт·год × 8000 = 25 600; прибуток вищий
     # за це лише тому, що за заряд у від'ємні години ще й доплатили.
     assert res['net_profit_uah'] > 25600
+
+
+def _bess():
+    return dict(battery_capacity=4000.0, max_charge_power=1000.0, max_discharge_power=1000.0,
+                charge_efficiency=0.95, discharge_efficiency=0.95, initial_soc=0.1, min_soc=0.1, max_soc=0.9,
+                max_cycles_per_day=1.5, degradation_cost=0.7, transmission_tariff=0.0, distribution_tariff=0.0,
+                dispatch_tariff=0.0, supplier_margin=0.0)
+
+
+def test_risk_scenarios_keep_order_for_negative_prices(settings_file, monkeypatch):
+    import numpy as np
+    import src.modules.optimization_service.milp_model as milp
+    settings_file({'market_price_floor_uah': -10000, 'market_price_cap_uah': 50000})
+    seen = []
+    monkeypatch.setattr(milp, 'optimize_battery_schedule',
+                        lambda p, **k: seen.append(list(p)) or {'status': 'Optimal', 'net_profit_uah': 0.0})
+    prices = [3000.0] * 12 + [-2000.0] * 12
+    milp.optimize_with_scenarios_and_risks(prices, volatility=0.2, num_simulations=1, **_bess())
+    base, pess, aggr = (np.array(x) for x in seen[:3])
+    assert (pess < base).all() and (aggr > base).all()
+    # Для додатних цін — тотожно старій мультиплікативній формулі.
+    assert np.allclose(pess[:12], 3000.0 * np.exp(-1.64 * 0.2))
+    assert np.allclose(aggr[:12], 3000.0 * np.exp(1.64 * 0.2))

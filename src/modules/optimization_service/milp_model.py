@@ -240,15 +240,17 @@ def optimize_with_scenarios_and_risks(
     Carlo теж виводиться з реальної ширини інтервалу (погодинно, тобто
     гетероскедастично), а не з фіксованої константи.
     """
-    prices = np.array(prices)
+    prices = np.array(prices, dtype=float)
     band_source = 'assumed_volatility'
     hourly_volatility = np.full(len(prices), volatility)
-    # Ринкові межі з Settings (src/core/market_bounds.py, 2026-09-29). Сценарії
-    # нижче мультиплікативні (ціна × exp(±σ)) — для ВІД'ЄМНИХ цін (після
-    # 1.05.2027) "песимістичний" і "агресивний" міняються місцями; до появи
-    # реальних від'ємних цін у даних це не проявляється — переглянути тоді.
     from src.core.market_bounds import get_market_price_bounds
     PRICE_FLOOR, PRICE_CAP = get_market_price_bounds()
+    # Зсув на |ціна|×(e^x−1) замість ціна×e^x: для додатних цін тотожно, а для
+    # від'ємних (після 1.05.2027) песимістичний сценарій лишається НИЖЧИМ.
+    scale = np.maximum(np.abs(prices), 1.0)
+
+    def shifted(log_factor):
+        return prices + scale * np.expm1(log_factor)
 
     if price_lower is not None and price_upper is not None and len(price_lower) == len(prices) and len(price_upper) == len(prices):
         prices_pess = np.clip(np.array(price_lower, dtype=float), PRICE_FLOOR, PRICE_CAP).tolist()
@@ -259,13 +261,14 @@ def optimize_with_scenarios_and_risks(
         # backs out an implied per-hour volatility from the real P90/point ratio,
         # so hours with a genuinely wider model interval get a wider Monte Carlo spread.
         with np.errstate(divide='ignore', invalid='ignore'):
-            implied = np.abs(np.log(np.clip(np.array(price_upper, dtype=float), PRICE_FLOOR, PRICE_CAP) / np.maximum(prices, 1.0))) / 1.2816
+            upper = np.clip(np.array(price_upper, dtype=float), PRICE_FLOOR, PRICE_CAP)
+            implied = np.abs(np.log1p((upper - prices) / scale)) / 1.2816
         hourly_volatility = np.nan_to_num(implied, nan=volatility, posinf=volatility, neginf=volatility)
         hourly_volatility = np.clip(hourly_volatility, 0.03, 1.0)
     else:
         # Fallback: no real quantile band supplied — theoretical assumption, as before.
-        prices_pess = np.clip(prices * np.exp(-1.64 * volatility), PRICE_FLOOR, PRICE_CAP).tolist()
-        prices_aggr = np.clip(prices * np.exp(1.64 * volatility), PRICE_FLOOR, PRICE_CAP).tolist()
+        prices_pess = np.clip(shifted(-1.64 * volatility), PRICE_FLOOR, PRICE_CAP).tolist()
+        prices_aggr = np.clip(shifted(1.64 * volatility), PRICE_FLOOR, PRICE_CAP).tolist()
 
     prices_base = prices.tolist()
 
@@ -281,7 +284,7 @@ def optimize_with_scenarios_and_risks(
     for _ in range(num_simulations):
         # Generate stochastic prices (per-hour volatility, real or assumed)
         noise = np.random.normal(0, 1.0, size=len(prices)) * hourly_volatility
-        sim_p = np.clip(prices * np.exp(noise), PRICE_FLOOR, PRICE_CAP).tolist()
+        sim_p = np.clip(shifted(noise), PRICE_FLOOR, PRICE_CAP).tolist()
         try:
             res = optimize_battery_schedule(sim_p, **bess_params)
             sim_profits.append(res['net_profit_uah'])
