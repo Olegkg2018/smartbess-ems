@@ -140,3 +140,23 @@ def test_scada_skips_unexecuted_bid(db_asset):
     assert _bid_not_executed(db, asset.id, t) is True
     assert _bid_not_executed(db, asset.id, t2) is False
     assert _bid_not_executed(db, asset.id, kyiv_to_utc(DAY, 3)) is False
+
+
+def test_soc_replay_tolerates_rounded_volumes(db_asset, monkeypatch):
+    # Реальний випадок 2026-10-08: план довів SoC рівно до мінімуму, а через
+    # округлений volume_kw реплей промахувався на ~3e-9 МВт·год і позначав
+    # виконаний продаж "фізично неможливим", ламаючи й наступні купівлі.
+    db, asset = db_asset
+    t0 = kyiv_to_utc(DAY, 0)
+    min_soc = asset.min_soc_pct / 100.0 * asset.capacity_mwh
+    start = min_soc + 1.0 / asset.efficiency_discharge - 3.5e-9
+    monkeypatch.setattr(bs, 'get_current_soc_fraction', lambda *a, **k: start / asset.capacity_mwh)
+    bids = [MarketBid(timestamp=t0 + datetime.timedelta(hours=8), asset_id=asset.id, bid_type='sell', volume_kw=1000.0,
+                      forecast_price_uah=7000.0, margin_pct=0.0, bid_price_uah=2000.0, executed=True),
+            MarketBid(timestamp=t0 + datetime.timedelta(hours=9), asset_id=asset.id, bid_type='sell', volume_kw=1000.0,
+                      forecast_price_uah=7000.0, margin_pct=0.0, bid_price_uah=2000.0, executed=True)]
+    soc_map = bs._replay_soc_feasibility(db, asset, t0, bids)
+    assert soc_map[bids[0].timestamp] is True
+    # Справжня нестача заряду (батарея вже на мінімумі) як і раніше ловиться.
+    assert soc_map[bids[1].timestamp] is False
+    db.commit()

@@ -503,7 +503,13 @@ def _replay_soc_feasibility(db, asset, target_date: datetime.datetime, settled_b
         MarketBidSocFeasibility.timestamp < day_end,
     ).delete()
 
-    EPS = 1e-9
+    # Допуск 1 кВт·год, а не 1e-9: volume_kw зберігається округленим (5 знаків),
+    # тож план MILP, що доходить рівно до min/max SoC, у реплеї промахувався на
+    # ~1e-9 МВт·год і реально виконану годину позначав "фізично неможлива",
+    # а далі каскадом ламались наступні години (2026-10-08: продаж 08:00,
+    # купівлі 13-14:00). Після дії SoC притискаємо до меж, щоб похибка не
+    # накопичувалась.
+    EPS = 1e-3
     soc_map = {}
     for b in settled_bids:
         soc_before = soc_mwh
@@ -512,12 +518,12 @@ def _replay_soc_feasibility(db, asset, target_date: datetime.datetime, settled_b
             proposed = soc_mwh + (b.volume_kw / 1000.0) * asset.efficiency_charge
             feasible = proposed <= max_soc_mwh + EPS
             if feasible:
-                soc_mwh = proposed
+                soc_mwh = min(proposed, max_soc_mwh)
         elif b.executed and b.bid_type == 'sell':
             proposed = soc_mwh - (b.volume_kw / 1000.0) / asset.efficiency_discharge
             feasible = proposed >= min_soc_mwh - EPS
             if feasible:
-                soc_mwh = proposed
+                soc_mwh = max(proposed, min_soc_mwh)
         # standby або executed=False — SoC не змінюється, feasible=True (питання неприменимо)
 
         db.add(MarketBidSocFeasibility(
