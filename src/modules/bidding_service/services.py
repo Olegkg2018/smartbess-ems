@@ -122,6 +122,50 @@ def get_tariff_kwargs() -> dict:
     )
 
 
+BID_PRICE_MODES = ('breakeven', 'margin')
+DEFAULT_BID_PRICE_MODE = 'breakeven'
+
+
+def get_bid_price_mode() -> str:
+    """Режим ціни заявки з system_settings.json: 'breakeven' (дефолт з
+    2026-10-07) або 'margin' (прогноз ± буфер безпеки)."""
+    import json
+    from src.core.config import settings
+    try:
+        with open(os.path.join(settings.DATA_DIR, "system_settings.json")) as f:
+            mode = json.load(f).get("bid_price_mode")
+    except Exception:
+        mode = None
+    return mode if mode in BID_PRICE_MODES else DEFAULT_BID_PRICE_MODE
+
+
+def compute_breakeven_limits(day_bids, efficiency, deg_cost_uah_per_mwh, tariff_uah_per_mwh=0.0):
+    """Граничні (беззбиткові) ціни заявок доби. day_bids — [(bid_type,
+    volume_kw, forecast_price)]. Повертає (buy_max, sell_min); None, якщо на
+    добі нема протилежної сторони.
+
+    На РДН аукціон єдиної ціни: виконана заявка розраховується за ціною
+    ринку, а не за своєю, тож ціна заявки визначає лише, ЧИ виконається
+    угода. Тому заявка подається за ціною, до якої угода ще окупається:
+    - купівля 1 МВт·год → η МВт·год продажу за середньою очікуваною ціною
+      продажу S мінус знос: buy_max = η·(S − знос) − тариф;
+    - продаж 1 МВт·год коштує 1/η МВт·год купівлі за середньою ціною B плюс
+      знос: sell_min = (B + тариф)/η + знос; без купівлі цієї доби (енергія
+      вже в батареї — витрачені кошти не повертаються) sell_min = знос.
+    Аналіз 587 звірених заявок (scratch/analysis_bid_margin_sim.py,
+    08–10.2026): буфер 2% давав 72%/61% виконання buy/sell, беззбиткова
+    ціна — ~100% і +70% прибутку."""
+    def wavg(kind):
+        rows = [(v, p) for t, v, p in day_bids if t == kind and v > 0]
+        vol = sum(v for v, _ in rows)
+        return sum(v * p for v, p in rows) / vol if vol > 0 else None
+
+    s_avg, b_avg = wavg('sell'), wavg('buy')
+    buy_max = efficiency * (s_avg - deg_cost_uah_per_mwh) - tariff_uah_per_mwh if s_avg is not None else None
+    sell_min = (b_avg + tariff_uah_per_mwh) / efficiency + deg_cost_uah_per_mwh if b_avg is not None else deg_cost_uah_per_mwh
+    return buy_max, sell_min
+
+
 def get_margin_pct(db, asset_id: str, target_date: datetime.datetime) -> float:
     override = db.query(BidMarginOverride).filter(
         BidMarginOverride.asset_id == asset_id, BidMarginOverride.date == target_date,
@@ -187,6 +231,29 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
     # run_optimization_background_job, інакше знову розійдуться.
     now_utc = datetime.datetime.utcnow()
 
+    def plan_side(p):
+        if p.target_power_mw > 0.001:
+            return 'sell', p.target_power_mw * 1000.0
+        if p.target_power_mw < -0.001:
+            return 'buy', -p.target_power_mw * 1000.0
+        return 'standby', 0.0
+
+    bid_price_mode = get_bid_price_mode()
+    buy_max = sell_min = None
+    if bid_price_mode == 'breakeven':
+        # Межі рахуються по ВСІЙ добі (і вже минулих годинах) — це ціна
+        # угоди, а не те, що ще можна перезаписати.
+        day_bids = []
+        for p in plans:
+            side, vol = plan_side(p)
+            fp = forecast_by_hour.get(utc_to_kyiv(p.timestamp).hour)
+            if fp is not None:
+                day_bids.append((side, vol, fp))
+        buy_max, sell_min = compute_breakeven_limits(
+            day_bids, asset.efficiency_charge * asset.efficiency_discharge,
+            asset.deg_cost_per_mwh, get_delivery_tariff_uah_per_mwh(),
+        )
+
     bids = []
     for p in plans:
         if not force_full_day and p.timestamp + datetime.timedelta(hours=1) <= now_utc:
@@ -196,15 +263,7 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
         if forecast_price is None:
             continue
 
-        if p.target_power_mw > 0.001:
-            bid_type = 'sell'
-            volume_kw = p.target_power_mw * 1000.0
-        elif p.target_power_mw < -0.001:
-            bid_type = 'buy'
-            volume_kw = -p.target_power_mw * 1000.0
-        else:
-            bid_type = 'standby'
-            volume_kw = 0.0
+        bid_type, volume_kw = plan_side(p)
 
         # Буфер безпеки — АБСОЛЮТНИЙ (₴/МВт·год), якщо налаштовано, інакше
         # відсотковий (стара поведінка). Реальний аналіз 323 звірених заявок
@@ -214,7 +273,16 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
         # величезний % від низької ціни й малий % від високої. В абсолютних
         # гривнях buy/sell вимагають майже однакової суми — тому єдиний
         # margin_uah ефективніший для обох напрямків одночасно.
-        bid_price_raw, applied_margin_pct = compute_bid_price(forecast_price, bid_type, margin_pct, margin_uah)
+        limit = buy_max if bid_type == 'buy' else sell_min if bid_type == 'sell' else None
+        if limit is not None:
+            bid_price_raw = limit
+            row_margin_uah = abs(limit - forecast_price)
+            applied_margin_pct = row_margin_uah / abs(forecast_price) * 100.0 if forecast_price else 0.0
+            row_mode = 'breakeven'
+        else:
+            bid_price_raw, applied_margin_pct = compute_bid_price(forecast_price, bid_type, margin_pct, margin_uah)
+            row_margin_uah = margin_uah
+            row_mode = 'margin'
         bid_price, _ = clamp_bid_price_to_oree_bounds(bid_price_raw)
 
         row = db.query(MarketBid).filter(
@@ -227,7 +295,8 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
         row.volume_kw = volume_kw
         row.forecast_price_uah = forecast_price
         row.margin_pct = applied_margin_pct
-        row.margin_uah = margin_uah
+        row.margin_uah = row_margin_uah
+        row.bid_price_mode = row_mode
         row.bid_price_uah = bid_price
         # Lineage (CODE_REVIEW.md п.7-20) — той самий ForecastRun, що дав
         # forecast_price вище (p — той самий ChargeDischargePlan рядок).
@@ -266,6 +335,9 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
         'date': utc_to_kyiv(target_date).date().isoformat(),
         'margin_pct': margin_pct,
         'margin_uah': margin_uah,
+        'bid_price_mode': bid_price_mode,
+        'breakeven_buy_max_uah': buy_max,
+        'breakeven_sell_min_uah': sell_min,
         'n_bids': len(bids),
         'n_price_clamped': sum(1 for d in bid_dicts if d['bid_price_legally_clamped']),
         'bids': bid_dicts,
@@ -845,6 +917,7 @@ def _bid_to_dict(b: MarketBid, soc_feasible=None) -> dict:
         # (₴/МВт·год); margin_pct тоді містить лише еквівалентний %, для
         # зворотної сумісності зі старими звітами.
         'margin_uah': b.margin_uah,
+        'bid_price_mode': b.bid_price_mode,
         'bid_price_uah': b.bid_price_uah,
         'actual_price_uah': b.actual_price_uah,
         'executed': b.executed,

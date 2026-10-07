@@ -297,7 +297,9 @@ export default function OptimizationSchedule() {
 
   const socSourceLabel: Record<string, { text: string; color: string; icon: any }> = {
     manual: { text: 'Ручне значення диспетчера', color: 'var(--color-blue)', icon: Pencil },
-    scada_telemetry: { text: 'Реальна SCADA-телеметрія', color: 'var(--color-emerald)', icon: Radio },
+    scada_midnight: { text: 'SCADA-телеметрія батареї на 00:00', color: 'var(--color-emerald)', icon: Radio },
+    realized_previous_day: { text: 'Реальний кінець попередньої доби (з урахуванням невиконаних заявок)', color: 'var(--color-emerald)', icon: History },
+    scada_telemetry: { text: 'Остання SCADA-телеметрія (немає даних за попередню добу)', color: 'var(--color-amber)', icon: Radio },
     calculated_previous_day: { text: 'Розрахунок з кінця попередньої доби (учорашній MILP-план)', color: '#8b5cf6', icon: History },
     fallback_default: { text: "Фолбек 20% — немає ні телеметрії, ні розрахунку за попередню добу", color: 'var(--color-amber)', icon: AlertTriangle },
   };
@@ -360,6 +362,13 @@ export default function OptimizationSchedule() {
           ризику, а не сам прогноз.
         </p>
         <BidGateCountdown targetDate={targetDate} />
+        {bidMargin?.bid_price_mode === 'breakeven' && (
+          <p style={{ fontSize: '0.8rem', color: 'var(--color-emerald)', margin: '0 0 12px' }}>
+            Режим ціни заявки: беззбиткова ціна (Налаштування). Купівля подається до граничної ціни, за якої заряд ще
+            окупається вечірнім продажем, продаж — від собівартості заряду. Буфер нижче діє лише для годин без
+            протилежної сторони (напр. заряд без продажу цієї доби).
+          </p>
+        )}
         {!bidMargin ? (
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Завантаження...</p>
         ) : (

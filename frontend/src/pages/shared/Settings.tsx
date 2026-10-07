@@ -19,6 +19,7 @@ export default function Settings() {
     bessSerialBytesize, setBessSerialBytesize, bessModbusUnitId, setBessModbusUnitId,
     bessDeviceProfile, setBessDeviceProfile, activeRole,
     marketPriceFloorUah, setMarketPriceFloorUah, marketPriceCapUah, setMarketPriceCapUah,
+    bidPriceMode, setBidPriceMode,
     dispatcherSchedule, dispatcherActions, saveDispatcherScheduleNow,
   } = useApp();
 
@@ -115,6 +116,22 @@ export default function Settings() {
             Одні межі для ціни заявок, прогнозу моделі й ризик-сценаріїв плану. Чинні: 10 / 15 000 (реальний максимум
             РДН і ВДР з серпня 2025). З 1 травня 2027 (закон 12087-д) прайс-кепи скасовуються і можливі від'ємні
             ціни — тоді достатньо змінити межі тут; мінімум може бути від'ємним.
+          </p>
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Ціна заявки РДН</label>
+          <select className="form-input" value={bidPriceMode}
+            onChange={(e) => setBidPriceMode(e.target.value as 'breakeven' | 'margin')}>
+            <option value="breakeven">Беззбиткова ціна (рекомендовано)</option>
+            <option value="margin">Прогноз ± буфер безпеки</option>
+          </select>
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '6px', lineHeight: 1.5 }}>
+            На РДН аукціон єдиної ціни: виконана заявка розраховується за ціною ринку, а не за нашою, тож ціна заявки
+            лише визначає, чи пройде угода. Беззбиткова ціна: купівля — до ККД × (середня очікувана ціна продажу доби −
+            знос), продаж — від (середня ціна купівлі доби) / ККД + знос. Аналіз 587 заявок (серпень–жовтень 2026):
+            буфер 2% — виконувалось 72% купівель і 61% продажів; беззбиткова ціна — майже всі, прибуток +70%.
+            Буфер безпеки на сторінці заявок тоді діє лише для годин без протилежної сторони.
           </p>
         </div>
       </div>

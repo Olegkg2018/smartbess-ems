@@ -8,7 +8,7 @@ from src.database.models import Asset, MarketBid, BidMarginOverride, MarketPrice
 from src.core.security import RoleChecker
 import src.modules.market_data_service.data_manager as dm
 from src.modules.bidding_service.services import (
-    generate_bids_for_date, settle_bids_for_date, get_margin_pct, DEFAULT_MARGIN_PCT, _bid_to_dict,
+    generate_bids_for_date, settle_bids_for_date, get_margin_pct, DEFAULT_MARGIN_PCT, _bid_to_dict, get_bid_price_mode,
     build_daily_action_summary, submit_single_idm_fallback_bid, save_actual_settlement_for_date,
 )
 from src.core.time_utils import kyiv_to_utc, kyiv_day_bounds, utc_to_kyiv
@@ -87,6 +87,7 @@ def get_margin(asset_id: str, date: str):
         return {
             "date": date, "margin_pct": override.margin_pct if override else DEFAULT_MARGIN_PCT,
             "margin_uah": override.margin_uah if override else None,
+            "bid_price_mode": get_bid_price_mode(),
             "source": "manual" if override else "default",
         }
     finally:

@@ -268,7 +268,7 @@ export interface InitialSoc {
   date: string;
   capacity_kwh: number;
   capacity_pct: number;
-  source: 'manual' | 'scada_telemetry' | 'calculated_previous_day' | 'fallback_default';
+  source: 'manual' | 'scada_midnight' | 'realized_previous_day' | 'scada_telemetry' | 'calculated_previous_day' | 'fallback_default';
   has_manual_override: boolean;
   telemetry_available: boolean;
   previous_day_calculated_available: boolean;
@@ -300,6 +300,7 @@ export interface BidMargin {
   // над margin_pct при генерації заявок. null = звичайний відсотковий режим.
   margin_uah: number | null;
   source: 'manual' | 'default';
+  bid_price_mode?: 'breakeven' | 'margin';
 }
 
 /** Маржа заявки РДН на добу: sell = прогноз*(1-маржа), buy = прогноз*(1+маржа) — керує ймовірністю виконання.

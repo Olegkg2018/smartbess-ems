@@ -9,7 +9,7 @@ from src.database.session import SessionLocal
 from src.database.models import Asset, ChargeDischargePlan, PriceForecast, ForecastRun, ManualOverride, InitialSocOverride, BessTelemetry
 import src.modules.optimization_service.milp_model as opt
 import src.modules.market_data_service.data_manager as dm
-from src.modules.scada_service.soc_state import get_current_soc_fraction, previous_day_calculated_fraction
+from src.modules.scada_service.soc_state import get_current_soc_fraction, previous_day_calculated_fraction, get_start_of_day_soc
 from src.core.redis import set_job_status, get_job_status
 from src.core.security import RoleChecker
 from src.core.time_utils import kyiv_to_utc, kyiv_day_bounds, utc_to_kyiv
@@ -293,11 +293,9 @@ class InitialSocOverrideModel(BaseModel):
 @router.get("/initial-soc", dependencies=[Depends(RoleChecker(["Viewer", "Operator", "Manager", "Admin"]))])
 def get_initial_soc(asset_id: str, date: str):
     """
-    Показує, що РЕАЛЬНО буде використано як SoC на 00:00 target_date — ручне
-    значення (якщо збережене), інакше останнє з SCADA-телеметрії, інакше
-    розрахункова ємність на кінець попередньої доби (з учорашнього MILP-
-    плану), інакше фолбек 20%. source дозволяє диспетчеру бачити, звідки
-    взялось число, і наскільки йому варто довіряти.
+    Показує, що РЕАЛЬНО буде використано як SoC на 00:00 target_date
+    (пріоритет джерел — soc_state.get_start_of_day_soc). source дозволяє
+    диспетчеру бачити, звідки взялось число, і наскільки йому варто довіряти.
     """
     db = SessionLocal()
     try:
@@ -306,49 +304,18 @@ def get_initial_soc(asset_id: str, date: str):
             raise HTTPException(status_code=404, detail="Asset not found")
 
         target_dt = kyiv_to_utc(date, 0)
-
         override = db.query(InitialSocOverride).filter(
             InitialSocOverride.asset_id == asset_id,
             InitialSocOverride.date == target_dt
         ).first()
-
         tel = db.query(BessTelemetry).filter(
             BessTelemetry.asset_id == asset_id
         ).order_by(BessTelemetry.timestamp.desc()).first()
-
-        prev_fraction = None
-        if asset.capacity_mwh > 0:
-            prev_fraction = previous_day_calculated_fraction(db, asset, target_dt)
-
-        # 2026-08-27: цей ендпоінт РАНІШЕ дублював свою власну версію
-        # пріоритету (override→телеметрія→план→фолбек), окремо від
-        # get_current_soc_fraction — коли той отримав розворот пріоритету
-        # для майбутньої дати (soc_state.py, той самий день), ЦЕЙ дубль
-        # лишився недоторканим і продовжував чесно показувати
-        # "scada_telemetry", хоча РЕАЛЬНИЙ MILP-розрахунок (той самий день,
-        # той самий баг) уже брав план. Диспетчер бачив одне джерело у
-        # панелі, а фактично використовувалось інше — знайдено
-        # користувачем. Тепер та сама логіка "майбутня дата → спершу план
-        # своєї попередньої доби" тут теж, щоб панель чесно показувала, що
-        # РЕАЛЬНО буде використано.
-        today_kyiv_str = utc_to_kyiv(datetime.datetime.utcnow()).strftime('%Y-%m-%d')
-        is_future_date = date > today_kyiv_str
-
-        if override is not None:
-            source = "manual"
-            capacity_kwh = override.capacity_kwh
-        elif is_future_date and prev_fraction is not None:
-            source = "calculated_previous_day"
-            capacity_kwh = prev_fraction * asset.capacity_mwh * 1000.0
-        elif tel is not None:
-            source = "scada_telemetry"
-            capacity_kwh = tel.current_soc_mwh * 1000.0
-        elif prev_fraction is not None:
-            source = "calculated_previous_day"
-            capacity_kwh = prev_fraction * asset.capacity_mwh * 1000.0
-        else:
-            source = "fallback_default"
-            capacity_kwh = asset.capacity_mwh * 1000.0 * 0.20
+        prev_fraction = previous_day_calculated_fraction(db, asset, target_dt) if asset.capacity_mwh > 0 else None
+        # Та сама функція, що й у MILP/звірці — панель показує рівно те, що
+        # реально буде використано як SoC на 00:00.
+        fraction, source = get_start_of_day_soc(db, asset, date)
+        capacity_kwh = fraction * asset.capacity_mwh * 1000.0
 
         return {
             "asset_id": asset_id,
@@ -643,6 +610,8 @@ class SystemSettingsModel(BaseModel):
     bess_device_profile: Optional[str] = None
     market_price_floor_uah: Optional[float] = None
     market_price_cap_uah: Optional[float] = None
+    # 'breakeven' | 'margin' — bidding_service.get_bid_price_mode
+    bid_price_mode: Optional[str] = None
 
 # Довідкові потужності для перетворення "% робочих АЕС/ГЕС" у МВт-дельту
 # (generation_adjustments.py). Це НЕ вигадка — реальні опубліковані дані:
@@ -695,6 +664,7 @@ DEFAULT_BESS_MODBUS_UNIT_ID = 1
 DEFAULT_BESS_DEVICE_PROFILE = 'generic_smartbess'
 # Ринкові межі ціни (src/core/market_bounds.py, CLAUDE.md п.61).
 from src.core.market_bounds import DEFAULT_PRICE_FLOOR_UAH, DEFAULT_PRICE_CAP_UAH
+from src.modules.bidding_service.services import BID_PRICE_MODES, DEFAULT_BID_PRICE_MODE
 
 # Акциз (3.2%) і втрати трансформаторного обладнання (1.5-2.5%) — з
 # зовнішнього ревью 2026-08-24 (CLAUDE.md п.32). Застосовність до цієї
@@ -761,13 +731,14 @@ def get_system_settings():
         "bess_device_profile": DEFAULT_BESS_DEVICE_PROFILE,
         "market_price_floor_uah": DEFAULT_PRICE_FLOOR_UAH,
         "market_price_cap_uah": DEFAULT_PRICE_CAP_UAH,
+        "bid_price_mode": DEFAULT_BID_PRICE_MODE,
     }
 
     if os.path.exists(path):
         try:
             with open(path, "r") as f:
                 saved = json.load(f)
-                for key in ("launch_date", "osr", "voltage_class", "margin", "nuclear_reference_capacity_mw", "hydro_reference_capacity_mw", "baseload_passthrough_ratio", "bid_reminder_telegram_enabled", "auto_dispatch_enabled", "excise_duty_pct", "transformer_loss_pct", "delivery_tariff_uah_per_mwh", "bess_connection_type", "bess_tcp_host", "bess_tcp_port", "bess_serial_port", "bess_serial_baudrate", "bess_serial_parity", "bess_serial_stopbits", "bess_serial_bytesize", "bess_modbus_unit_id", "bess_device_profile", "market_price_floor_uah", "market_price_cap_uah"):
+                for key in ("launch_date", "osr", "voltage_class", "margin", "nuclear_reference_capacity_mw", "hydro_reference_capacity_mw", "baseload_passthrough_ratio", "bid_reminder_telegram_enabled", "auto_dispatch_enabled", "excise_duty_pct", "transformer_loss_pct", "delivery_tariff_uah_per_mwh", "bess_connection_type", "bess_tcp_host", "bess_tcp_port", "bess_serial_port", "bess_serial_baudrate", "bess_serial_parity", "bess_serial_stopbits", "bess_serial_bytesize", "bess_modbus_unit_id", "bess_device_profile", "market_price_floor_uah", "market_price_cap_uah", "bid_price_mode"):
                     if key in saved:
                         data[key] = saved[key]
         except Exception:
@@ -831,6 +802,7 @@ def save_system_settings(req: SystemSettingsModel):
             "bess_device_profile": req.bess_device_profile if req.bess_device_profile is not None else DEFAULT_BESS_DEVICE_PROFILE,
             "market_price_floor_uah": req.market_price_floor_uah if req.market_price_floor_uah is not None else DEFAULT_PRICE_FLOOR_UAH,
             "market_price_cap_uah": req.market_price_cap_uah if req.market_price_cap_uah is not None else DEFAULT_PRICE_CAP_UAH,
+            "bid_price_mode": req.bid_price_mode if req.bid_price_mode in BID_PRICE_MODES else DEFAULT_BID_PRICE_MODE,
         }
 
         # 2026-08-26: раніше цей запис ПОВНІСТЮ перезаписував файл лише

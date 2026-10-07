@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from src.core.config import settings
 from src.database.session import SessionLocal
-from src.database.models import Asset, BessTelemetry, ChargeDischargePlan, ManualOverride
+from src.database.models import Asset, BessTelemetry, ChargeDischargePlan, ManualOverride, MarketBid
 from src.modules.scada_service.device_profiles import DEFAULT_PROFILE, PROFILES, ProfileError, get_profile
 
 scada_thread = None
@@ -78,6 +78,11 @@ def _build_client(cfg: dict):
     # 'simulator' (і фолбек для 'disabled', яке start_scada_service узагалі
     # не запускає — див. app.py) — наш власний симулятор, завжди 127.0.0.1:5020.
     return ModbusTcpClient('127.0.0.1', port=5020), '127.0.0.1:5020 (simulator)'
+
+
+def _bid_not_executed(db, asset_id, hour_utc) -> bool:
+    bid = db.query(MarketBid).filter(MarketBid.asset_id == asset_id, MarketBid.timestamp == hour_utc).first()
+    return bid is not None and bid.bid_type in ('buy', 'sell') and bid.executed is False
 
 
 def poll_bess_and_control():
@@ -165,6 +170,12 @@ def poll_bess_and_control():
                 target_power_kw = int(override.power_mw * 1000.0)
                 decision = ('override', current_hour, target_power_kw)
                 msg = f"SCADA: Manual override for hour {current_hour.hour}:00. Action power command = {target_power_kw} kW."
+            elif plan and _bid_not_executed(db, asset.id, current_hour):
+                # Заявку РДН на цю годину не виконано — енергію не куплено/не
+                # продано, фізичний заряд/розряд створив би небаланс. Якщо
+                # диспетчер домовився на ВДР — він ставить ручну команду вище.
+                decision = ('bid_not_executed', current_hour, 0)
+                msg = f"SCADA: DAM bid for hour {current_hour.hour}:00 not executed — standby instead of plan {int(plan.target_power_mw * 1000.0)} kW."
             elif plan:
                 target_power_kw = int(plan.target_power_mw * 1000.0)
                 decision = ('plan', current_hour, target_power_kw)
