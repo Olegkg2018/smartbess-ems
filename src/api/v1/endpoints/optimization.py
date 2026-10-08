@@ -610,7 +610,7 @@ class SystemSettingsModel(BaseModel):
     bess_device_profile: Optional[str] = None
     market_price_floor_uah: Optional[float] = None
     market_price_cap_uah: Optional[float] = None
-    # 'breakeven' | 'margin' — bidding_service.get_bid_price_mode
+    # 'band' | 'breakeven' | 'margin' — bidding_service.get_bid_price_mode
     bid_price_mode: Optional[str] = None
 
 # Довідкові потужності для перетворення "% робочих АЕС/ГЕС" у МВт-дельту

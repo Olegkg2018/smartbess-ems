@@ -300,7 +300,7 @@ export interface BidMargin {
   // над margin_pct при генерації заявок. null = звичайний відсотковий режим.
   margin_uah: number | null;
   source: 'manual' | 'default';
-  bid_price_mode?: 'breakeven' | 'margin';
+  bid_price_mode?: 'band' | 'breakeven' | 'margin';
 }
 
 /** Маржа заявки РДН на добу: sell = прогноз*(1-маржа), buy = прогноз*(1+маржа) — керує ймовірністю виконання.
@@ -335,6 +335,8 @@ export interface MarketBid {
   // застосованим значенням); задано — реально застосований АБСОЛЮТНИЙ
   // буфер ₴/МВт·год (margin_pct тоді — лише еквівалентний %, 2026-09-08).
   margin_uah: number | null;
+  // null — історичні заявки (буфер); 'band' — P90/P10, 'breakeven' — беззбиткова межа.
+  bid_price_mode?: 'band' | 'breakeven' | 'margin' | null;
   bid_price_uah: number;
   actual_price_uah: number | null;
   executed: boolean | null;

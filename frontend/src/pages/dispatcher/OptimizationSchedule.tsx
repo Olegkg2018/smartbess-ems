@@ -7,7 +7,7 @@ import BidGateCountdown from '../../components/BidGateCountdown';
 import BidActionCenter from '../../components/BidActionCenter';
 import ConfirmModal from '../../components/ConfirmModal';
 import * as api from '../../api/client';
-import type { DayBidReportHour, IdmRange } from '../../api/client';
+import type { DayBidReportHour, IdmRange, MarketBid } from '../../api/client';
 
 // Той самий Kyiv wall-clock підхід, що вже є в BidGateCountdown.tsx —
 // не діляться спільним файлом (обидва прості й самодостатні), щоб не
@@ -37,6 +37,18 @@ function kyivWallClock(dateStr: string, hour: number): Date {
 // (спостережено, ~22:50 Kyiv) — це чесний індикатор "оцінка ще не
 // підтверджена", а не звинувачення в поломці.
 const IDM_ESTIMATE_STALE_MS = 2 * 60 * 60 * 1000;
+
+// Звідки взялась ціна заявки. Для P90/P10 і беззбиткового режиму відсоток
+// від прогнозу нічого не означає (напр. "маржа 158%" на нічній купівлі за
+// ~3000), тож показуємо відстань від прогнозу в гривнях.
+function bidPriceLabel(b: MarketBid): string {
+  const diff = Math.round(b.bid_price_uah - b.forecast_price_uah);
+  const signed = `${diff >= 0 ? '+' : '−'}${Math.abs(diff).toLocaleString()} грн до прогнозу`;
+  if (b.bid_price_mode === 'band') return `${b.bid_type === 'buy' ? 'P90' : 'P10'}, ${signed}`;
+  if (b.bid_price_mode === 'breakeven') return `беззбиткова, ${signed}`;
+  if (b.margin_uah != null) return `буфер ${Math.round(b.margin_uah).toLocaleString()} грн`;
+  return `буфер ${b.margin_pct}%`;
+}
 
 // Реальний діапазон угод ВДР за цю годину (2026-09-29, CLAUDE.md п.61) —
 // орієнтир для ціни заявки на ВДР поряд з оцінкою середньозваженої ціни.
@@ -362,6 +374,13 @@ export default function OptimizationSchedule() {
           ризику, а не сам прогноз.
         </p>
         <BidGateCountdown targetDate={targetDate} />
+        {bidMargin?.bid_price_mode === 'band' && (
+          <p style={{ fontSize: '0.8rem', color: 'var(--color-emerald)', margin: '0 0 12px' }}>
+            Режим ціни заявки: межі прогнозу (Налаштування). Купівля подається за верхньою межею прогнозу P90, продаж — за
+            нижньою P10 (факт виходить за них ~1 раз з 10), але не гірше точки беззбитковості. Буфер нижче діє лише для
+            годин без P10/P90.
+          </p>
+        )}
         {bidMargin?.bid_price_mode === 'breakeven' && (
           <p style={{ fontSize: '0.8rem', color: 'var(--color-emerald)', margin: '0 0 12px' }}>
             Режим ціни заявки: беззбиткова ціна (Налаштування). Купівля подається до граничної ціни, за якої заряд ще
@@ -445,12 +464,12 @@ export default function OptimizationSchedule() {
               <tbody>
                 {bids.filter((b) => b.bid_type !== 'standby').map((b) => (
                   <tr key={b.hour} className={b.executed === false ? 'row-alert' : undefined}>
-                    <td>{b.hour}</td>
+                    <td>{b.hour + 1} ({String(b.hour).padStart(2, '0')}:00–{String(b.hour + 1).padStart(2, '0')}:00)</td>
                     <td>{b.bid_type === 'sell' ? 'Продаж' : 'Купівля'}</td>
                     <td>{Math.round(b.volume_kw)}</td>
                     <td>{Math.round(b.forecast_price_uah).toLocaleString()}</td>
                     <td style={{ color: 'var(--color-blue)' }}>
-                      {Math.round(b.bid_price_uah).toLocaleString()} (ручна, маржа {b.margin_pct}%)
+                      {Math.round(b.bid_price_uah).toLocaleString()} ({bidPriceLabel(b)})
                       {b.bid_price_legally_clamped && (
                         <span
                           title={`Ціна скоригована до законної межі OREE (${b.oree_bid_price_bounds_uah.min}–${b.oree_bid_price_bounds_uah.max} грн/МВт·год)`}

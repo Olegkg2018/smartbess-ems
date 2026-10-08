@@ -160,3 +160,36 @@ def test_soc_replay_tolerates_rounded_volumes(db_asset, monkeypatch):
     # Справжня нестача заряду (батарея вже на мінімумі) як і раніше ловиться.
     assert soc_map[bids[1].timestamp] is False
     db.commit()
+
+
+def test_band_bid_price_capped_by_breakeven():
+    # Купівля за P90, але не вище беззбиткової межі; продаж за P10, але не нижче.
+    assert bs.compute_band_bid_price('buy', 200.0, 3000.0, buy_max=9000.0) == 3000.0
+    assert bs.compute_band_bid_price('buy', 200.0, 3000.0, buy_max=2500.0) == 2500.0
+    assert bs.compute_band_bid_price('sell', 7000.0, 12000.0, sell_min=2000.0) == 7000.0
+    assert bs.compute_band_bid_price('sell', 1500.0, 12000.0, sell_min=2000.0) == 2000.0
+    # Без P10/P90 — None (діє буфер), standby — завжди None.
+    assert bs.compute_band_bid_price('buy', None, None, buy_max=9000.0) is None
+    assert bs.compute_band_bid_price('standby', 1.0, 2.0) is None
+
+
+def test_generate_bids_band(db_asset, monkeypatch):
+    db, asset = db_asset
+    monkeypatch.setattr(bs, 'get_bid_price_mode', lambda: 'band')
+    monkeypatch.setattr(bs, 'get_delivery_tariff_uah_per_mwh', lambda: 0.0)
+    powers = [0.0] * 24
+    powers[12], powers[19] = -1.0, 1.0
+    _plan_day(db, asset, DAY, powers, 0.4)
+    t0 = kyiv_to_utc(DAY, 0)
+    for h in range(24):
+        p = {12: 400.0, 19: 9000.0}.get(h, 3000.0)
+        db.add(PriceForecast(timestamp=t0 + datetime.timedelta(hours=h), forecast_run_at=t0, model_version='test',
+                             predicted_price_uah=p, lower_bound_uah=p - 1000.0, upper_bound_uah=p + 1500.0))
+    db.commit()
+    res = bs.generate_bids_for_date(db, asset, t0, force_full_day=True)
+    assert res['status'] == 'ok' and res['bid_price_mode'] == 'band'
+    rows = {b.timestamp: b for b in db.query(MarketBid).filter(MarketBid.asset_id == asset.id, MarketBid.timestamp >= t0,
+                                                               MarketBid.timestamp < t0 + datetime.timedelta(hours=24))}
+    buy, sell = rows[t0 + datetime.timedelta(hours=12)], rows[t0 + datetime.timedelta(hours=19)]
+    assert buy.bid_price_mode == 'band' and buy.bid_price_uah == pytest.approx(1900.0)
+    assert sell.bid_price_mode == 'band' and sell.bid_price_uah == pytest.approx(8000.0)

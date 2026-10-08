@@ -131,7 +131,7 @@ interface AppState {
   bessDeviceProfile: string; setBessDeviceProfile: (v: string) => void;
   marketPriceFloorUah: number; setMarketPriceFloorUah: (v: number) => void;
   marketPriceCapUah: number; setMarketPriceCapUah: (v: number) => void;
-  bidPriceMode: 'breakeven' | 'margin'; setBidPriceMode: (v: 'breakeven' | 'margin') => void;
+  bidPriceMode: 'band' | 'breakeven' | 'margin'; setBidPriceMode: (v: 'band' | 'breakeven' | 'margin') => void;
   exciseDutyPct: number; setExciseDutyPct: (v: number) => void;
   transformerLossPct: number; setTransformerLossPct: (v: number) => void;
   // 2026-09-09: тариф на доставку (₴/МВт·год) — раніше захардкоджений
@@ -226,7 +226,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [bessDeviceProfile, setBessDeviceProfile] = useState('generic_smartbess');
   const [marketPriceFloorUah, setMarketPriceFloorUah] = useState(10.0);
   const [marketPriceCapUah, setMarketPriceCapUah] = useState(15000.0);
-  const [bidPriceMode, setBidPriceMode] = useState<'breakeven' | 'margin'>('breakeven');
+  const [bidPriceMode, setBidPriceMode] = useState<'band' | 'breakeven' | 'margin'>('band');
   const [exciseDutyPct, setExciseDutyPct] = useState(0);
   const [transformerLossPct, setTransformerLossPct] = useState(0);
   const [deliveryTariffUahPerMwh, setDeliveryTariffUahPerMwh] = useState(0.0);
@@ -311,7 +311,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (data.bess_device_profile != null) setBessDeviceProfile(data.bess_device_profile);
       if (data.market_price_floor_uah != null) setMarketPriceFloorUah(data.market_price_floor_uah);
       if (data.market_price_cap_uah != null) setMarketPriceCapUah(data.market_price_cap_uah);
-      if (data.bid_price_mode === 'breakeven' || data.bid_price_mode === 'margin') setBidPriceMode(data.bid_price_mode);
+      if (data.bid_price_mode === 'band' || data.bid_price_mode === 'breakeven' || data.bid_price_mode === 'margin') setBidPriceMode(data.bid_price_mode);
       if (data.excise_duty_pct != null) setExciseDutyPct(data.excise_duty_pct);
       if (data.transformer_loss_pct != null) setTransformerLossPct(data.transformer_loss_pct);
       if (data.delivery_tariff_uah_per_mwh != null) setDeliveryTariffUahPerMwh(data.delivery_tariff_uah_per_mwh);

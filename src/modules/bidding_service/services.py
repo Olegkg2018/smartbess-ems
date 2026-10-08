@@ -122,13 +122,16 @@ def get_tariff_kwargs() -> dict:
     )
 
 
-BID_PRICE_MODES = ('breakeven', 'margin')
-DEFAULT_BID_PRICE_MODE = 'breakeven'
+BID_PRICE_MODES = ('band', 'breakeven', 'margin')
+DEFAULT_BID_PRICE_MODE = 'band'
 
 
 def get_bid_price_mode() -> str:
-    """Режим ціни заявки з system_settings.json: 'breakeven' (дефолт з
-    2026-10-07) або 'margin' (прогноз ± буфер безпеки)."""
+    """Режим ціни заявки з system_settings.json:
+    - 'band' (дефолт з 2026-10-08) — купівля за P90, продаж за P10 прогнозу,
+      але не гірше точки беззбитковості;
+    - 'breakeven' — одразу беззбиткова межа;
+    - 'margin' — прогноз ± буфер безпеки."""
     import json
     from src.core.config import settings
     try:
@@ -164,6 +167,25 @@ def compute_breakeven_limits(day_bids, efficiency, deg_cost_uah_per_mwh, tariff_
     buy_max = efficiency * (s_avg - deg_cost_uah_per_mwh) - tariff_uah_per_mwh if s_avg is not None else None
     sell_min = (b_avg + tariff_uah_per_mwh) / efficiency + deg_cost_uah_per_mwh if b_avg is not None else deg_cost_uah_per_mwh
     return buy_max, sell_min
+
+
+def compute_band_bid_price(bid_type, lower_uah, upper_uah, buy_max=None, sell_min=None):
+    """Ціна заявки в режимі 'band': купівля за P90 (верхня межа прогнозу),
+    продаж за P10 (нижня). Факт виходить за межу лише в ~10% годин, тож
+    заявка проходить ~9 разів з 10, а ціна лишається прив'язаною до
+    прогнозу, а не до середньої ціни доби, як у беззбитковому режимі
+    (там купівля подавалась аж до ~9000 при прогнозі ~300). Додатково не
+    гірше точки беззбитковості: buy ≤ buy_max, sell ≥ sell_min.
+    None — немає P10/P90 на цю годину (тоді діє буфер).
+
+    Симуляція на 36 добах проду з P10/P90 (scratch/analysis_bid_band_sim.py,
+    09–10.2026): буфер 2% — 771 тис., P90/P10 — 1107 тис. (виконання 96%/93%,
+    0 збиткових діб), беззбиткова — 1166 тис."""
+    if bid_type == 'buy' and upper_uah is not None:
+        return min(upper_uah, buy_max) if buy_max is not None else upper_uah
+    if bid_type == 'sell' and lower_uah is not None:
+        return max(lower_uah, sell_min) if sell_min is not None else lower_uah
+    return None
 
 
 def get_margin_pct(db, asset_id: str, target_date: datetime.datetime) -> float:
@@ -216,6 +238,7 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
     # й на добу переходу DST (CLAUDE.md п.26/27), а не лише "випадково
     # правильно" через ідентичну логіку генерації по обидва боки.
     forecast_by_hour = {utc_to_kyiv(f.timestamp).hour: f.predicted_price_uah for f in forecasts}
+    band_by_hour = {utc_to_kyiv(f.timestamp).hour: (f.lower_bound_uah, f.upper_bound_uah) for f in forecasts}
     if len(forecast_by_hour) != 24:
         return {'status': 'no_forecast', 'message': f'Немає повного прогнозу цін на {target_date.date()} (є {len(forecast_by_hour)}/24 годин).'}
 
@@ -240,7 +263,7 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
 
     bid_price_mode = get_bid_price_mode()
     buy_max = sell_min = None
-    if bid_price_mode == 'breakeven':
+    if bid_price_mode in ('breakeven', 'band'):
         # Межі рахуються по ВСІЙ добі (і вже минулих годинах) — це ціна
         # угоди, а не те, що ще можна перезаписати.
         day_bids = []
@@ -273,12 +296,16 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
         # величезний % від низької ціни й малий % від високої. В абсолютних
         # гривнях buy/sell вимагають майже однакової суми — тому єдиний
         # margin_uah ефективніший для обох напрямків одночасно.
-        limit = buy_max if bid_type == 'buy' else sell_min if bid_type == 'sell' else None
+        if bid_price_mode == 'band':
+            limit = compute_band_bid_price(bid_type, *band_by_hour.get(hour, (None, None)),
+                                           buy_max=buy_max, sell_min=sell_min)
+        else:
+            limit = buy_max if bid_type == 'buy' else sell_min if bid_type == 'sell' else None
         if limit is not None:
             bid_price_raw = limit
             row_margin_uah = abs(limit - forecast_price)
             applied_margin_pct = row_margin_uah / abs(forecast_price) * 100.0 if forecast_price else 0.0
-            row_mode = 'breakeven'
+            row_mode = bid_price_mode
         else:
             bid_price_raw, applied_margin_pct = compute_bid_price(forecast_price, bid_type, margin_pct, margin_uah)
             row_margin_uah = margin_uah
@@ -1012,7 +1039,8 @@ def build_daily_action_summary(db, asset, target_date: datetime.datetime) -> dic
         if d['executed'] is False and d['idm_fallback_suggested']:
             actions.append({
                 'severity': 'warning', 'hour': d['hour'],
-                'text': (f"Год {d['hour']}: заявка РДН НЕ виконана (заявлено {round(d['bid_price_uah'])}, факт {round(d['actual_price_uah'] or 0)} грн/МВт·год) — "
+                # Година 1-24, як на oree.com.ua і в Excel (d['hour'] — київська 0-23).
+                'text': (f"Година {d['hour'] + 1} ({d['hour']:02d}:00–{d['hour'] + 1:02d}:00): заявка РДН НЕ виконана (заявлено {round(d['bid_price_uah'])}, факт {round(d['actual_price_uah'] or 0)} грн/МВт·год) — "
                          f"подайте на ВДР {round(d['volume_kw'])} кВт за ~{round(d['idm_fallback_price_uah'] or 0)} грн/МВт·год "
                          f"(очікуваний прибуток {round(d['idm_fallback_profit_uah'] or 0)} грн)."),
             })

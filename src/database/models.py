@@ -302,6 +302,7 @@ class MarketBid(Base):
     # не сирий 0. NULL — заявка згенерована у звичайному відсотковому
     # режимі, margin_pct вище — це і є реально застосоване значення.
     margin_uah = Column(Float, nullable=True)
+    # 'band' — P90 для купівлі / P10 для продажу (bidding_service.compute_band_bid_price),
     # 'breakeven' — беззбиткова ціна (bidding_service.compute_breakeven_limits),
     # 'margin' — прогноз ± буфер; NULL — історичні заявки (завжди буфер).
     bid_price_mode = Column(String(20), nullable=True)
