@@ -13,6 +13,55 @@ const mockTokenCache = new Map<UserRole, { token: string; obtainedAt: number }>(
 // POST /auth/mock-login — тепер вони чекають один спільний запит.
 const inflightTokenRequests = new Map<UserRole, Promise<string>>();
 
+// Пароль входу зберігається лише в sessionStorage (зникає після закриття
+// вкладки) і відправляється тільки на /auth/mock-login. Рівень доступу
+// (full/view) визначає сервер за паролем — клієнт лише запам'ятовує відповідь.
+export type AccessLevel = 'full' | 'view';
+const PW_KEY = 'smartbess_access_pw';
+const LEVEL_KEY = 'smartbess_access_level';
+
+function readSession(key: string): string | null {
+  try { return sessionStorage.getItem(key); } catch { return null; }
+}
+function writeSession(key: string, value: string | null): void {
+  try {
+    if (value === null) sessionStorage.removeItem(key); else sessionStorage.setItem(key, value);
+  } catch { /* приватний режим: вхід діятиме до перезавантаження */ }
+}
+
+export function getStoredAccessLevel(): AccessLevel | null {
+  const v = readSession(LEVEL_KEY);
+  return v === 'full' || v === 'view' ? v : null;
+}
+
+export async function fetchAuthConfig(): Promise<{ password_required: boolean }> {
+  const res = await fetch('/api/v1/auth/config');
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.json();
+}
+
+export async function loginWithPassword(password: string): Promise<AccessLevel> {
+  const res = await fetch('/api/v1/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  });
+  if (res.status === 429) throw new Error('Забагато невдалих спроб. Спробуйте за кілька хвилин.');
+  if (res.status === 401) throw new Error('Невірний пароль');
+  if (!res.ok) throw new Error(`Помилка входу: ${res.status}`);
+  const { level } = await res.json();
+  mockTokenCache.clear();
+  writeSession(PW_KEY, password);
+  writeSession(LEVEL_KEY, level);
+  return level as AccessLevel;
+}
+
+export function logout(): void {
+  mockTokenCache.clear();
+  writeSession(PW_KEY, null);
+  writeSession(LEVEL_KEY, null);
+}
+
 async function getAuthToken(role: UserRole): Promise<string> {
   const cached = mockTokenCache.get(role);
   if (cached && Date.now() - cached.obtainedAt < MOCK_TOKEN_TTL_MS) {
@@ -24,8 +73,13 @@ async function getAuthToken(role: UserRole): Promise<string> {
     const res = await fetch('/api/v1/auth/mock-login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ role }),
+      body: JSON.stringify({ role, password: readSession(PW_KEY) ?? undefined }),
     });
+    if (res.status === 401 || res.status === 403) {
+      // Пароль змінили на сервері або сесія прострочена — повертаємо на екран входу.
+      logout();
+      window.location.reload();
+    }
     if (!res.ok) {
       throw new Error(`Не вдалося отримати токен для ролі ${role}: ${res.status} ${res.statusText}`);
     }

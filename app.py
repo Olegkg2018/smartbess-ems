@@ -28,6 +28,13 @@ async def lifespan(app: FastAPI):
             "додаткового захисту мережевого рівня (VPN/IP allowlist)."
         )
 
+    if not settings.ACCESS_PASSWORD_FULL:
+        print(
+            "УВАГА: ACCESS_PASSWORD_FULL не задано — вхід у програму без пароля. "
+            "Задайте ACCESS_PASSWORD_FULL (повний доступ) і ACCESS_PASSWORD_VIEW "
+            "(лише перегляд) у .env."
+        )
+
     # 1. Initialize DB tables
     init_db()
     

@@ -1,8 +1,10 @@
-import { lazy } from 'react';
+import { lazy, useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppProvider, useApp } from './state/AppContext';
 import AppShell from './layouts/AppShell';
 import ApprovalModal from './components/ApprovalModal';
+import Login from './pages/shared/Login';
+import { fetchAuthConfig, getStoredAccessLevel } from './api/client';
 
 const AssetDetail = lazy(() => import('./pages/dispatcher/AssetDetail'));
 const OptimizationSchedule = lazy(() => import('./pages/dispatcher/OptimizationSchedule'));
@@ -59,13 +61,30 @@ function AppRoutes() {
   );
 }
 
+// Екран входу: якщо сервер вимагає пароль (ACCESS_PASSWORD_FULL) і сесія ще
+// не авторизована — показуємо форму. AppProvider монтується лише після входу,
+// щоб жодного API-запиту не було без пароля.
+function AuthGate({ children }: { children: React.ReactNode }) {
+  const [state, setState] = useState<'loading' | 'login' | 'ready'>('loading');
+  useEffect(() => {
+    if (getStoredAccessLevel()) { setState('ready'); return; }
+    fetchAuthConfig()
+      .then((c) => setState(c.password_required ? 'login' : 'ready'))
+      .catch(() => setState('ready'));
+  }, []);
+  if (state === 'loading') return null;
+  if (state === 'login') return <Login onSuccess={() => setState('ready')} />;
+  return <>{children}</>;
+}
 export default function App() {
   return (
     <BrowserRouter>
-      <AppProvider>
-        <AppRoutes />
-        <ApprovalModal />
-      </AppProvider>
+      <AuthGate>
+        <AppProvider>
+          <AppRoutes />
+          <ApprovalModal />
+        </AppProvider>
+      </AuthGate>
     </BrowserRouter>
   );
 }

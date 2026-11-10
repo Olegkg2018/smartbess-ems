@@ -26,7 +26,8 @@ export type DispatchHour = {
 interface AppState {
   activeRole: UserRole;
   setActiveRole: (r: UserRole) => void;
-
+  /** 'view' — вхід за паролем «лише перегляд»: роль зафіксована Viewer, зміни заборонені сервером. */
+  accessLevel: api.AccessLevel;
   assets: Asset[];
   activeAssetId: string | null;
 
@@ -167,7 +168,14 @@ export function useApp(): AppState {
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [activeRole, setActiveRole] = useState<UserRole>('Operator');
+  const accessLevel: api.AccessLevel = api.getStoredAccessLevel() ?? 'full';
+  const [activeRoleState, setActiveRoleState] = useState<UserRole>(accessLevel === 'view' ? 'Viewer' : 'Operator');
+  // У режимі перегляду роль не можна змінити (сервер усе одно не видасть
+  // токен з іншою роллю — це лише захист від зайвих запитів).
+  const activeRole: UserRole = accessLevel === 'view' ? 'Viewer' : activeRoleState;
+  const setActiveRole = useCallback((r: UserRole) => {
+    if (accessLevel !== 'view') setActiveRoleState(r);
+  }, [accessLevel]);
   const [assets, setAssets] = useState<Asset[]>([]);
   const activeAssetId = assets.length > 0 ? assets[0].id : null;
   const [scadaStatus, setScadaStatus] = useState<ScadaStatus | null>(null);
@@ -874,7 +882,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [approvalToken, activeRole, pendingAction, addLog]);
 
   const value = useMemo<AppState>(() => ({
-    activeRole, setActiveRole,
+    activeRole, setActiveRole, accessLevel,
     assets, activeAssetId,
     scadaStatus,
     targetDate, setTargetDate, selectedModel, setSelectedModel, operationalMode, setOperationalMode,

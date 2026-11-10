@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../state/AppContext';
 import type { UserRole } from '../api/client';
+import { getStoredAccessLevel, logout } from '../api/client';
 
 type NavItem = { to: string; label: string; icon: React.ReactNode };
 
@@ -46,7 +47,7 @@ const PAGE_TITLES: Record<string, string> = {
 };
 
 export default function AppShell({ workspace }: { workspace: 'dispatcher' | 'director' }) {
-  const { activeRole, setActiveRole, addLog, scadaStatus } = useApp();
+  const { activeRole, setActiveRole, addLog, scadaStatus, accessLevel } = useApp();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -107,19 +108,34 @@ export default function AppShell({ workspace }: { workspace: 'dispatcher' | 'dir
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Users size={16} style={{ color: 'var(--text-secondary)' }} />
-              <select
-                className="rbac-selector"
-                value={activeRole}
-                onChange={(e) => {
-                  setActiveRole(e.target.value as UserRole);
-                  addLog('AUTH', `Пользователь переключив сессію на роль: ${e.target.value}`, 'info');
-                }}
-              >
-                <option value="Viewer">Viewer (Read-Only)</option>
-                <option value="Operator">Operator (Grid Dispatch)</option>
-                <option value="Manager">Manager (CFO/CLevel)</option>
-                <option value="Admin">Admin (IT System)</option>
-              </select>
+              {accessLevel === 'view' ? (
+                <span className="status-badge pending" title="Зміни та збереження вимкнені">
+                  Лише перегляд
+                </span>
+              ) : (
+                <select
+                  className="rbac-selector"
+                  value={activeRole}
+                  onChange={(e) => {
+                    setActiveRole(e.target.value as UserRole);
+                    addLog('AUTH', `Пользователь переключив сессію на роль: ${e.target.value}`, 'info');
+                  }}
+                >
+                  <option value="Viewer">Viewer (Read-Only)</option>
+                  <option value="Operator">Operator (Grid Dispatch)</option>
+                  <option value="Manager">Manager (CFO/CLevel)</option>
+                  <option value="Admin">Admin (IT System)</option>
+                </select>
+              )}
+              {getStoredAccessLevel() && (
+                <button
+                  type="button"
+                  className="rbac-selector"
+                  onClick={() => { logout(); window.location.reload(); }}
+                >
+                  Вийти
+                </button>
+              )}
             </div>
           </div>
         </header>

@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     # схеми, де клієнт сам збирав alg:none токен (будь-хто міг підробити
     # роль через curl). Перевизначити через .env для розгорнутих інстансів.
     MOCK_JWT_SECRET: str = "dev-mock-secret-change-me"
+    # Два рівні доступу (2026-11-10): FULL — як раніше (усі ролі, зміни
+    # дозволені), VIEW — лише перегляд (токен тільки з роллю Viewer, усі
+    # POST/DELETE повертають 403). Порожній ACCESS_PASSWORD_FULL = вхід без
+    # пароля (зворотна сумісність, на старті буде попередження).
+    ACCESS_PASSWORD_FULL: str = ""
+    ACCESS_PASSWORD_VIEW: str = ""
     BESS_LAUNCH_DATE: str = "2026-01-01"
     # Підключення батареї (симулятор/tcp/serial, host/port/COM-порт тощо)
     # перенесено з env-var Settings у system_settings.json (2026-08-26) —
