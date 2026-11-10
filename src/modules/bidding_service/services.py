@@ -142,6 +142,30 @@ def get_bid_price_mode() -> str:
     return mode if mode in BID_PRICE_MODES else DEFAULT_BID_PRICE_MODE
 
 
+# Виміряно 2026-11-10 на проді за 59 діб (1309 год., останній прогноз до години,
+# scratch/band_miss_60d.csv): факт > P90 у 11.5% годин, факт < P10 у 12.8%
+# (номінально мало бути 10%). Межі зсуваються назовні на ці відсотки;
+# перевизначається в system_settings.json (band_widen_buy_pct/sell_pct).
+DEFAULT_BAND_WIDEN_BUY_PCT = 11.5
+DEFAULT_BAND_WIDEN_SELL_PCT = 12.8
+
+
+def get_band_widen_pct():
+    """(buy_pct, sell_pct) поправки меж P90/P10 з system_settings.json."""
+    import json
+    from src.core.config import settings
+    try:
+        with open(os.path.join(settings.DATA_DIR, "system_settings.json")) as f:
+            data = json.load(f)
+    except Exception:
+        data = {}
+
+    def pick(key, default):
+        v = data.get(key)
+        return float(v) if isinstance(v, (int, float)) and 0 <= v <= 100 else default
+    return pick("band_widen_buy_pct", DEFAULT_BAND_WIDEN_BUY_PCT), pick("band_widen_sell_pct", DEFAULT_BAND_WIDEN_SELL_PCT)
+
+
 def compute_breakeven_limits(day_bids, efficiency, deg_cost_uah_per_mwh, tariff_uah_per_mwh=0.0):
     """Граничні (беззбиткові) ціни заявок доби. day_bids — [(bid_type,
     volume_kw, forecast_price)]. Повертає (buy_max, sell_min); None, якщо на
@@ -169,7 +193,8 @@ def compute_breakeven_limits(day_bids, efficiency, deg_cost_uah_per_mwh, tariff_
     return buy_max, sell_min
 
 
-def compute_band_bid_price(bid_type, lower_uah, upper_uah, buy_max=None, sell_min=None):
+def compute_band_bid_price(bid_type, lower_uah, upper_uah, buy_max=None, sell_min=None,
+                           widen_buy_pct=0.0, widen_sell_pct=0.0):
     """Ціна заявки в режимі 'band': купівля за P90 (верхня межа прогнозу),
     продаж за P10 (нижня). Факт виходить за межу лише в ~10% годин, тож
     заявка проходить ~9 разів з 10, а ціна лишається прив'язаною до
@@ -178,12 +203,18 @@ def compute_band_bid_price(bid_type, lower_uah, upper_uah, buy_max=None, sell_mi
     гірше точки беззбитковості: buy ≤ buy_max, sell ≥ sell_min.
     None — немає P10/P90 на цю годину (тоді діє буфер).
 
+    widen_buy_pct / widen_sell_pct — поправка на «неугадання»: межу зсуваємо
+    назовні на виміряну частку годин, коли факт вийшов за P90/P10 (див.
+    DEFAULT_BAND_WIDEN_*): buy = P90·(1+w), sell = P10·(1−w).
+
     Симуляція на 36 добах проду з P10/P90 (scratch/analysis_bid_band_sim.py,
     09–10.2026): буфер 2% — 771 тис., P90/P10 — 1107 тис. (виконання 96%/93%,
     0 збиткових діб), беззбиткова — 1166 тис."""
     if bid_type == 'buy' and upper_uah is not None:
+        upper_uah = upper_uah * (1.0 + widen_buy_pct / 100.0)
         return min(upper_uah, buy_max) if buy_max is not None else upper_uah
     if bid_type == 'sell' and lower_uah is not None:
+        lower_uah = lower_uah * (1.0 - widen_sell_pct / 100.0)
         return max(lower_uah, sell_min) if sell_min is not None else lower_uah
     return None
 
@@ -262,6 +293,7 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
         return 'standby', 0.0
 
     bid_price_mode = get_bid_price_mode()
+    widen_buy_pct, widen_sell_pct = get_band_widen_pct()
     buy_max = sell_min = None
     if bid_price_mode in ('breakeven', 'band'):
         # Межі рахуються по ВСІЙ добі (і вже минулих годинах) — це ціна
@@ -298,7 +330,8 @@ def generate_bids_for_date(db, asset, target_date: datetime.datetime, margin_pct
         # margin_uah ефективніший для обох напрямків одночасно.
         if bid_price_mode == 'band':
             limit = compute_band_bid_price(bid_type, *band_by_hour.get(hour, (None, None)),
-                                           buy_max=buy_max, sell_min=sell_min)
+                                           buy_max=buy_max, sell_min=sell_min,
+                                           widen_buy_pct=widen_buy_pct, widen_sell_pct=widen_sell_pct)
         else:
             limit = buy_max if bid_type == 'buy' else sell_min if bid_type == 'sell' else None
         if limit is not None:

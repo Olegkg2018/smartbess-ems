@@ -173,9 +173,32 @@ def test_band_bid_price_capped_by_breakeven():
     assert bs.compute_band_bid_price('standby', 1.0, 2.0) is None
 
 
+def test_band_widen_shifts_outward_and_respects_breakeven():
+    # buy: P90·(1+11.5%); sell: P10·(1−12.8%); breakeven-кап лишається чинним.
+    assert bs.compute_band_bid_price('buy', 200.0, 3000.0, buy_max=9000.0, widen_buy_pct=10.0) == pytest.approx(3300.0)
+    assert bs.compute_band_bid_price('buy', 200.0, 3000.0, buy_max=3100.0, widen_buy_pct=10.0) == 3100.0
+    assert bs.compute_band_bid_price('sell', 7000.0, 12000.0, sell_min=2000.0, widen_sell_pct=10.0) == pytest.approx(6300.0)
+    assert bs.compute_band_bid_price('sell', 2100.0, 12000.0, sell_min=2000.0, widen_sell_pct=10.0) == 2000.0
+    # 0% = стара поведінка; без P10/P90 — None.
+    assert bs.compute_band_bid_price('buy', 200.0, 3000.0) == 3000.0
+    assert bs.compute_band_bid_price('buy', None, None, widen_buy_pct=10.0) is None
+
+
+def test_get_band_widen_pct_defaults_and_validation(tmp_path, monkeypatch):
+    import json
+    from src.core.config import settings
+    monkeypatch.setattr(settings, 'DATA_DIR', str(tmp_path))
+    assert bs.get_band_widen_pct() == (bs.DEFAULT_BAND_WIDEN_BUY_PCT, bs.DEFAULT_BAND_WIDEN_SELL_PCT)
+    (tmp_path / 'system_settings.json').write_text(json.dumps({'band_widen_buy_pct': 5, 'band_widen_sell_pct': -3}))
+    assert bs.get_band_widen_pct() == (5.0, bs.DEFAULT_BAND_WIDEN_SELL_PCT)  # від'ємне/сміття ігнорується
+    (tmp_path / 'system_settings.json').write_text(json.dumps({'band_widen_buy_pct': 'x', 'band_widen_sell_pct': 500}))
+    assert bs.get_band_widen_pct() == (bs.DEFAULT_BAND_WIDEN_BUY_PCT, bs.DEFAULT_BAND_WIDEN_SELL_PCT)
+
+
 def test_generate_bids_band(db_asset, monkeypatch):
     db, asset = db_asset
     monkeypatch.setattr(bs, 'get_bid_price_mode', lambda: 'band')
+    monkeypatch.setattr(bs, 'get_band_widen_pct', lambda: (0.0, 0.0))
     monkeypatch.setattr(bs, 'get_delivery_tariff_uah_per_mwh', lambda: 0.0)
     powers = [0.0] * 24
     powers[12], powers[19] = -1.0, 1.0

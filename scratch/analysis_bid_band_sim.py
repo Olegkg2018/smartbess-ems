@@ -66,7 +66,16 @@ def band_capped(r, c):
     return max(r.lower_bound_uah, be_sell(c))
 
 
+def band_widened(r, c):
+    # P90·(1+11.5%) / P10·(1−12.8%), потім кап беззбитковістю (як у проді)
+    if r.bid_type == 'buy':
+        b = be_buy(c); u = r.upper_bound_uah * 1.115
+        return min(u, b) if b is not None else u
+    return max(r.lower_bound_uah * (1 - 0.128), be_sell(c))
+
+
 rules = {
+    'P90/P10 + поправка 11.5/12.8%': band_widened,
     'буфер 2% (було)': lambda r, c: r.forecast_price_uah * (1.02 if r.bid_type == 'buy' else 0.98),
     'буфер ±2000 грн': lambda r, c: r.forecast_price_uah + (2000 if r.bid_type == 'buy' else -2000),
     'P90 купівля / P10 продаж': band,
